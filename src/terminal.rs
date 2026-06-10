@@ -36,6 +36,8 @@ pub enum BackendEvent {
     Output { tab_id: String, bytes: Vec<u8> },
     Status { tab_id: String, text: String },
     Closed { tab_id: String, reason: String },
+    TitleChanged { tab_id: String, title: String },
+    Bell { tab_id: String },
 }
 
 #[derive(Clone)]
@@ -45,9 +47,8 @@ pub enum BackendTx {
 
 impl BackendTx {
     pub fn send(&self, command: BackendCommand) {
-        if let Self::Local(tx) = self {
-            let _ = tx.send(command);
-        }
+        let Self::Local(tx) = self;
+        let _ = tx.send(command);
     }
 }
 
@@ -106,30 +107,46 @@ impl Dimensions for TerminalSize {
     fn columns(&self) -> usize { self.cols }
 }
 
-// ── Event Listener ───────────────────────────────────────────────────
-
-struct HerdrListener;
+struct HerdrListener {
+    tab_id: String,
+    events: Sender<BackendEvent>,
+}
 
 impl EventListener for HerdrListener {
-    fn send_event(&self, _event: Event) {}
+    fn send_event(&self, event: Event) {
+        match event {
+            Event::Title(title) => {
+                let _ = self.events.send(BackendEvent::TitleChanged {
+                    tab_id: self.tab_id.clone(),
+                    title,
+                });
+            }
+            Event::Bell => {
+                let _ = self.events.send(BackendEvent::Bell {
+                    tab_id: self.tab_id.clone(),
+                });
+            }
+            _ => {}
+        }
+    }
 }
 
 // ── TerminalTab ──────────────────────────────────────────────────────
 
-fn new_term(cols: u16, rows: u16) -> Term<HerdrListener> {
+fn new_term(cols: u16, rows: u16, tab_id: String, events: Sender<BackendEvent>) -> Term<HerdrListener> {
     Term::new(
         Config { scrolling_history: 2000, ..Config::default() },
         &TerminalSize::new(cols, rows),
-        HerdrListener,
+        HerdrListener { tab_id, events },
     )
 }
-
 impl TerminalTab {
-    pub fn new_local(id: String, title: String, backend: BackendTx) -> Self {
+    pub fn new_local(id: String, title: String, backend: BackendTx, events: Sender<BackendEvent>) -> Self {
+        let tab_id = id.clone();
         Self {
             id, title, connected: true,
             processor: Processor::new(),
-            term: new_term(100, 30),
+            term: new_term(100, 30, tab_id, events),
             cols: 100, rows: 30,
             status: "starting".into(),
             backend,
@@ -218,9 +235,73 @@ impl TerminalTab {
     pub fn app_cursor_mode(&self) -> bool {
         self.term.mode().contains(TermMode::APP_CURSOR)
     }
+
+    /// Whether the terminal is in any mouse tracking mode.
+    pub fn mouse_mode(&self) -> bool {
+        let mode = self.term.mode();
+        mode.intersects(TermMode::MOUSE_MODE | TermMode::SGR_MOUSE)
+    }
+
+    /// Whether mouse motion events should be reported.
+    pub fn mouse_motion_mode(&self) -> bool {
+        let mode = self.term.mode();
+        mode.contains(TermMode::MOUSE_MOTION)
+    }
+
+    /// Whether SGR mouse encoding is in use.
+    pub fn mouse_sgr_mode(&self) -> bool {
+        let mode = self.term.mode();
+        mode.contains(TermMode::SGR_MOUSE)
+    }
 }
 
-// ── PTY Spawn ────────────────────────────────────────────────────────
+
+// ── Mouse encoding ───────────────────────────────────────────────────
+
+/// Encode a mouse event into an SGR escape sequence.
+/// Returns bytes that should be sent to the PTY.
+pub fn encode_mouse_event(row: u16, col: u16, button: u8, pressed: bool, ctrl: bool, shift: bool, meta: bool) -> Vec<u8> {
+    let mut cb = if pressed { button } else { 3u8 };
+    if shift { cb |= 4; }
+    if meta  { cb |= 8; }
+    if ctrl  { cb |= 16; }
+
+    let motion = 32u8;
+    let cb_val = if button >= 32 { cb + motion } else { cb };
+    let action = if pressed || button >= 32 { 'M' } else { 'm' };
+
+    format!("\x1b[<{};{};{}{}", cb_val, col + 1, row + 1, action).into_bytes()
+}
+
+/// Encode a mouse motion event (for MOUSE_MOTION mode).
+/// Encode a mouse motion event for MOUSE_MOTION mode (no button pressed).
+/// SGR cb = 32 | 3 = 35 ("motion with no button").
+pub fn encode_mouse_motion(row: u16, col: u16, ctrl: bool, shift: bool, meta: bool) -> Vec<u8> {
+    let mut cb = 35u8; // motion(32) | release(3)
+    if shift { cb |= 4; }
+    if meta  { cb |= 8; }
+    if ctrl  { cb |= 16; }
+    format!("\x1b[<{};{};{}M", cb, col + 1, row + 1).into_bytes()
+}
+
+/// Encode a drag event (button held during mouse_motion_mode).
+/// SGR cb = motion(32) | button_code.
+pub fn encode_mouse_drag(row: u16, col: u16, button: u8, ctrl: bool, shift: bool, meta: bool) -> Vec<u8> {
+    let mut cb = 32u8 | button;
+    if shift { cb |= 4; }
+    if meta  { cb |= 8; }
+    if ctrl  { cb |= 16; }
+    format!("\x1b[<{};{};{}M", cb, col + 1, row + 1).into_bytes()
+}
+
+/// Encode a scroll event.
+pub fn encode_mouse_scroll(row: u16, col: u16, up: bool, ctrl: bool, shift: bool, meta: bool) -> Vec<u8> {
+    let mut cb = if up { 64u8 } else { 65u8 };
+    if shift { cb |= 4; }
+    if meta { cb |= 8; }
+    if ctrl { cb |= 16; }
+    format!("\x1b[<{};{};{}M", cb, col + 1, row + 1).into_bytes()
+}
 
 pub fn spawn_command_in_pty(
     tab_id: String, program: &str, args: &[&str], cols: u16, rows: u16, events: Sender<BackendEvent>,

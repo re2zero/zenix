@@ -1,17 +1,36 @@
 #![windows_subsystem = "windows"]
 
 mod app;
+mod config;
 mod herdr;
 mod terminal;
 mod terminal_element;
 
 use gpui::{App, AppContext, Bounds, point, size};
-use gpui_component::{Root, Theme};
+use gpui_component::{Root, Theme, ThemeRegistry};
 use gpui_component_assets::Assets;
 
 use crate::app::DeepinHerdr;
 
+const EMBEDDED_THEME_JSONS: &[&str] = &[
+    include_str!("../assets/themes/matrix.json"),
+    include_str!("../assets/themes/tokyonight.json"),
+    include_str!("../assets/themes/gruvbox.json"),
+    include_str!("../assets/themes/solarized.json"),
+];
+
+fn load_embedded_themes(cx: &mut App) {
+    let registry = ThemeRegistry::global_mut(cx);
+    for theme_json in EMBEDDED_THEME_JSONS {
+        if let Err(err) = registry.load_themes_from_str(theme_json) {
+            tracing::warn!("failed to load embedded theme: {err:#}");
+        }
+    }
+}
+
 fn open_main_window(cx: &mut App) {
+    let config = config::ConfigStore::load().unwrap_or_default();
+
     let bounds = cx
         .displays()
         .first()
@@ -32,12 +51,11 @@ fn open_main_window(cx: &mut App) {
         window.set_window_title("deepin-herdr");
         Theme::sync_system_appearance(Some(window), cx);
 
-        let view = cx.new(|cx| DeepinHerdr::new(window, cx));
+        let view = cx.new(|cx| DeepinHerdr::new(window, cx, config));
         cx.new(|cx| Root::new(view, window, cx))
     })
     .expect("failed to open window");
 }
-
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -52,6 +70,7 @@ fn main() {
 
     app.run(move |cx| {
         gpui_component::init(cx);
+        load_embedded_themes(cx);
         open_main_window(cx);
     });
 }
