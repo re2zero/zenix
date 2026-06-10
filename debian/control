@@ -1,0 +1,29 @@
+Source: deepin-herdr
+Section: utils
+Priority: optional
+Maintainer: re2zero <yangwu@uniontech.com>
+Build-Depends:
+ debhelper-compat (= 13),
+ cargo,
+ rustc,
+ pkg-config,
+ libxkbcommon-dev,
+ libfontconfig-dev,
+ libwayland-dev,
+ libegl-dev,
+ libxkbcommon-x11-dev,
+Standards-Version: 4.6.0
+Rules-Requires-Root: no
+
+Package: deepin-herdr
+Architecture: any
+Depends:
+ ${shlibs:Depends},
+ ${misc:Depends},
+Description: Terminal workspace manager for AI coding agents
+ herdr is a terminal workspace manager designed for AI coding agents.
+ It provides workspace, tab, and pane management with a client-server
+ architecture.
+ .
+ This package contains the GPUI frontend that embeds the herdr
+ terminal client and auto-downloads the herdr binary on first launch.
