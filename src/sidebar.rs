@@ -1,6 +1,5 @@
 //! Right sidebar — icon bar with expandable panels for settings and system info.
 //! Built with gpui-component native widgets: GroupBox, Separator, Kbd, Label, Progress.
-
 use gpui::{
     div, px, relative, AnyElement, ClickEvent, FontWeight, InteractiveElement, IntoElement,
     ParentElement, StatefulInteractiveElement as _, Styled, Window,
@@ -11,7 +10,6 @@ use gpui_component::{
     group_box::GroupBox,
     h_flex, scroll::ScrollableElement as _, v_flex,
     kbd::Kbd,
-    label::Label,
     progress::Progress,
     separator::Separator,
 };
@@ -71,7 +69,7 @@ pub fn settings_panel(
         .border_l_1().border_color(t.border).p(px(16.)).gap(px(14.))
         .overflow_y_scrollbar()
 
-        .child(Label::new("Settings"))
+        .child(bold_txt("Settings"))
         .child(Separator::horizontal())
 
         // Appearance
@@ -129,7 +127,7 @@ pub fn system_info_panel(theme: &Theme, info: &SystemInfo) -> impl IntoElement {
         .border_l_1().border_color(t.border).p(px(16.)).gap(px(14.))
         .overflow_y_scrollbar()
 
-        .child(Label::new("System"))
+        .child(bold_txt("System"))
         .child(Separator::horizontal())
 
         // Overview
@@ -189,23 +187,23 @@ pub fn system_info_panel(theme: &Theme, info: &SystemInfo) -> impl IntoElement {
 
 fn group_box(title: &str, body: Vec<AnyElement>) -> AnyElement {
     GroupBox::new()
-        .title(Label::new(title.to_string()))
+        .title(bold_txt(title.to_string()))
         .child(v_flex().gap(px(6.)).children(body))
         .into_any_element()
 }
 
 fn subsec(title: &str, body: Vec<AnyElement>) -> AnyElement {
     GroupBox::new()
-        .title(Label::new(title.to_string()))
+        .title(bold_txt(title.to_string()))
         .child(v_flex().gap(px(6.)).children(body))
         .into_any_element()
 }
 
 fn overview(host: &str, kern: &str, up: &str, procs: u32, mu: gpui::Hsla) -> AnyElement {
     GroupBox::new()
-        .title(Label::new("Overview"))
+        .title(bold_txt("Overview"))
         .child(v_flex().gap(px(4.))
-            .child(Label::new(host.to_string()))
+            .child(bold_txt(host.to_string()))
             .child(txt(px(10.)).text_color(mu).child(kern.to_string()))
             .child(h_flex().gap(px(12.))
                 .child(txt(px(10.)).text_color(mu).child(format!("Up {up}")))
@@ -270,8 +268,14 @@ fn dim(t: &str, mu: gpui::Hsla) -> AnyElement {
     txt(px(10.)).text_color(mu).child(t.to_string()).into_any_element()
 }
 
-fn txt(size: gpui::Pixels) -> gpui::Div {
-    div().text_size(size)
+fn txt(size: gpui::Pixels) -> gpui::Div { div().text_size(size) }
+
+fn bold_txt(text: impl Into<String>) -> impl IntoElement {
+    let s = text.into();
+    div()
+        .text_size(px(14.))
+        .font_weight(FontWeight::BOLD)
+        .child(s)
 }
 
 fn trunc_model(s: &str, max: usize) -> String {

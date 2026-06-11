@@ -33,6 +33,15 @@ fn load_embedded_themes(cx: &mut App) {
 fn open_main_window(cx: &mut App) {
     let config = config::ConfigStore::load().unwrap_or_default();
 
+    if !config.theme_name().is_empty() {
+        let name = config.theme_name().to_string();
+        let registry = ThemeRegistry::global(cx);
+        if let Some(theme_config) = registry.themes().get(name.as_str()).cloned() {
+            let theme = Theme::global_mut(cx);
+            theme.apply_config(&theme_config);
+        }
+    }
+
     let bounds = cx
         .displays()
         .first()

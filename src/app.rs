@@ -54,8 +54,7 @@ pub struct DeepinHerdr {
     last_selection_cell: Option<(usize, usize)>,
 }
 fn cell_width(font_size: f32) -> f32 { (font_size * 0.6).max(6.0) }
-fn line_height(font_size: f32) -> f32 { (font_size * 1.3).max(font_size + 2.0) }
-
+fn line_height(font_size: f32) -> f32 { (font_size * 1.15).max(font_size + 2.0) }
 fn write_to_pty(backend: &Option<BackendTx>, tab: &mut Option<TerminalTab>, bytes: Vec<u8>) {
     if let Some(backend) = backend {
         if let Some(tab) = tab {
