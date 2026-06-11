@@ -44,9 +44,17 @@ maintainer = "re2zero <yangwu@uniontech.com>"
 section = "utils"
 priority = "optional"
 assets = [
+    ["target/release/zenix", "usr/bin/", "755"],
     ["zenix.desktop", "usr/share/applications/", "644"],
     ["zenix.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
-    ["assets/", "usr/share/zenix/assets/", "644"],
+    ["assets/fonts/Lilex-Regular.ttf", "usr/share/zenix/fonts/", "644"],
+    ["assets/fonts/Lilex-Bold.ttf", "usr/share/zenix/fonts/", "644"],
+    ["assets/fonts/Lilex-Italic.ttf", "usr/share/zenix/fonts/", "644"],
+    ["assets/fonts/Lilex-BoldItalic.ttf", "usr/share/zenix/fonts/", "644"],
+    ["assets/themes/gruvbox.json", "usr/share/zenix/themes/", "644"],
+    ["assets/themes/solarized.json", "usr/share/zenix/themes/", "644"],
+    ["assets/themes/tokyonight.json", "usr/share/zenix/themes/", "644"],
+    ["assets/themes/matrix.json", "usr/share/zenix/themes/", "644"],
 ]
 extended-description = """\
 zenix is an extensible terminal workspace manager designed for AI coding agents.
