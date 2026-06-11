@@ -53,8 +53,8 @@ pub struct DeepinHerdr {
     last_mouse_cell: Option<(usize, usize)>,
     last_selection_cell: Option<(usize, usize)>,
 }
-fn cell_width(font_size: f32) -> f32 { (font_size * 0.6).max(6.0) }
-fn line_height(font_size: f32) -> f32 { (font_size * 1.15).max(font_size + 2.0) }
+fn cell_width(font_size: f32) -> f32 { (font_size * 0.58).max(6.0) }
+fn line_height(font_size: f32) -> f32 { (font_size * 1.08).max(font_size + 2.0) }
 fn write_to_pty(backend: &Option<BackendTx>, tab: &mut Option<TerminalTab>, bytes: Vec<u8>) {
     if let Some(backend) = backend {
         if let Some(tab) = tab {
@@ -200,8 +200,9 @@ impl DeepinHerdr {
             theme.apply_config(&config);
             window.refresh();
             self.config.set_theme_name(name.to_string());
-            let _ = self.config.save();
-            cx.notify();
+            if let Err(e) = self.config.save() {
+                eprintln!("failed to save config: {e:#}");
+            }
         }
     }
 
@@ -478,6 +479,7 @@ impl Render for DeepinHerdr {
                 Button::new(format!("th-{name}"))
                     .ghost()
                     .label(format!("{prefix}{name}"))
+                    .w_full()
                     .on_click(cb)
                     .into_any_element()
             })

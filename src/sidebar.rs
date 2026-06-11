@@ -183,27 +183,25 @@ pub fn system_info_panel(theme: &Theme, info: &SystemInfo) -> impl IntoElement {
     panel
 }
 
-// ── Building blocks ───────────────────────────────────────────────────
-
 fn group_box(title: &str, body: Vec<AnyElement>) -> AnyElement {
     GroupBox::new()
-        .title(bold_txt(title.to_string()))
+        .title(sec_title(title))
         .child(v_flex().gap(px(6.)).children(body))
         .into_any_element()
 }
 
 fn subsec(title: &str, body: Vec<AnyElement>) -> AnyElement {
     GroupBox::new()
-        .title(bold_txt(title.to_string()))
+        .title(sec_title(title))
         .child(v_flex().gap(px(6.)).children(body))
         .into_any_element()
 }
 
 fn overview(host: &str, kern: &str, up: &str, procs: u32, mu: gpui::Hsla) -> AnyElement {
     GroupBox::new()
-        .title(bold_txt("Overview"))
+        .title(sec_title("Overview"))
         .child(v_flex().gap(px(4.))
-            .child(bold_txt(host.to_string()))
+            .child(bold_txt(host))
             .child(txt(px(10.)).text_color(mu).child(kern.to_string()))
             .child(h_flex().gap(px(12.))
                 .child(txt(px(10.)).text_color(mu).child(format!("Up {up}")))
@@ -275,6 +273,15 @@ fn bold_txt(text: impl Into<String>) -> impl IntoElement {
     div()
         .text_size(px(14.))
         .font_weight(FontWeight::BOLD)
+        .child(s)
+}
+
+/// Section title for GroupBox headers (smaller than panel title).
+fn sec_title(text: impl Into<String>) -> impl IntoElement {
+    let s = text.into();
+    div()
+        .text_size(px(11.))
+        .font_weight(FontWeight::SEMIBOLD)
         .child(s)
 }
 

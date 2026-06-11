@@ -33,15 +33,6 @@ fn load_embedded_themes(cx: &mut App) {
 fn open_main_window(cx: &mut App) {
     let config = config::ConfigStore::load().unwrap_or_default();
 
-    if !config.theme_name().is_empty() {
-        let name = config.theme_name().to_string();
-        let registry = ThemeRegistry::global(cx);
-        if let Some(theme_config) = registry.themes().get(name.as_str()).cloned() {
-            let theme = Theme::global_mut(cx);
-            theme.apply_config(&theme_config);
-        }
-    }
-
     let bounds = cx
         .displays()
         .first()
@@ -57,10 +48,20 @@ fn open_main_window(cx: &mut App) {
     let mut options = gpui::WindowOptions::default();
     options.window_bounds = bounds.map(gpui::WindowBounds::Windowed);
 
+    let saved_theme = config.theme_name().to_string();
+
     cx.open_window(options, |window, cx| {
         window.activate_window();
         window.set_window_title("deepin-herdr");
         Theme::sync_system_appearance(Some(window), cx);
+
+        // Apply persisted theme AFTER system appearance sync
+        if !saved_theme.is_empty() {
+            let registry = ThemeRegistry::global(cx);
+            if let Some(tc) = registry.themes().get(saved_theme.as_str()).cloned() {
+                Theme::global_mut(cx).apply_config(&tc);
+            }
+        }
 
         let view = cx.new(|cx| DeepinHerdr::new(window, cx, config));
         cx.new(|cx| Root::new(view, window, cx))
