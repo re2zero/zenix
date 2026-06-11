@@ -50,11 +50,13 @@ pub struct DeepinHerdr {
     system_info: SystemInfo,
     sysinfo_cpu_sample: CpuSamples,
     sysinfo_polling: bool,
+    terminal_cell_width: Pixels,
+    terminal_line_height: Pixels,
+    terminal_ascent: Pixels,
+    terminal_descent: Pixels,
     last_mouse_cell: Option<(usize, usize)>,
     last_selection_cell: Option<(usize, usize)>,
 }
-fn cell_width(font_size: f32) -> f32 { (font_size * 0.58).max(6.0) }
-fn line_height(font_size: f32) -> f32 { (font_size * 1.08).max(font_size + 2.0) }
 fn write_to_pty(backend: &Option<BackendTx>, tab: &mut Option<TerminalTab>, bytes: Vec<u8>) {
     if let Some(backend) = backend {
         if let Some(tab) = tab {
@@ -83,6 +85,10 @@ impl DeepinHerdr {
             system_info: SystemInfo::default(),
             sysinfo_cpu_sample: CpuSamples::default(),
             sysinfo_polling: false,
+            terminal_cell_width: px(14.0 * 0.6),
+            terminal_line_height: px(14.0 * 1.15),
+            terminal_ascent: px(14.0 * 0.8),
+            terminal_descent: px(14.0 * 0.2),
             last_mouse_cell: None, last_selection_cell: None,
         }
     }
@@ -311,7 +317,7 @@ impl DeepinHerdr {
     }
 
     fn on_scroll(&mut self, event: &ScrollWheelEvent, _window: &mut Window, cx: &mut Context<Self>) {
-        let lh = line_height(self.terminal_font_size);
+        let lh = f32::from(self.terminal_line_height);
         let delta = match event.delta {
             gpui::ScrollDelta::Lines(p) => p.y.round() as i32,
             gpui::ScrollDelta::Pixels(p) => (f32::from(p.y) / lh).round() as i32,
@@ -374,11 +380,12 @@ impl DeepinHerdr {
         if !bounds.contains(&position) { return None; }
         let local_x = (position.x - bounds.origin.x).max(px(0.));
         let local_y = (position.y - bounds.origin.y).max(px(0.));
-        let cw = px(cell_width(self.terminal_font_size));
-        let lh = px(line_height(self.terminal_font_size));
+        let cw = self.terminal_cell_width;
+        let lh = self.terminal_line_height;
         let snap = self.tab.as_ref()?.render_snapshot();
-        Some((((local_y / lh).floor() as usize).min(snap.rows.saturating_sub(1)),
-              ((local_x / cw).floor() as usize).min(snap.cols.saturating_sub(1))))
+        let row = ((f32::from(local_y) / f32::from(lh)).floor() as usize).min(snap.rows.saturating_sub(1));
+        let col = ((f32::from(local_x) / f32::from(cw)).floor() as usize).min(snap.cols.saturating_sub(1));
+        Some((row, col))
     }
 
     fn terminal_grid_point_and_side(&self, position: Point<Pixels>) -> Option<(usize, usize, Side)> {
@@ -386,12 +393,12 @@ impl DeepinHerdr {
         if !bounds.contains(&position) { return None; }
         let local_x = (position.x - bounds.origin.x).max(px(0.));
         let local_y = (position.y - bounds.origin.y).max(px(0.));
-        let cw = px(cell_width(self.terminal_font_size));
-        let lh = px(line_height(self.terminal_font_size));
+        let cw = self.terminal_cell_width;
+        let lh = self.terminal_line_height;
         let snap = self.tab.as_ref()?.render_snapshot();
-        let col = ((local_x / cw).floor() as usize).min(snap.cols.saturating_sub(1));
-        let row = ((local_y / lh).floor() as usize).min(snap.rows.saturating_sub(1));
-        let side = if px(local_x.as_f32() % cw.as_f32()) >= (cw / 2.) { Side::Right } else { Side::Left };
+        let col = ((f32::from(local_x) / f32::from(cw)).floor() as usize).min(snap.cols.saturating_sub(1));
+        let row = ((f32::from(local_y) / f32::from(lh)).floor() as usize).min(snap.rows.saturating_sub(1));
+        let side = if f32::from(local_x) % f32::from(cw) >= f32::from(cw) / 2.0 { Side::Right } else { Side::Left };
         Some((row, col, side))
     }
 
@@ -439,9 +446,23 @@ impl Render for DeepinHerdr {
         }
 
         let fs = self.terminal_font_size;
-        let cw_px = px(cell_width(fs));
-        let lh_px = px(line_height(fs));
+        let fs_px = px(fs);
 
+        // Cell metrics from font, line height = Zed Standard (1.3x)
+        let text_system = window.text_system();
+        let font = gpui::Font { family: FONT_FAMILY.into(), ..gpui::Font::default() };
+        let font_id = text_system.resolve_font(&font);
+        let cw_px = text_system.advance(font_id, fs_px, 'm').map(|s| s.width).unwrap_or(fs_px * 0.6);
+        let ascent = text_system.ascent(font_id, fs_px);
+        let descent = text_system.descent(font_id, fs_px);
+        // Snap line height to device pixels (matches Zed's approach)
+        let sf = window.scale_factor();
+        let lh_device = (fs * 1.3 * sf).round().max(1.0);
+        let lh_px = px(lh_device / sf);
+        self.terminal_cell_width = cw_px;
+        self.terminal_line_height = lh_px;
+        self.terminal_ascent = ascent;
+        self.terminal_descent = descent;
         // Calculate available width for terminal (account for sidebar + panel)
         let sidebar_w = sidebar::SIDEBAR_WIDTH
             + if self.active_panel != Panel::None { sidebar::PANEL_WIDTH } else { 0.0 };
@@ -449,8 +470,10 @@ impl Render for DeepinHerdr {
         if let Some(tab) = &mut self.tab {
             let b = window.bounds();
             let avail_w = (f32::from(b.size.width) - sidebar_w).max(200.0);
-            let cols = (avail_w / cell_width(fs)).max(20.0) as u16;
-            let rows = (f32::from(b.size.height) / line_height(fs)).max(10.0) as u16;
+            let cw = f32::from(cw_px);
+            let lh = f32::from(lh_px);
+            let cols = (avail_w / cw.max(1.0)).max(20.0) as u16;
+            let rows = (f32::from(b.size.height) / lh.max(1.0)).max(10.0) as u16;
             if tab.cols != cols || tab.rows != rows { tab.resize(cols, rows); }
         }
 
@@ -524,7 +547,7 @@ impl Render for DeepinHerdr {
                         let _ = view.update(cx, |this, _| { this.terminal_bounds = Some(bounds); });
                     }
                 })
-                .child(TerminalElement::new(snapshot, backend, focus2, FONT_FAMILY, px(fs), lh_px, cw_px))
+                .child(TerminalElement::new(snapshot, backend, focus2, FONT_FAMILY, px(fs), lh_px, cw_px, self.terminal_ascent, self.terminal_descent))
                 .into_any_element(),
             _ => v_flex()
                 .size_full().items_center().justify_center().gap_6()

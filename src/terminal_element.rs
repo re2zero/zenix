@@ -21,6 +21,8 @@ use crate::terminal::{BackendCommand, BackendTx, RenderSnapshot};
 struct TerminalMetrics {
     cell_width: Pixels,
     line_height: Pixels,
+    ascent: Pixels,
+    descent: Pixels,
 }
 
 #[derive(Clone)]
@@ -75,9 +77,11 @@ impl BatchedTextRun {
     }
 
     fn paint(&self, origin: Point<Pixels>, metrics: TerminalMetrics, window: &mut Window, cx: &mut App) {
+        // Top-align: subtract GPUI's vertical centering padding
+        let pad = px(f32::from(self.font_size) * 0.15);
         let pos = point(
             origin.x + metrics.cell_width * self.col as f32,
-            origin.y + metrics.line_height * self.row as f32,
+            origin.y + metrics.line_height * self.row as f32 - pad,
         );
         let _ = window
             .text_system()
@@ -165,19 +169,18 @@ pub struct TerminalElement {
     font_size: Pixels,
     line_height: Pixels,
     cell_width: Pixels,
+    ascent: Pixels,
+    descent: Pixels,
 }
 
 impl TerminalElement {
     pub fn new(
-        snapshot: RenderSnapshot,
-        backend: BackendTx,
-        focus_handle: FocusHandle,
-        font_family: impl Into<SharedString>,
-        font_size: Pixels,
-        line_height: Pixels,
-        cell_width: Pixels,
+        snapshot: RenderSnapshot, backend: BackendTx, focus_handle: FocusHandle,
+        font_family: impl Into<SharedString>, font_size: Pixels,
+        line_height: Pixels, cell_width: Pixels, ascent: Pixels, descent: Pixels,
     ) -> Self {
-        Self { snapshot, backend, focus_handle, font_family: font_family.into(), font_size, line_height, cell_width }
+        Self { snapshot, backend, focus_handle, font_family: font_family.into(),
+               font_size, line_height, cell_width, ascent, descent }
     }
 
     fn cell_run_style(&self, cell: &Cell) -> TextRun {
@@ -279,7 +282,7 @@ impl Element for TerminalElement {
     }
 
     fn prepaint(&mut self, _id: Option<&GlobalElementId>, _inspector_id: Option<&InspectorElementId>, bounds: Bounds<Pixels>, _request_layout: &mut Self::RequestLayoutState, _window: &mut Window, cx: &mut App) -> Self::PrepaintState {
-        let metrics = TerminalMetrics { cell_width: self.cell_width, line_height: self.line_height };
+        let metrics = TerminalMetrics { cell_width: self.cell_width, line_height: self.line_height, ascent: self.ascent, descent: self.descent };
         let (rects, runs) = self.layout_grid(cx);
         PrepaintState { bounds, metrics, rects, runs, cursor: self.cursor_layout(cx) }
     }
