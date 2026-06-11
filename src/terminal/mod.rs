@@ -272,8 +272,12 @@ pub fn spawn_command_in_pty(
 
     let mut cmd = CommandBuilder::new(program);
     for arg in args { cmd.arg(arg); }
-    if let Ok(path) = std::env::var("PATH") { cmd.env("PATH", path); }
-    if let Ok(home) = std::env::var("HOME") { cmd.env("HOME", home); }
+    // Prepend ~/.local/bin so the bundled/bootstrapped herdr CLI takes precedence.
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
+    let user_bin = format!("{}/.local/bin", home);
+    let path = std::env::var("PATH").unwrap_or_default();
+    cmd.env("PATH", format!("{user_bin}:{path}"));
+    cmd.env("HOME", &home);
     if let Ok(shell) = std::env::var("SHELL") { cmd.env("SHELL", &shell); }
     cmd.env("TERM", "xterm-256color");
     cmd.env("TERM_PROGRAM", "zenix");
