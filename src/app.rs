@@ -4,17 +4,24 @@ use std::{sync::mpsc::{self, Receiver, Sender}, time::Duration};
 
 use alacritty_terminal::{index::Side, selection::SelectionType};
 use gpui::{
-    Bounds, ClipboardItem, Context, FocusHandle, InteractiveElement as _, IntoElement,
+    Bounds, ClipboardItem, ClickEvent, Context, FocusHandle, InteractiveElement as _, IntoElement,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _,
     Pixels, Point, Render, ScrollWheelEvent, Styled as _, Window, div, px,
 };
-use gpui_component::{ActiveTheme as _, ElementExt, v_flex, h_flex, button::{Button, ButtonVariants}};
+use gpui_component::{
+    ActiveTheme as _, ElementExt, Theme, ThemeRegistry,
+    button::{Button, ButtonVariants},
+    h_flex, v_flex,
+};
 
 use crate::{
-    herdr, config::ConfigStore,
+    config::ConfigStore,
+    herdr,
+    sidebar::{self, Panel},
+    system_info::{self, CpuSamples, SystemInfo},
     terminal::{
         self, BackendCommand, BackendEvent, BackendTx, TerminalTab,
-        encode_key, encode_mouse_event, encode_mouse_drag, encode_mouse_motion, encode_mouse_scroll,
+        encode_key, encode_mouse_drag, encode_mouse_event, encode_mouse_motion, encode_mouse_scroll,
     },
     terminal_element::TerminalElement,
 };
@@ -39,11 +46,13 @@ pub struct DeepinHerdr {
     terminal_selecting: bool,
     terminal_bounds: Option<Bounds<Pixels>>,
     config: ConfigStore,
-    show_settings: bool,
+    active_panel: Panel,
+    system_info: SystemInfo,
+    sysinfo_cpu_sample: CpuSamples,
+    sysinfo_polling: bool,
     last_mouse_cell: Option<(usize, usize)>,
     last_selection_cell: Option<(usize, usize)>,
 }
-
 fn cell_width(font_size: f32) -> f32 { (font_size * 0.6).max(6.0) }
 fn line_height(font_size: f32) -> f32 { (font_size * 1.3).max(font_size + 2.0) }
 
@@ -70,7 +79,11 @@ impl DeepinHerdr {
             terminal_font_size: font_size,
             terminal_selecting: false,
             terminal_bounds: None,
-            config, show_settings: false,
+            config,
+            active_panel: Panel::None,
+            system_info: SystemInfo::default(),
+            sysinfo_cpu_sample: CpuSamples::default(),
+            sysinfo_polling: false,
             last_mouse_cell: None, last_selection_cell: None,
         }
     }
@@ -176,14 +189,49 @@ impl DeepinHerdr {
         let _ = self.config.save();
     }
 
-    // ── Keyboard ────────────────────────────────────────────────────────
+    fn toggle_panel(&mut self, panel: Panel) {
+        self.active_panel = if self.active_panel == panel { Panel::None } else { panel };
+    }
+
+    fn switch_theme(&mut self, name: &str, window: &mut Window, cx: &mut Context<Self>) {
+        // Clone the config first to release the immutable borrow on cx
+        let config = ThemeRegistry::global(cx).themes().get(name).cloned();
+        if let Some(config) = config {
+            let theme = Theme::global_mut(cx);
+            theme.apply_config(&config);
+            window.refresh();
+            self.config.set_theme_name(name.to_string());
+            let _ = self.config.save();
+            cx.notify();
+        }
+    }
+
+
+    fn start_sysinfo_poll(&mut self, cx: &mut Context<Self>) {
+        if self.sysinfo_polling { return; }
+        self.sysinfo_polling = true;
+        cx.spawn(async move |this, cx| {
+            let mut samples = CpuSamples::default();
+            loop {
+                cx.background_executor().timer(Duration::from_secs(2)).await;
+                let mut info = SystemInfo::default();
+                let new_samples = system_info::collect(&mut info, &samples);
+                samples = new_samples;
+                if this.update(cx, |this, cx| {
+                    this.system_info = info;
+                    this.sysinfo_cpu_sample = samples.clone();
+                    cx.notify();
+                }).is_err() { break; }
+            }
+        }).detach();
+    }
 
     fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let modifiers = event.keystroke.modifiers;
         let key = &event.keystroke.key;
 
         if (modifiers.secondary() && key.eq_ignore_ascii_case(",")) || key.eq_ignore_ascii_case("f1") {
-            self.show_settings = !self.show_settings;
+            self.toggle_panel(Panel::Settings);
             cx.notify();
             return;
         }
@@ -221,7 +269,6 @@ impl DeepinHerdr {
             }
         }
     }
-
     // ── Mouse dispatch ──────────────────────────────────────────────────
 
     fn on_mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -386,27 +433,115 @@ impl Render for DeepinHerdr {
             }
         }
 
+        // Start sysinfo polling when system info panel is first opened
+        if self.active_panel == Panel::SystemInfo && !self.sysinfo_polling {
+            self.start_sysinfo_poll(cx);
+        }
+
         let fs = self.terminal_font_size;
         let cw_px = px(cell_width(fs));
         let lh_px = px(line_height(fs));
+
+        // Calculate available width for terminal (account for sidebar + panel)
+        let sidebar_w = sidebar::SIDEBAR_WIDTH
+            + if self.active_panel != Panel::None { sidebar::PANEL_WIDTH } else { 0.0 };
+
         if let Some(tab) = &mut self.tab {
             let b = window.bounds();
-            let cols = (f32::from(b.size.width) / cell_width(fs)).max(20.0) as u16;
+            let avail_w = (f32::from(b.size.width) - sidebar_w).max(200.0);
+            let cols = (avail_w / cell_width(fs)).max(20.0) as u16;
             let rows = (f32::from(b.size.height) / line_height(fs)).max(10.0) as u16;
             if tab.cols != cols || tab.rows != rows { tab.resize(cols, rows); }
         }
 
-        let settings_overlay: Option<gpui::AnyElement> = if self.show_settings {
-            let t = cx.theme().clone();
-            Some(settings_panel(t, self.terminal_font_size, cx).into_any_element())
-        } else { None };
-
         let theme = cx.theme().clone();
         let snapshot = self.tab.as_ref().map(|t| t.render_snapshot());
-        let backend = self.backend.clone();
         let focus = self.focus_handle.clone();
+        let focus2 = self.focus_handle.clone();
+        let backend = self.backend.clone();
 
-        div()
+        // Build theme entries as pre-built button elements (avoids closure capture issues)
+        let current_theme_name = theme.theme_name().to_string();
+        let registry = ThemeRegistry::global(cx);
+        let theme_buttons: Vec<gpui::AnyElement> = registry
+            .sorted_themes()
+            .iter()
+            .map(|tc| {
+                let name = tc.name.to_string();
+                let is_current = name == current_theme_name;
+                let prefix = if is_current { "\u{2713} " } else { "  " };
+                let cb: sidebar::ThemeCallback = {
+                    let name = name.clone();
+                    Box::new(cx.listener(move |this, _: &ClickEvent, window, cx| {
+                        this.switch_theme(&name, window, cx);
+                    }))
+                };
+                Button::new(format!("th-{name}"))
+                    .ghost()
+                    .label(format!("{prefix}{name}"))
+                    .on_click(cb)
+                    .into_any_element()
+            })
+            .collect();
+
+        // Callbacks for sidebar buttons (Box<dyn Fn> works with .on_click)
+        let sysinfo_cb: sidebar::ThemeCallback = Box::new(cx.listener(|this, _: &ClickEvent, _window, cx| {
+            this.toggle_panel(Panel::SystemInfo);
+            cx.notify();
+        }));
+        let settings_cb: sidebar::ThemeCallback = Box::new(cx.listener(|this, _: &ClickEvent, _window, cx| {
+            this.toggle_panel(Panel::Settings);
+            cx.notify();
+        }));
+        let font_down_cb: sidebar::ThemeCallback = Box::new(cx.listener(|this, _: &ClickEvent, _window, cx| {
+            this.change_font_size(this.terminal_font_size - 1.0);
+            cx.notify();
+        }));
+        let font_up_cb: sidebar::ThemeCallback = Box::new(cx.listener(|this, _: &ClickEvent, _window, cx| {
+            this.change_font_size(this.terminal_font_size + 1.0);
+            cx.notify();
+        }));
+        // Expanded panel (conditionally shown)
+        let panel: Option<gpui::AnyElement> = match self.active_panel {
+            Panel::Settings => Some(sidebar::settings_panel(
+                &theme, fs, &current_theme_name,
+                theme_buttons, font_down_cb, font_up_cb,
+            ).into_any_element()),
+            Panel::SystemInfo => Some(sidebar::system_info_panel(
+                &theme, &self.system_info,
+            ).into_any_element()),
+            Panel::None => None,
+        };
+
+        // Terminal area content
+        let terminal_area = match (snapshot, backend) {
+            (Some(snapshot), Some(backend)) => div()
+                .size_full().relative()
+                .on_prepaint({
+                    let view = cx.entity().clone();
+                    move |bounds, _window, cx| {
+                        let _ = view.update(cx, |this, _| { this.terminal_bounds = Some(bounds); });
+                    }
+                })
+                .child(TerminalElement::new(snapshot, backend, focus2, FONT_FAMILY, px(fs), lh_px, cw_px))
+                .into_any_element(),
+            _ => v_flex()
+                .size_full().items_center().justify_center().gap_6()
+                .child(div().text_size(px(24.)).child("deepin-herdr"))
+                .child(div().text_size(px(14.)).text_color(theme.muted_foreground).child(self.status.clone()))
+                .child(Button::new("term").primary().label("Terminal")
+                    .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                        this.spawn_pty("bash", &[], cx); cx.notify();
+                    })))
+                .child(Button::new("herdr").ghost().label("Launch herdr")
+                    .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                        this.launch_attempts = 0; this.connect_attempted = false;
+                        this.connect_herdr(cx); cx.notify();
+                    })))
+                .into_any_element(),
+        };
+
+        h_flex()
             .size_full()
             .bg(theme.background)
             .text_color(theme.foreground)
@@ -421,55 +556,8 @@ impl Render for DeepinHerdr {
             .on_mouse_up(MouseButton::Middle, cx.listener(Self::on_mouse_up))
             .on_mouse_up(MouseButton::Right, cx.listener(Self::on_mouse_up))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
-            .child(match (snapshot, backend) {
-                (Some(snapshot), Some(backend)) => div()
-                    .size_full().relative()
-                    .on_prepaint({
-                        let view = cx.entity().clone();
-                        move |bounds, _window, cx| {
-                            let _ = view.update(cx, |this, _| { this.terminal_bounds = Some(bounds); });
-                        }
-                    })
-                    .child(TerminalElement::new(snapshot, backend, focus, FONT_FAMILY, px(fs), lh_px, cw_px))
-                    .into_any_element(),
-                _ => v_flex()
-                    .size_full().items_center().justify_center().gap_6()
-                    .child(div().text_size(px(24.)).child("deepin-herdr"))
-                    .child(div().text_size(px(14.)).text_color(theme.muted_foreground).child(self.status.clone()))
-                    .child(Button::new("term").primary().label("Terminal")
-                        .on_click(cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
-                            this.spawn_pty("bash", &[], cx); cx.notify();
-                        })))
-                    .child(Button::new("herdr").ghost().label("Launch herdr")
-                        .on_click(cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
-                            this.launch_attempts = 0; this.connect_attempted = false;
-                            this.connect_herdr(cx); cx.notify();
-                        })))
-                    .into_any_element(),
-            })
-            .children(settings_overlay)
+            .child(div().flex_grow(1.0).h_full().child(terminal_area))
+            .children(panel)
+            .child(sidebar::sidebar(&theme, self.active_panel, sysinfo_cb, settings_cb))
     }
-}
-
-fn settings_panel(theme: gpui_component::Theme, font_size: f32, cx: &mut Context<DeepinHerdr>) -> impl IntoElement {
-    let bg = if theme.is_dark() { gpui::rgba(0x18181BFF) } else { gpui::rgba(0xFAFAFAFF) };
-    div()
-        .absolute().top(px(60.)).right(px(16.)).w(px(280.))
-        .bg(bg).border_1().border_color(theme.border).rounded_lg().shadow_md().p_4()
-        .child(v_flex().gap_4()
-            .child(div().text_size(px(15.)).font_weight(gpui::FontWeight::BOLD).child("Settings"))
-            .child(v_flex().gap_2()
-                .child(div().text_size(px(12.)).text_color(theme.muted_foreground).child("Font size"))
-                .child(h_flex().gap_2().items_center()
-                    .child(Button::new("f-dn").ghost().label("\u{2212}").on_click(cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
-                        this.change_font_size(this.terminal_font_size - 1.0); cx.notify();
-                    })))
-                    .child(div().text_size(px(24.)).child(format!("{:.0}px", font_size)))
-                    .child(Button::new("f-up").ghost().label("+").on_click(cx.listener(|this, _: &gpui::ClickEvent, _window, cx| {
-                        this.change_font_size(this.terminal_font_size + 1.0); cx.notify();
-                    })))))
-            .child(div().text_size(px(11.)).text_color(theme.muted_foreground).child("F1 / Ctrl+,  :  settings"))
-            .child(div().text_size(px(11.)).text_color(theme.muted_foreground).child("Ctrl+= / Ctrl+minus  :  zoom"))
-            .child(div().text_size(px(11.)).text_color(theme.muted_foreground).child("Ctrl+Shift+C/V  :  copy/paste"))
-        )
 }

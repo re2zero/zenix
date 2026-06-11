@@ -12,6 +12,8 @@ fn default_dark_theme_name() -> String { "system".into() }
 pub struct ConfigFile {
     #[serde(default = "default_terminal_font_size")]
     pub terminal_font_size: f32,
+    #[serde(default)]
+    pub theme_name: String,
     #[serde(default = "default_dark_theme_name")]
     pub dark_theme_name: String,
 }
@@ -20,6 +22,7 @@ impl Default for ConfigFile {
     fn default() -> Self {
         Self {
             terminal_font_size: default_terminal_font_size(),
+            theme_name: String::new(),
             dark_theme_name: default_dark_theme_name(),
         }
     }
@@ -61,6 +64,14 @@ impl ConfigStore {
 
     pub fn set_dark_theme_name(&mut self, name: String) {
         self.data.dark_theme_name = name;
+    }
+
+    pub fn theme_name(&self) -> &str {
+        &self.data.theme_name
+    }
+
+    pub fn set_theme_name(&mut self, name: String) {
+        self.data.theme_name = name;
     }
 
     pub fn save(&self) -> Result<()> {

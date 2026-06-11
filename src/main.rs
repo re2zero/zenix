@@ -3,6 +3,8 @@
 mod app;
 mod config;
 mod herdr;
+mod sidebar;
+mod system_info;
 mod terminal;
 mod terminal_element;
 
