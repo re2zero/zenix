@@ -30,8 +30,13 @@ fn main() {
     }
 
     if profile == "release" {
-        // Release: always build from submodule for version guarantee
+        // Release: always build from submodule for version guarantee.
+        // Also copy to res/ so cargo-deb can find it without interpreting as a bin target.
         build_herdr(&herdr_dir, name, &dest);
+        let seed = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("res").join(name);
+        let _ = fs::create_dir_all(seed.parent().unwrap());
+        fs::copy(&dest, &seed).expect("failed to copy herdr seed to res/");
+        eprintln!("herdr seed → {}", seed.display());
     } else {
         // Dev: copy system herdr for speed; fall back to submodule build
         if let Some(sys) = find_system_herdr() {
