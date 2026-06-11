@@ -14,7 +14,7 @@ use gpui_component::{
     separator::Separator,
 };
 
-use crate::system_info::{NetInterface, SystemInfo};
+use crate::sys::{NetInterface, SystemInfo};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Panel { None, Settings, SystemInfo }
@@ -256,7 +256,7 @@ fn net_iface(ni: &NetInterface, mu: gpui::Hsla) -> AnyElement {
         .into_any_element()
 }
 
-fn disk_mount(dm: &crate::system_info::DiskMount, mu: gpui::Hsla) -> AnyElement {
+fn disk_mount(dm: &crate::sys::DiskMount, mu: gpui::Hsla) -> AnyElement {
     txt(px(10.)).text_color(mu)
         .child(format!("{}  {:.1}%", dm.mount_point, dm.percent))
         .into_any_element()

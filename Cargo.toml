@@ -1,9 +1,9 @@
 [package]
-name = "deepin-herdr"
+name = "zenix"
 version = "0.1.0"
 edition = "2024"
-authors = ["deepin-herdr contributors"]
-description = "A cross-platform GPUI frontend for herdr terminal workspace manager"
+authors = ["zenix contributors"]
+description = "A cross-platform GPUI frontend for herdr terminal workspace manager — extensible with plugins and sub-apps"
 license = "GPL-3.0-or-later"
 
 [dependencies]
@@ -38,3 +38,20 @@ opt-level = 3
 lto = "thin"
 codegen-units = 1
 strip = true
+
+[package.metadata.deb]
+maintainer = "re2zero <yangwu@uniontech.com>"
+section = "utils"
+priority = "optional"
+assets = [
+    ["zenix.desktop", "usr/share/applications/", "644"],
+    ["zenix.svg", "usr/share/icons/hicolor/scalable/apps/", "644"],
+    ["assets/", "usr/share/zenix/assets/", "644"],
+]
+extended-description = """\
+zenix is an extensible terminal workspace manager designed for AI coding agents.
+It provides workspace, tab, and pane management with a client-server
+architecture, plus system monitoring and plugin support.
+.
+This package contains the GPUI frontend that embeds the herdr
+terminal client and auto-connects on first launch."""

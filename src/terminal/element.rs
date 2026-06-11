@@ -20,7 +20,7 @@ use gpui::{
 };
 use gpui_component::ActiveTheme as _;
 
-use crate::app::DeepinHerdr;
+use crate::app::ZenixApp;
 use crate::terminal::RenderSnapshot;
 // ── Metrics ───────────────────────────────────────────────────────────
 
@@ -154,7 +154,7 @@ pub struct PrepaintState {
 // ── Terminal Input Handler (IME support) ──────────────────────────────
 
 struct TerminalInputHandler {
-  app: gpui::Entity<DeepinHerdr>,
+  app: gpui::Entity<ZenixApp>,
   cursor_bounds: Option<Bounds<Pixels>>,
 }
 
@@ -252,7 +252,7 @@ impl InputHandler for TerminalInputHandler {
 // ── Terminal Element ──────────────────────────────────────────────────
 pub struct TerminalElement {
   snapshot: RenderSnapshot,
-  app: gpui::Entity<DeepinHerdr>,
+  app: gpui::Entity<ZenixApp>,
   focus_handle: FocusHandle,
   font_family: SharedString,
   font_size: Pixels,
@@ -266,7 +266,7 @@ pub struct TerminalElement {
 impl TerminalElement {
   pub fn new(
     snapshot: RenderSnapshot,
-    app: gpui::Entity<DeepinHerdr>,
+    app: gpui::Entity<ZenixApp>,
     focus_handle: FocusHandle,
     font_family: impl Into<SharedString>,
     font_size: Pixels,

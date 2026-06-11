@@ -1,18 +1,17 @@
 #![windows_subsystem = "windows"]
 
 mod app;
+mod client;
 mod config;
-mod herdr;
-mod sidebar;
-mod system_info;
+mod sys;
 mod terminal;
-mod terminal_element;
+mod ui;
 
 use gpui::{App, AppContext, Bounds, point, size};
 use gpui_component::{Root, Theme, ThemeRegistry};
 use gpui_component_assets::Assets;
 
-use crate::app::DeepinHerdr;
+use crate::app::ZenixApp;
 
 const EMBEDDED_THEME_JSONS: &[&str] = &[
     include_str!("../assets/themes/matrix.json"),
@@ -70,7 +69,7 @@ fn open_main_window(cx: &mut App) {
 
     cx.open_window(options, |window, cx| {
         window.activate_window();
-        window.set_window_title("deepin-herdr");
+        window.set_window_title("zenix");
         Theme::sync_system_appearance(Some(window), cx);
 
         // Apply persisted theme AFTER system appearance sync
@@ -84,7 +83,7 @@ fn open_main_window(cx: &mut App) {
         let theme = Theme::global_mut(cx);
         theme.font_family = "Lilex".into();
 
-        let view = cx.new(|cx| DeepinHerdr::new(window, cx, config));
+        let view = cx.new(|cx| ZenixApp::new(window, cx, config));
         cx.new(|cx| Root::new(view, window, cx))
     })
     .expect("failed to open window");

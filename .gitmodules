@@ -1,0 +1,3 @@
+[submodule "herdr"]
+	path = herdr
+	url = https://github.com/ogulcancelik/herdr.git

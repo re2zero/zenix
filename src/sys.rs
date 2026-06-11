@@ -213,14 +213,6 @@ fn read_disk_mounts() -> Vec<DiskMount> {
             || mp.starts_with("/run") || mp == "/snap" {
             continue;
         }
-        // Get usage via statvfs equivalent: read /proc/diskstats won't help.
-        // Use libc statvfs or just parse `df` output. For simplicity, parse /proc/mounts
-        // and approximate — or use a simple inline implementation.
-        // Actually, we can compute from sysfs. Let's just note the mount point
-        // and skip usage for now (too complex without libc).
-        // Many system monitors use statvfs, which we can call via nix crate but
-        // we don't have it. Skip disk usage for purity.
-        // Better: implement a minimal statvfs equivalent.
         out.push(DiskMount {
             mount_point: mp.to_string(),
             total_gb: 0.0,

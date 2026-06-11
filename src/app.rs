@@ -16,14 +16,13 @@ use gpui_component::{
 
 use crate::{
     config::ConfigStore,
-    herdr,
-    sidebar::{self, Panel},
-    system_info::{self, CpuSamples, SystemInfo},
+    client as herdr,
+    ui::{self as sidebar, Panel},
+    sys::{self as system_info, CpuSamples, SystemInfo},
     terminal::{
-        self, BackendCommand, BackendEvent, BackendTx, TerminalTab,
+        self, BackendCommand, BackendEvent, BackendTx, ImeState, TerminalTab, TerminalElement,
         encode_key, encode_mouse_drag, encode_mouse_event, encode_mouse_motion, encode_mouse_scroll,
     },
-    terminal_element::{ImeState, TerminalElement},
 };
 
 const FONT_FAMILY: &str = "Lilex";
@@ -31,7 +30,7 @@ const MAX_CONNECT_ATTEMPTS: usize = 200;
 const FONT_SIZE_MIN: f32 = 8.0;
 const FONT_SIZE_MAX: f32 = 24.0;
 
-pub struct DeepinHerdr {
+pub struct ZenixApp {
     focus_handle: FocusHandle,
     backend: Option<BackendTx>,
     tab: Option<TerminalTab>,
@@ -67,7 +66,7 @@ fn write_to_pty(backend: &Option<BackendTx>, tab: &mut Option<TerminalTab>, byte
     }
 }
 
-impl DeepinHerdr {
+impl ZenixApp {
     pub fn new(_window: &mut Window, cx: &mut Context<Self>, config: ConfigStore) -> Self {
         let focus_handle = cx.focus_handle();
         let (events_tx, events_rx) = mpsc::channel();
@@ -471,7 +470,7 @@ impl DeepinHerdr {
     }
 }
 
-impl Render for DeepinHerdr {
+impl Render for ZenixApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.connected && !self.connect_attempted {
             self.start_event_pump(cx);
@@ -599,7 +598,7 @@ impl Render for DeepinHerdr {
             },
             _ => v_flex()
                 .size_full().items_center().justify_center().gap_6()
-                .child(div().text_size(px(24.)).child("deepin-herdr"))
+                .child(div().text_size(px(24.)).child("zenix"))
                 .child(div().text_size(px(14.)).text_color(theme.muted_foreground).child(self.status.clone()))
                 .child(Button::new("term").primary().label("Terminal")
                     .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {

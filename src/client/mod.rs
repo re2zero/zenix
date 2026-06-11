@@ -1,10 +1,18 @@
-//! Herdr binary management: find, install, and launch.
+//! Herdr binary management: bundled binary from submodule, plus PATH fallback.
 
 use std::path::PathBuf;
 
-/// Find the herdr binary in standard locations.
+/// Path to the herdr binary built from the submodule at compile time.
+const BUNDLED_HERDR: &str = env!("HERDR_BINARY");
+
+/// Find the herdr binary: bundled first, then PATH fallback.
 pub fn find_herdr_binary() -> Option<PathBuf> {
-    // 1. Check PATH
+    // 1. Bundled binary from submodule build
+    let bundled = PathBuf::from(BUNDLED_HERDR);
+    if bundled.is_file() {
+        return Some(bundled);
+    }
+    // 2. Check PATH (dev convenience)
     if let Ok(path) = std::env::var("PATH") {
         for dir in std::env::split_paths(&path) {
             let candidate = dir.join("herdr");
@@ -13,7 +21,7 @@ pub fn find_herdr_binary() -> Option<PathBuf> {
             }
         }
     }
-    // 2. Check ~/.local/bin/herdr
+    // 3. Check ~/.local/bin/herdr
     let home = PathBuf::from(
         std::env::var("HOME")
             .unwrap_or_else(|_| "/root".to_string()),

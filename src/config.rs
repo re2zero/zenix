@@ -86,5 +86,5 @@ impl ConfigStore {
 
 fn config_path() -> PathBuf {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-    PathBuf::from(home).join(".config/deepin-herdr/config.json")
+    PathBuf::from(home).join(".config/zenix/config.json")
 }

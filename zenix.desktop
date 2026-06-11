@@ -1,11 +1,11 @@
 [Desktop Entry]
-Name=deepin-herdr
+Name=zenix
 GenericName=AI Terminal Workspace
-Comment=Terminal workspace manager for AI coding agents
-Exec=deepin-herdr
-Icon=deepin-herdr
+Comment=Extensible terminal workspace manager for AI coding agents
+Exec=zenix
+Icon=zenix
 Terminal=false
 Type=Application
 Categories=Development;TerminalEmulator;
 Keywords=terminal;herdr;ai;coding;
-StartupWMClass=deepin-herdr
+StartupWMClass=zenix
