@@ -30,6 +30,24 @@ fn load_embedded_themes(cx: &mut App) {
     }
 }
 
+const EMBEDDED_FONTS: &[&[u8]] = &[
+    include_bytes!("../assets/fonts/Lilex-Regular.ttf"),
+    include_bytes!("../assets/fonts/Lilex-Bold.ttf"),
+    include_bytes!("../assets/fonts/Lilex-Italic.ttf"),
+    include_bytes!("../assets/fonts/Lilex-BoldItalic.ttf"),
+];
+
+fn load_embedded_fonts(cx: &mut App) {
+    let text_system = cx.text_system();
+    let fonts: Vec<std::borrow::Cow<'static, [u8]>> = EMBEDDED_FONTS
+        .iter()
+        .map(|data| std::borrow::Cow::Borrowed(*data))
+        .collect();
+    if let Err(err) = text_system.add_fonts(fonts) {
+        tracing::warn!("failed to load embedded fonts: {err:#}");
+    }
+}
+
 fn open_main_window(cx: &mut App) {
     let config = config::ConfigStore::load().unwrap_or_default();
 
@@ -62,6 +80,9 @@ fn open_main_window(cx: &mut App) {
                 Theme::global_mut(cx).apply_config(&tc);
             }
         }
+        // Force embedded Lilex font after all theme applications.
+        let theme = Theme::global_mut(cx);
+        theme.font_family = "Lilex".into();
 
         let view = cx.new(|cx| DeepinHerdr::new(window, cx, config));
         cx.new(|cx| Root::new(view, window, cx))
@@ -83,6 +104,12 @@ fn main() {
     app.run(move |cx| {
         gpui_component::init(cx);
         load_embedded_themes(cx);
+        load_embedded_fonts(cx);
+
+        // Override gpui_component's default font family with embedded Lilex.
+        let theme = Theme::global_mut(cx);
+        theme.font_family = "Lilex".into();
+
         open_main_window(cx);
     });
 }

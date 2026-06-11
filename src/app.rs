@@ -1,6 +1,6 @@
 //! Single-terminal app — auto-connects to herdr on startup.
 
-use std::{sync::mpsc::{self, Receiver, Sender}, time::Duration};
+use std::{ops::Range, sync::mpsc::{self, Receiver, Sender}, time::Duration};
 
 use alacritty_terminal::{index::Side, selection::SelectionType};
 use gpui::{
@@ -23,10 +23,10 @@ use crate::{
         self, BackendCommand, BackendEvent, BackendTx, TerminalTab,
         encode_key, encode_mouse_drag, encode_mouse_event, encode_mouse_motion, encode_mouse_scroll,
     },
-    terminal_element::TerminalElement,
+    terminal_element::{ImeState, TerminalElement},
 };
 
-const FONT_FAMILY: &str = "Noto Mono";
+const FONT_FAMILY: &str = "Lilex";
 const MAX_CONNECT_ATTEMPTS: usize = 200;
 const FONT_SIZE_MIN: f32 = 8.0;
 const FONT_SIZE_MAX: f32 = 24.0;
@@ -56,6 +56,7 @@ pub struct DeepinHerdr {
     terminal_descent: Pixels,
     last_mouse_cell: Option<(usize, usize)>,
     last_selection_cell: Option<(usize, usize)>,
+    ime_state: Option<ImeState>,
 }
 fn write_to_pty(backend: &Option<BackendTx>, tab: &mut Option<TerminalTab>, bytes: Vec<u8>) {
     if let Some(backend) = backend {
@@ -90,6 +91,7 @@ impl DeepinHerdr {
             terminal_ascent: px(14.0 * 0.8),
             terminal_descent: px(14.0 * 0.2),
             last_mouse_cell: None, last_selection_cell: None,
+            ime_state: None,
         }
     }
 
@@ -204,6 +206,8 @@ impl DeepinHerdr {
         if let Some(config) = config {
             let theme = Theme::global_mut(cx);
             theme.apply_config(&config);
+            // Force embedded Lilex font — theme configs may override font_family.
+            theme.font_family = "Lilex".into();
             window.refresh();
             self.config.set_theme_name(name.to_string());
             if let Err(e) = self.config.save() {
@@ -212,6 +216,41 @@ impl DeepinHerdr {
         }
     }
 
+
+    // ── IME (Input Method Editor) support ────────────────────────────────
+
+    /// Sets the marked (pre-edit) text from the IME composition.
+    pub(crate) fn set_marked_text(&mut self, text: String, cx: &mut Context<Self>) {
+        if text.is_empty() {
+            self.clear_marked_text(cx);
+            return;
+        }
+        self.ime_state = Some(ImeState { marked_text: text });
+        cx.notify();
+    }
+
+    /// Returns the current marked text range (UTF-16) for IME cursor placement.
+    pub(crate) fn marked_text_range(&self) -> Option<Range<usize>> {
+        self.ime_state
+            .as_ref()
+            .map(|state| 0..state.marked_text.encode_utf16().count())
+    }
+
+    /// Clears the marked text state, ending IME composition.
+    pub(crate) fn clear_marked_text(&mut self, cx: &mut Context<Self>) {
+        if self.ime_state.is_some() {
+            self.ime_state = None;
+            cx.notify();
+        }
+    }
+
+    /// Commits finalized text from the IME to the PTY.
+    pub(crate) fn commit_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        if !text.is_empty() {
+            write_to_pty(&self.backend, &mut self.tab, text.as_bytes().to_vec());
+            cx.notify();
+        }
+    }
 
     fn start_sysinfo_poll(&mut self, cx: &mut Context<Self>) {
         if self.sysinfo_polling { return; }
@@ -231,11 +270,11 @@ impl DeepinHerdr {
             }
         }).detach();
     }
-
     fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let modifiers = event.keystroke.modifiers;
         let key = &event.keystroke.key;
 
+        // App-level shortcuts (not terminal input).
         if (modifiers.secondary() && key.eq_ignore_ascii_case(",")) || key.eq_ignore_ascii_case("f1") {
             self.toggle_panel(Panel::Settings);
             cx.notify();
@@ -263,12 +302,17 @@ impl DeepinHerdr {
             }
             return;
         }
-        if event.prefer_character_input {
-            if let Some(text) = event.keystroke.key_char.as_deref() {
-                if !text.is_empty() { write_to_pty(&self.backend, &mut self.tab, text.as_bytes().to_vec()); }
-            }
+
+        // All printable characters without modifiers are handled by
+        // the InputHandler's replace_text_in_range. We must NOT send
+        // them here to avoid double input.
+        if !event.keystroke.modifiers.modified()
+            && event.keystroke.key.len() == 1
+        {
             return;
         }
+
+        // Terminal keystrokes (named keys, modified keys): encode and send.
         if let Some(tab) = &self.tab {
             if let Some(bytes) = encode_key(&event.keystroke, tab.app_cursor_mode(), false) {
                 write_to_pty(&self.backend, &mut self.tab, bytes);
@@ -539,7 +583,10 @@ impl Render for DeepinHerdr {
 
         // Terminal area content
         let terminal_area = match (snapshot, backend) {
-            (Some(snapshot), Some(backend)) => div()
+            (Some(snapshot), Some(_backend)) => {
+                let app_entity = cx.entity().clone();
+                let ime = self.ime_state.clone();
+                div()
                 .size_full().relative()
                 .on_prepaint({
                     let view = cx.entity().clone();
@@ -547,8 +594,9 @@ impl Render for DeepinHerdr {
                         let _ = view.update(cx, |this, _| { this.terminal_bounds = Some(bounds); });
                     }
                 })
-                .child(TerminalElement::new(snapshot, backend, focus2, FONT_FAMILY, px(fs), lh_px, cw_px, self.terminal_ascent, self.terminal_descent))
-                .into_any_element(),
+                .child(TerminalElement::new(snapshot, app_entity, focus2, FONT_FAMILY, px(fs), lh_px, cw_px, self.terminal_ascent, self.terminal_descent, ime))
+                .into_any_element()
+            },
             _ => v_flex()
                 .size_full().items_center().justify_center().gap_6()
                 .child(div().text_size(px(24.)).child("deepin-herdr"))
