@@ -64,3 +64,6 @@ architecture, plus system monitoring and plugin support.
 .
 This package contains the GPUI frontend that embeds the herdr
 terminal client and auto-connects on first launch."""
+
+[patch."https://github.com/zed-industries/zed"]
+gpui_wgpu = { path = "vendor/gpui_wgpu_patched" }
