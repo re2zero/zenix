@@ -1,3 +1,10 @@
+# Submodule tracks the latest stable release tag of herdr.
+# The exact commit is recorded in the parent repo's git tree
+# (run `git submodule status` to see it).  When a new tag is
+# released upstream, update with:
+#   cd herdr && git fetch --tags && git checkout v<new>
+#   cd .. && git add herdr && git commit -m "chore: bump herdr to v<new>"
+
 [submodule "herdr"]
 	path = herdr
 	url = https://github.com/ogulcancelik/herdr.git
