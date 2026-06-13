@@ -1,6 +1,7 @@
 //! Resizable settings dialog with vertical tab navigation.
 
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use gpui::{
     div, px, relative, AnyElement, ClickEvent, InteractiveElement as _, IntoElement,
@@ -15,6 +16,15 @@ use crate::agent::{AgentCliInfo, AgentCliStatus};
 use crate::i18n::t;
 
 use super::ThemeCallback;
+
+/// `Box<dyn Fn(T, &mut Window, &mut gpui::App)>` — standard GPUI event callback.
+pub type ActionCb<T> = Box<dyn Fn(T, &mut Window, &mut gpui::App)>;
+
+/// `Rc<Box<dyn Fn(T, &mut Window, &mut gpui::App)>>` — shared version for sub-functions.
+pub type SharedActionCb<T> = Rc<Box<dyn Fn(T, &mut Window, &mut gpui::App)>>;
+
+/// No-payload callback (e.g. close button).
+pub type CloseCb = Box<dyn Fn(&mut Window, &mut gpui::App)>;
 
 /// Actions that the Skills tab can request from the app.
 #[derive(Clone)]
@@ -74,17 +84,18 @@ const TAB_MIN_H: f32 = 360.0;
 // ── Agents that support skills (directory with SKILL.md) ───────────
 pub const SKILL_AGENTS: &[&str] = &["claude", "codex", "opencode", "pi", "omp", "kilo", "hermes"];
 
+#[allow(clippy::too_many_arguments)]
 pub fn settings_dialog(
     active_tab: usize,
-    on_tab_change: Box<dyn Fn(usize, &mut Window, &mut gpui::App)>,
-    on_close: Box<dyn Fn(&mut Window, &mut gpui::App)>,
+    on_tab_change: ActionCb<usize>,
+    on_close: CloseCb,
     font_size: f32,
     current_theme_name: &str,
     theme_buttons: Vec<AnyElement>,
     on_font_down: ThemeCallback,
     on_font_up: ThemeCallback,
     locale: &str,
-    on_locale_change: Box<dyn Fn(String, &mut Window, &mut gpui::App)>,
+    on_locale_change: ActionCb<String>,
     agents: &[AgentCliInfo],
     mcp_zenix_servers: &[crate::mcp::ZenixMcpServer],
     mcp_per_agent: &[(String, Vec<crate::mcp::McpServerEntry>)],
@@ -93,20 +104,20 @@ pub fn settings_dialog(
     skills: &HashMap<String, crate::skills::SkillInfo>,
     skill_dialog_input: Option<&gpui::Entity<gpui_component::input::InputState>>,
     skill_dialog_mode: &InputDialogMode,
-    on_skill_action: Box<dyn Fn(SkillAction, &mut Window, &mut gpui::App)>,
-    on_mcp_action: Box<dyn Fn(McpAction, &mut Window, &mut gpui::App)>,
-    on_cli_action: Box<dyn Fn(CliAction, &mut Window, &mut gpui::App)>,
+    on_skill_action: ActionCb<SkillAction>,
+    on_mcp_action: ActionCb<McpAction>,
+    on_cli_action: ActionCb<CliAction>,
     win_w: f32,
     win_h: f32,
 ) -> impl IntoElement {
     let dialog_w = (win_w * 0.75).max(TAB_MIN_W);
     let dialog_h = (win_h * 0.75).max(TAB_MIN_H);
     let active_tab_c = active_tab;
-    let otc = std::rc::Rc::new(on_tab_change);
-    let osa = std::rc::Rc::new(on_skill_action);
-    let oma = std::rc::Rc::new(on_mcp_action);
-    let oca = std::rc::Rc::new(on_cli_action);
-    let oc = std::rc::Rc::new(on_close);
+    let otc = Rc::new(on_tab_change);
+    let osa = Rc::new(on_skill_action);
+    let oma = Rc::new(on_mcp_action);
+    let oca = Rc::new(on_cli_action);
+    let oc = Rc::new(on_close);
 
     let tab_labels = [
         t("settings.tab.general"), t("settings.tab.appearance"),
@@ -131,8 +142,8 @@ pub fn settings_dialog(
             div()
                 .id("settings-dialog")
                 .w(px(dialog_w)).h(px(dialog_h))
-                .bg(gpui::rgba(0x1e1e2eFF))
-                .border_1().border_color(gpui::rgba(0x45475aFF))
+                .bg(gpui::rgba(0x1e1e2eff))
+                .border_1().border_color(gpui::rgba(0x45475aff))
                 .rounded_lg().shadow_lg()
                 .flex().flex_col()
                 .font_family("Lilex")
@@ -165,7 +176,7 @@ pub fn settings_dialog(
         )
 }
 
-fn tab_panel(otc: &std::rc::Rc<Box<dyn Fn(usize, &mut Window, &mut gpui::App)>>, active: usize, labels: &[String]) -> impl IntoElement {
+fn tab_panel(otc: &SharedActionCb<usize>, active: usize, labels: &[String]) -> impl IntoElement {
     v_flex().flex_none().w(px(TAB_PANEL_W)).h_full()
         .border_r_1().border_color(gpui::rgba(0x45475a44)).py_2()
         .children((0..labels.len()).map(|i| {
@@ -180,10 +191,11 @@ fn tab_panel(otc: &std::rc::Rc<Box<dyn Fn(usize, &mut Window, &mut gpui::App)>>,
         }).collect::<Vec<_>>())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn tab_content(
     active_tab: usize, font_size: f32, current_theme_name: &str,
     theme_buttons: Vec<AnyElement>, on_font_down: ThemeCallback, on_font_up: ThemeCallback,
-    locale: &str, on_locale_change: Box<dyn Fn(String, &mut Window, &mut gpui::App)>,
+    locale: &str, on_locale_change: ActionCb<String>,
     agents: &[AgentCliInfo],
     mcp_zenix_servers: &[crate::mcp::ZenixMcpServer],
     mcp_per_agent: &[(String, Vec<crate::mcp::McpServerEntry>)],
@@ -192,9 +204,9 @@ fn tab_content(
     skills: &HashMap<String, crate::skills::SkillInfo>,
     skill_dialog_input: Option<&gpui::Entity<gpui_component::input::InputState>>,
     skill_dialog_mode: &InputDialogMode,
-    on_skill_action: &std::rc::Rc<Box<dyn Fn(SkillAction, &mut Window, &mut gpui::App)>>,
-    on_mcp_action: &std::rc::Rc<Box<dyn Fn(McpAction, &mut Window, &mut gpui::App)>>,
-    on_cli_action: &std::rc::Rc<Box<dyn Fn(CliAction, &mut Window, &mut gpui::App)>>,
+    on_skill_action: &SharedActionCb<SkillAction>,
+    on_mcp_action: &SharedActionCb<McpAction>,
+    on_cli_action: &SharedActionCb<CliAction>,
 ) -> AnyElement {
     match active_tab {
         0 => tab_general(locale, on_locale_change).into_any_element(),
@@ -209,9 +221,9 @@ fn tab_content(
         _ => tab_placeholder().into_any_element(),
     }
 }
-fn tab_general(locale: &str, on_locale_change: Box<dyn Fn(String, &mut Window, &mut gpui::App)>) -> impl IntoElement {
+fn tab_general(locale: &str, on_locale_change: ActionCb<String>) -> impl IntoElement {
     let loc = locale.to_string();
-    let cb = std::rc::Rc::new(on_locale_change);
+    let cb = Rc::new(on_locale_change);
     v_flex().gap(px(12.))
         .child(setting_group_header(t("settings.general.language")))
         .child(h_flex().gap(px(4.))
@@ -219,7 +231,7 @@ fn tab_general(locale: &str, on_locale_change: Box<dyn Fn(String, &mut Window, &
             .child(locale_btn("zh-CN", "中文", &loc, cb)))
 }
 
-fn locale_btn(code: &str, label: &str, current: &str, on_change: std::rc::Rc<Box<dyn Fn(String, &mut Window, &mut gpui::App)>>) -> impl IntoElement {
+fn locale_btn(code: &str, label: &str, current: &str, on_change: SharedActionCb<String>) -> impl IntoElement {
     let is_current = code == current;
     let code_s = code.to_string();
     Button::new(format!("locale-{code}"))
@@ -231,7 +243,7 @@ fn locale_btn(code: &str, label: &str, current: &str, on_change: std::rc::Rc<Box
 // ── Appearance ───────────────────────────────────────────────────────
 
 fn tab_appearance(font_size: f32, _current_theme_name: &str, theme_buttons: Vec<AnyElement>, on_font_down: ThemeCallback, on_font_up: ThemeCallback) -> impl IntoElement {
-    let mid = (theme_buttons.len() + 1) / 2;
+    let mid = theme_buttons.len().div_ceil(2);
     let mut iter = theme_buttons.into_iter();
     let col1: Vec<_> = iter.by_ref().take(mid).collect();
     let col2: Vec<_> = iter.collect();
@@ -262,7 +274,7 @@ fn tab_terminal() -> impl IntoElement {
 
 fn tab_agent_cli(
     agents: &[AgentCliInfo],
-    on_cli_action: &std::rc::Rc<Box<dyn Fn(CliAction, &mut Window, &mut gpui::App)>>,
+    on_cli_action: &SharedActionCb<CliAction>,
 ) -> impl IntoElement {
     v_flex().gap(px(10.))
         .child(setting_group_header(t("settings.tab.agent_cli")))
@@ -272,7 +284,7 @@ fn tab_agent_cli(
 
 fn agent_card(
     info: &AgentCliInfo,
-    on_cli_action: &std::rc::Rc<Box<dyn Fn(CliAction, &mut Window, &mut gpui::App)>>,
+    on_cli_action: &SharedActionCb<CliAction>,
 ) -> impl IntoElement {
     let (status_text, status_color) = match &info.status {
         AgentCliStatus::Installed { version } => (format!("v{version}"), gpui::rgba(0x00DD44FF)),
@@ -294,7 +306,7 @@ fn tab_mcp(
     per_agent: &[(String, Vec<crate::mcp::McpServerEntry>)],
     mcp_form: Option<&McpFormState>,
     available_agents: &[String],
-    on_mcp_action: &std::rc::Rc<Box<dyn Fn(McpAction, &mut Window, &mut gpui::App)>>,
+    on_mcp_action: &SharedActionCb<McpAction>,
 ) -> impl IntoElement {
     let add_cb = {
         let oma = on_mcp_action.clone();
@@ -333,7 +345,7 @@ fn tab_mcp(
 fn mcp_card(
     s: &crate::mcp::ZenixMcpServer,
     available_agents: &[String],
-    on_mcp_action: &std::rc::Rc<Box<dyn Fn(McpAction, &mut Window, &mut gpui::App)>>,
+    on_mcp_action: &SharedActionCb<McpAction>,
 ) -> impl IntoElement {
     let name = s.name.clone();
     let enabled_count = s.enabled_agents.len();
@@ -404,7 +416,7 @@ fn mcp_card(
 
 fn mcp_add_form(
     form: &McpFormState,
-    on_mcp_action: &std::rc::Rc<Box<dyn Fn(McpAction, &mut Window, &mut gpui::App)>>,
+    on_mcp_action: &SharedActionCb<McpAction>,
 ) -> impl IntoElement {
     let cancel_cb = {
         let oma = on_mcp_action.clone();
@@ -464,7 +476,7 @@ fn mcp_add_form(
 fn mcp_agent_section(
     agent: &str,
     entries: &[crate::mcp::McpServerEntry],
-    on_mcp_action: &std::rc::Rc<Box<dyn Fn(McpAction, &mut Window, &mut gpui::App)>>,
+    on_mcp_action: &SharedActionCb<McpAction>,
 ) -> impl IntoElement {
     v_flex().gap(px(8.))
         .child(txt(px(13.)).font_weight(gpui::FontWeight::BOLD).child(agent.to_string()))
@@ -480,7 +492,7 @@ fn mcp_agent_section(
 fn mcp_agent_entry(
     agent: &str,
     entry: &crate::mcp::McpServerEntry,
-    on_mcp_action: &std::rc::Rc<Box<dyn Fn(McpAction, &mut Window, &mut gpui::App)>>,
+    on_mcp_action: &SharedActionCb<McpAction>,
 ) -> impl IntoElement {
     let name = entry.name.clone();
     let cmd = format!("{} {}", entry.command, entry.args.join(" "));
@@ -524,7 +536,7 @@ fn mcp_agent_entry(
 
 fn agent_action_buttons(
     info: &AgentCliInfo,
-    on_cli_action: &std::rc::Rc<Box<dyn Fn(CliAction, &mut Window, &mut gpui::App)>>,
+    on_cli_action: &SharedActionCb<CliAction>,
 ) -> Vec<AnyElement> {
     let name = info.name.to_string();
     let mut btns: Vec<AnyElement> = Vec::new();
@@ -580,7 +592,7 @@ fn tab_skills(
     skills: &HashMap<String, crate::skills::SkillInfo>,
     skill_dialog_input: Option<&gpui::Entity<gpui_component::input::InputState>>,
     skill_dialog_mode: &InputDialogMode,
-    on_skill_action: &std::rc::Rc<Box<dyn Fn(SkillAction, &mut Window, &mut gpui::App)>>,
+    on_skill_action: &SharedActionCb<SkillAction>,
 ) -> impl IntoElement {
     let zenix_skills = crate::skills::zenix_skills();
     let mut sorted: Vec<_> = zenix_skills.iter().collect();
@@ -588,7 +600,7 @@ fn tab_skills(
 
     // Group per-agent skills: agent -> list of skill refs
     let mut per_agent: HashMap<&str, Vec<&crate::skills::SkillInfo>> = HashMap::new();
-    for (_, info) in skills {
+    for info in skills.values() {
         for agent in &info.source_agents { per_agent.entry(agent.as_str()).or_default().push(info); }
         for agent in &info.linked_agents { per_agent.entry(agent.as_str()).or_default().push(info); }
     }
@@ -631,7 +643,7 @@ fn tab_skills(
 }
 fn zenix_skill_card(
     s: &crate::skills::SkillInfo,
-    on_skill_action: &std::rc::Rc<Box<dyn Fn(SkillAction, &mut Window, &mut gpui::App)>>,
+    on_skill_action: &SharedActionCb<SkillAction>,
 ) -> impl IntoElement {
     let name = s.name.clone();
     let link_name = name.clone();
@@ -667,7 +679,7 @@ fn zenix_skill_card(
 }
 
 fn add_skill_card(
-    on_skill_action: &std::rc::Rc<Box<dyn Fn(SkillAction, &mut Window, &mut gpui::App)>>,
+    on_skill_action: &SharedActionCb<SkillAction>,
 ) -> impl IntoElement {
     let git_cb = {
         let osa = on_skill_action.clone();
@@ -693,7 +705,7 @@ fn add_skill_card(
 fn per_agent_section(
     agent: &str,
     skills: &[&crate::skills::SkillInfo],
-    on_skill_action: &std::rc::Rc<Box<dyn Fn(SkillAction, &mut Window, &mut gpui::App)>>,
+    on_skill_action: &SharedActionCb<SkillAction>,
 ) -> AnyElement {
     v_flex().gap(px(8.))
         .child(txt(px(13.)).font_weight(gpui::FontWeight::BOLD).child(agent.to_string()))
@@ -705,7 +717,7 @@ fn per_agent_section(
 fn per_agent_skill_card(
     agent: &str,
     s: &crate::skills::SkillInfo,
-    on_skill_action: &std::rc::Rc<Box<dyn Fn(SkillAction, &mut Window, &mut gpui::App)>>,
+    on_skill_action: &SharedActionCb<SkillAction>,
 ) -> impl IntoElement {
     let name = s.name.clone();
     let is_source = s.source_agents.contains(&agent.to_string());

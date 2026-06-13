@@ -3,14 +3,14 @@
 //! Dev profile:   copy system-installed herdr (fast).
 //! Release profile: build herdr from submodule (guaranteed version match).
 
-use std::{
-    env, fs,
-    path::PathBuf,
-    process::Command,
-};
+use std::{env, fs, path::PathBuf};
+
+#[cfg(target_os = "linux")]
+use std::process::Command;
 
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
+    #[cfg(target_os = "linux")]
     let herdr_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("herdr");
     let profile = env::var("PROFILE").unwrap();
 
@@ -77,6 +77,7 @@ fn main() {
     emit(&dest);
 }
 
+#[cfg(target_os = "linux")]
 fn build_herdr(herdr_dir: &std::path::Path, name: &str, dest: &std::path::Path) {
     eprintln!("building herdr from submodule...");
     let status = Command::new("cargo")

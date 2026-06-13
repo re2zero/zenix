@@ -11,6 +11,7 @@ pub struct NetInterface {
 }
 
 #[derive(Debug, Clone, Default)]
+#[allow(dead_code)]
 pub struct DiskMount {
   pub mount_point: String,
   pub total_gb: f32,
@@ -46,15 +47,9 @@ pub struct SystemInfo {
   pub process_count: u32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CpuSamples {
   pub net_prev: Vec<(String, u64, u64)>,
-}
-
-impl Default for CpuSamples {
-  fn default() -> Self {
-    Self { net_prev: Vec::new() }
-  }
 }
 
 const POLL_INTERVAL_SECS: f32 = 2.0;

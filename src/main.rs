@@ -82,8 +82,10 @@ fn open_main_window(cx: &mut App) {
             Bounds::new(point(x, y), size(width, height))
         });
 
-    let mut options = gpui::WindowOptions::default();
-    options.window_bounds = bounds.map(gpui::WindowBounds::Windowed);
+    let options = gpui::WindowOptions {
+        window_bounds: bounds.map(gpui::WindowBounds::Windowed),
+        ..gpui::WindowOptions::default()
+    };
 
     let saved_theme = config.theme_name().to_string();
 

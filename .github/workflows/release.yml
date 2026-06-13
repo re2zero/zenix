@@ -3,21 +3,14 @@
 # Trigger:      git push --tags v*
 #
 # Outputs:
-#   OS            Format(s)                              Job
-#   ─────────────────────────────────────────────────────────────────
-#   Windows x86_64  .exe installer (Inno Setup) + .zip    windows
-#   macOS x86_64    .dmg (app bundle) + .zip              macos-x86_64
-#   macOS aarch64   .dmg (app bundle) + .zip              macos-aarch64
-#   Linux (any)     .tar.gz + .deb (dpkg) + .rpm (musl)  linux-musl
-#   Arch Linux      .pkg.tar.zst                          archlinux
-#
-# Why musl on Linux:
-#   Deepin v20 ships glibc 2.28 but newer distros use 2.36+.  A binary
-#   linked against glibc from a modern build env will refuse to start
-#   on older systems.  Building with x86_64-unknown-linux-musl makes the
-#   binary completely agnostic to the host glibc — the only loaded
-#   glibc comes indirectly via dynamically-linked system libraries
-#   (fontconfig, xcb, …) which are already present on the target.
+#   OS            Format(s)                                    Job
+#   ──────────────────────────────────────────────────────────────────────
+#   Windows x86_64  .exe installer (Inno Setup)                windows
+#   macOS x86_64    .dmg (app bundle)                          macos-x86_64
+#   macOS aarch64   .dmg (app bundle)                          macos-aarch64
+#   Linux (any)     .deb + .AppImage (matrix: 3 glibc bases)   linux
+#   Linux (any)     .rpm (ubuntu24 glibc baseline)              linux
+#   Arch Linux      .pkg.tar.zst                                archlinux
 
 name: Release
 
@@ -31,7 +24,7 @@ env:
 
 jobs:
   # ═══════════════════════════════════════════════════════════════
-  #  Windows x86_64  — .exe installer + .zip
+  #  Windows x86_64  — .exe installer
   # ═══════════════════════════════════════════════════════════════
   windows:
     runs-on: windows-latest
@@ -45,17 +38,6 @@ jobs:
 
       - run: cargo build --release
 
-      - name: Package (.zip)
-        shell: pwsh
-        run: |
-          $version = "$env:GITHUB_REF_NAME" -replace '^v', ''
-          New-Item -ItemType Directory -Path staging -Force
-          Copy-Item target/release/zenix.exe staging/
-          if (Test-Path target/release/herdr.exe) {
-            Copy-Item target/release/herdr.exe staging/
-          }
-          Compress-Archive -Path staging/* -DestinationPath "zenix-${version}-x86_64-pc-windows-msvc.zip"
-
       - name: Build Inno Setup installer
         shell: pwsh
         run: |
@@ -65,53 +47,46 @@ jobs:
           if (-not (Test-Path $iscc)) {
             $iscc = "iscc"
           }
+          $langDir = "${env:ProgramFiles(x86)}\Inno Setup 6\Languages"
+          Invoke-WebRequest -Uri "https://raw.githubusercontent.com/jrsoftware/issrc/main/Files/Languages/Unofficial/ChineseSimplified.isl" -OutFile "$langDir\ChineseSimplified.isl"
           & $iscc "/DMyAppVersion=$version" installers\windows\zenix.iss
 
       - uses: actions/upload-artifact@v4
         with:
           name: zenix-windows
-          path: |
-            zenix-*-x86_64-pc-windows-msvc.zip
-            zenix-*-x86_64-setup.exe
+          path: zenix-*-x86_64-setup.exe
 
   # ═══════════════════════════════════════════════════════════════
-  #  macOS x86_64 (Intel)  — .dmg + .zip
+  #  macOS x86_64 (Intel)  — .dmg
   # ═══════════════════════════════════════════════════════════════
   macos-x86_64:
-    runs-on: macos-13
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - run: rustup target add x86_64-apple-darwin
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: macos-x86_64
 
-      - run: cargo build --release
-
-      - name: Package (.zip)
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          mkdir -p staging
-          cp target/release/zenix staging/
-          test -f target/release/herdr && cp target/release/herdr staging/
-          cd staging && zip -r "../zenix-${version}-x86_64-apple-darwin.zip" ./*
+      - run: cargo build --release --target x86_64-apple-darwin
 
       - name: Package (.dmg)
         run: |
           version="${GITHUB_REF_NAME#v}"
           bash installers/macos/package-dmg.sh \
-            "${version}" "x86_64" "target/release/"
+            "${version}" "x86_64" "target/x86_64-apple-darwin/release/"
 
       - uses: actions/upload-artifact@v4
         with:
           name: zenix-macos-x86_64
-          path: |
-            zenix-*-x86_64-apple-darwin.zip
-            zenix-*-x86_64-apple-darwin.dmg
+          path: zenix-*-x86_64-apple-darwin.dmg
 
   # ═══════════════════════════════════════════════════════════════
-  #  macOS aarch64 (Apple Silicon)  — .dmg + .zip
+  #  macOS aarch64 (Apple Silicon)  — .dmg
   # ═══════════════════════════════════════════════════════════════
   macos-aarch64:
     runs-on: macos-latest
@@ -125,14 +100,6 @@ jobs:
 
       - run: cargo build --release
 
-      - name: Package (.zip)
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          mkdir -p staging
-          cp target/release/zenix staging/
-          test -f target/release/herdr && cp target/release/herdr staging/
-          cd staging && zip -r "../zenix-${version}-aarch64-apple-darwin.zip" ./*
-
       - name: Package (.dmg)
         run: |
           version="${GITHUB_REF_NAME#v}"
@@ -142,84 +109,69 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: zenix-macos-aarch64
-          path: |
-            zenix-*-aarch64-apple-darwin.zip
-            zenix-*-aarch64-apple-darwin.dmg
+          path: zenix-*-aarch64-apple-darwin.dmg
 
   # ═══════════════════════════════════════════════════════════════
-  #  Linux musl static  — .tar.gz + .deb + .rpm
+  #  Linux  — .deb + .AppImage + .rpm (matrix: 3 glibc baselines)
   # ═══════════════════════════════════════════════════════════════
-  linux-musl:
+  linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: ubuntu:20.04
+            suffix: ubuntu20
+          - image: ubuntu:22.04
+            suffix: ubuntu22
+          - image: ubuntu:24.04
+            suffix: ubuntu24
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: musl
-
-      - name: Install system libraries for GPUI
+      - name: Build inside ${{ matrix.image }}
         run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq \
-            musl-tools pkg-config              \
-            libxkbcommon-dev                   \
-            libfontconfig1-dev                 \
-            libfreetype6-dev                   \
-            libexpat1-dev                      \
-            libxcb-composite0-dev              \
-            libxcb-xfixes0-dev                 \
-            libxcb-xkb-dev                     \
-            libxcb-shape0-dev                  \
-            libxcb-randr0-dev                  \
-            libxcb-render0-dev                 \
-            libxcb-util-dev                    \
-            libwayland-dev                     \
-            libegl1-mesa-dev                   \
-            libgl1-mesa-dev
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e GITHUB_REF_NAME="${{ github.ref_name }}" \
+            ${{ matrix.image }} \
+            bash -e -c '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update -qq || {
+                sed -i "s|archive.ubuntu.com|old-releases.ubuntu.com|g" /etc/apt/sources.list
+                sed -i "s|security.ubuntu.com|old-releases.ubuntu.com|g" /etc/apt/sources.list
+                apt-get update -qq
+              }
+              apt-get install -y -qq --no-install-recommends \
+                ca-certificates curl pkg-config make gcc g++ xz-utils \
+                libxkbcommon-dev libxkbcommon-x11-dev \
+                libfontconfig1-dev libfreetype6-dev libexpat1-dev \
+                libxcb-composite0-dev libxcb-xfixes0-dev libxcb-xkb-dev \
+                libxcb-shape0-dev libxcb-randr0-dev libxcb-render0-dev \
+                libxcb-util-dev libwayland-dev libegl1-mesa-dev libgl1-mesa-dev
 
-      - run: rustup target add x86_64-unknown-linux-musl
+              curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+              source "$HOME/.cargo/env"
 
-      - name: Build zenix (musl static)
-        run: cargo build --release --target x86_64-unknown-linux-musl
-        env:
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: /usr/bin/musl-gcc
-          CC_x86_64_unknown_linux_musl: musl-gcc
-          PKG_CONFIG_ALLOW_CROSS: 1
+              curl -L https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz \
+                | tar -xJ -C /usr/local
+              ln -s /usr/local/zig-x86_64-linux-0.15.2/zig /usr/local/bin/zig
 
-      # build.rs compiles herdr for the HOST target (glibc).
-      # Rebuild with musl here and overwrite the glibc copy.
-      - name: Rebuild herdr (musl static)
-        run: |
-          cd herdr
-          cargo build --release --target x86_64-unknown-linux-musl
-          cp target/x86_64-unknown-linux-musl/release/herdr \
-             "${{ github.workspace }}/target/x86_64-unknown-linux-musl/release/"
-        env:
-          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: /usr/bin/musl-gcc
-          CC_x86_64_unknown_linux_musl: musl-gcc
-          PKG_CONFIG_ALLOW_CROSS: 1
+              cargo build --release
+              cd herdr && cargo build --release && cd ..
+              cp herdr/target/release/herdr target/release/ 2>/dev/null || true
+            '
 
-      # ─────────── .tar.gz ───────────
-      - name: Package (.tar.gz)
+      - name: Package (.deb)
         run: |
           version="${GITHUB_REF_NAME#v}"
-          BINDIR="target/x86_64-unknown-linux-musl/release"
-          mkdir -p "zenix-${version}"
-          cp "${BINDIR}/zenix" "zenix-${version}/"
-          test -f "${BINDIR}/herdr" && cp "${BINDIR}/herdr" "zenix-${version}/"
-          tar czf "zenix-${version}-x86_64-linux-musl.tar.gz" "zenix-${version}/"
+          suffix="${{ matrix.suffix }}"
+          BINDIR="target/release"
 
-      # ─────────── .deb (dpkg-deb) ───────────
-      - name: Build .deb package
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          BINDIR="target/x86_64-unknown-linux-musl/release"
-
-          D="zenix-deb/zenix_${version}_amd64"
+          D="zenix-deb/zenix_${version}_${suffix}_amd64"
           mkdir -p "${D}/DEBIAN" "${D}/usr/bin" "${D}/usr/share/applications" \
                    "${D}/usr/share/icons/hicolor/512x512/apps" \
                    "${D}/usr/share/doc/zenix" \
@@ -237,7 +189,6 @@ jobs:
 
           INSTALLED_SIZE="$(du -sk "${D}" | cut -f1)"
 
-          # Write control line-by-line (YAML block scalar + heredoc don't mix)
           > "${D}/DEBIAN/control"
           echo "Package: zenix"                                 >> "${D}/DEBIAN/control"
           echo "Version: ${version}"                            >> "${D}/DEBIAN/control"
@@ -254,14 +205,77 @@ jobs:
           echo " libxkbcommon0, libfontconfig1, libwayland-client0, libegl1, libgl1"    >> "${D}/DEBIAN/control"
 
           dpkg-deb --build -Zgzip --root-owner-group \
-            "zenix-deb/zenix_${version}_amd64" \
-            "zenix_${version}_amd64.deb"
+            "zenix-deb/zenix_${version}_${suffix}_amd64" \
+            "zenix_${version}_${suffix}_amd64.deb"
 
-      # ─────────── .rpm (Fedora container) ───────────
-      - name: Build .rpm package
+      - name: Build AppImage
         run: |
-          # NOTE: GITHUB_REF_NAME is passed to the container via -e so
-          # the inner shell can compute version from it.
+          version="${GITHUB_REF_NAME#v}"
+          suffix="${{ matrix.suffix }}"
+          BINDIR="target/release"
+          APPDIR="zenix.AppDir"
+
+          #linuxdeploy and plugin needs a Linux host — run inside the build container
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e GITHUB_REF_NAME="${{ github.ref_name }}" \
+            -e APPIMAGE_EXTRACT_AND_RUN=1 \
+            ${{ matrix.image }} \
+            bash -e -c '
+              export DEBIAN_FRONTEND=noninteractive
+              apt-get update -qq || {
+                sed -i "s|archive.ubuntu.com|old-releases.ubuntu.com|g" /etc/apt/sources.list
+                sed -i "s|security.ubuntu.com|old-releases.ubuntu.com|g" /etc/apt/sources.list
+                apt-get update -qq
+              }
+              apt-get install -y -qq --no-install-recommends \
+                libxcb-composite0 libxcb-xfixes0 libxcb-shape0 \
+                libxcb-randr0 libxcb-render0 \
+                libxkbcommon0 libxkbcommon-x11-0 \
+                libfontconfig1 libfreetype6 \
+                libwayland-client0 libegl1 libgl1 \
+                file curl ca-certificates
+
+              ARCH=x86_64
+              curl -L -o "linuxdeploy-${ARCH}.AppImage" \
+                "https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${ARCH}.AppImage"
+              chmod +x "linuxdeploy-${ARCH}.AppImage"
+
+              version="${GITHUB_REF_NAME#v}"
+              suffix="${{ matrix.suffix }}"
+              BINDIR="target/release"
+              APPDIR="zenix.AppDir"
+
+              mkdir -p "${APPDIR}/usr/bin" \
+                       "${APPDIR}/usr/share/applications" \
+                       "${APPDIR}/usr/share/icons/hicolor/512x512/apps" \
+                       "${APPDIR}/usr/share/zenix/fonts" \
+                       "${APPDIR}/usr/share/zenix/themes"
+
+              cp "${BINDIR}/zenix" "${APPDIR}/usr/bin/"
+              test -f "${BINDIR}/herdr" && cp "${BINDIR}/herdr" "${APPDIR}/usr/share/zenix/"
+              cp res/zenix.desktop "${APPDIR}/usr/share/applications/"
+              cp res/zenix.png     "${APPDIR}/usr/share/icons/hicolor/512x512/apps/"
+              cp assets/fonts/*.ttf   "${APPDIR}/usr/share/zenix/fonts/"
+              cp assets/themes/*.json "${APPDIR}/usr/share/zenix/themes/"
+
+              cp res/zenix.png "${APPDIR}/zenix.png"
+
+              OUTPUT="Zenix-${version}-${suffix}-x86_64.AppImage" \
+                ./linuxdeploy-x86_64.AppImage \
+                  --appdir "${APPDIR}" \
+                  --output appimage \
+                  --desktop-file res/zenix.desktop \
+                  --icon-file res/zenix.png
+
+              echo "=== AppImage built ==="
+              ls -lh Zenix-*.AppImage
+            '
+
+      - name: Build .rpm package
+        if: matrix.suffix == 'ubuntu24'
+        run: |
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
             -w /workspace \
@@ -273,17 +287,25 @@ jobs:
               version="${GITHUB_REF_NAME#v}"
               mkdir -p /tmp/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
 
-              # Minimal source tarball for %setup -q
+              # Build source tarball with only files that exist
+              src_files="target/release/zenix"
+              test -f target/release/herdr && src_files="$src_files target/release/herdr"
+              src_files="$src_files res/zenix.desktop res/zenix.png"
+              src_files="$src_files assets/fonts/ assets/themes/"
+              test -f README.md && src_files="$src_files README.md"
+              test -f LICENSE && src_files="$src_files LICENSE"
+
               tar czf /tmp/rpmbuild/SOURCES/zenix-${version}.tar.gz \
                 --transform "s,^,zenix-${version}/," \
-                target/release/zenix \
-                target/release/herdr 2>/dev/null \
-                res/zenix.desktop res/zenix.png \
-                assets/fonts/ assets/themes/ \
-                README.md LICENSE 2>/dev/null
+                $src_files
+
+              echo "=== source tarball ==="
+              ls -lh /tmp/rpmbuild/SOURCES/zenix-${version}.tar.gz
+
+              # Replace hardcoded version in spec with tag version
+              sed -i "s/^Version:.*/Version: ${version}/" installers/linux/zenix.spec
 
               rpmbuild -bb \
-                --define "version ${version}" \
                 --define "_topdir /tmp/rpmbuild" \
                 --define "_rpmdir /workspace" \
                 --define "_rpmfilename %%{NAME}-%%{VERSION}-%%{RELEASE}.%%{ARCH}.rpm" \
@@ -295,10 +317,10 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: zenix-linux-musl
+          name: zenix-linux-${{ matrix.suffix }}
           path: |
-            zenix-*-x86_64-linux-musl.tar.gz
-            zenix_*.deb
+            zenix_*_*.deb
+            Zenix-*.AppImage
             zenix-*.rpm
 
   # ═══════════════════════════════════════════════════════════════
@@ -319,10 +341,16 @@ jobs:
             -e GITHUB_REF_NAME="${{ github.ref_name }}" \
             archlinux:latest \
             bash -e -c '
-              pacman -S --noconfirm \
+              pacman -Sy --noconfirm \
                 base-devel rustup git zstd \
-                libxcb xcb-util libxkbcommon fontconfig \
+                libxcb xcb-util libxkbcommon libxkbcommon-x11 \
+                fontconfig \
                 freetype2 expat wayland libglvnd
+
+              # pacman zig may lag behind the required 0.15.2
+              curl -L https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz \
+                | tar -xJ -C /usr/local
+              ln -s /usr/local/zig-x86_64-linux-0.15.2/zig /usr/local/bin/zig
 
               rustup default stable
               cargo build --release
@@ -411,7 +439,7 @@ jobs:
       - windows
       - macos-x86_64
       - macos-aarch64
-      - linux-musl
+      - linux
       - archlinux
     runs-on: ubuntu-latest
     permissions:
@@ -423,9 +451,8 @@ jobs:
         run: |
           mkdir -p release-assets
           find . -type f \
-            \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.deb' \
-               -o -name '*.rpm' -o -name '*.pkg.tar.zst' \
-               -o -name '*.dmg' -o -name '*-setup.exe' \) \
+            \( -name '*.deb' -o -name '*.rpm' -o -name '*.pkg.tar.zst' \
+               -o -name '*.AppImage' -o -name '*.dmg' -o -name '*-setup.exe' \) \
             -exec cp {} release-assets/ \;
           echo "=== release assets ==="
           ls -lh release-assets/

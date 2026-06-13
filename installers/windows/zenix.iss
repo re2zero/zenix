@@ -27,6 +27,7 @@ SolidCompression=yes
 UninstallDisplayIcon={app}\zenix.exe
 PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
+SourceDir=..\..
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -37,13 +38,13 @@ Name: "chinese"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 Source: "target\release\zenix.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Companion binary (built by build.rs, may not exist)
-Source: "target\release\herdr.exe"; DestDir: "{app}"; Flags: ignoreversion ignoreifdoesntexist
+Source: "target\release\herdr.exe"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 ; Desktop entry (will be installed alongside binary for reference)
-Source: "res\zenix.desktop"; DestDir: "{app}"; Flags: ignoreversion ignoreifdoesntexist
+Source: "res\zenix.desktop"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 ; Icon
-Source: "res\zenix.png"; DestDir: "{app}"; Flags: ignoreversion ignoreifdoesntexist
+Source: "res\zenix.png"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 ; Fonts
 Source: "assets\fonts\*"; DestDir: "{app}\fonts"; Flags: ignoreversion recursesubdirs createallsubdirs

@@ -264,6 +264,7 @@ pub struct TerminalElement {
 }
 
 impl TerminalElement {
+  #[allow(clippy::too_many_arguments)]
   pub fn new(
     snapshot: RenderSnapshot,
     app: gpui::Entity<ZenixApp>,
@@ -381,11 +382,11 @@ impl TerminalElement {
 
       let style = self.text_run_style(cell, fg);
 
-      if let Some(run) = current_run.as_mut() {
-        if run.can_append(&style, rc.row, rc.col) {
-          run.append(cell.c);
-          continue;
-        }
+      if let Some(run) = current_run.as_mut()
+        && run.can_append(&style, rc.row, rc.col)
+      {
+        run.append(cell.c);
+        continue;
       }
       if let Some(run) = current_run.take() {
         runs.push(run);
@@ -501,50 +502,50 @@ impl Element for TerminalElement {
     }
 
     // Paint IME marked text (preedit) with underline — hides cursor during composition.
-    if let Some(ime_state) = &self.ime_state {
-      if !ime_state.marked_text.is_empty() {
-        if let Some(ime_bounds) = prepaint.ime_cursor_bounds {
-          let ime_pos = ime_bounds.origin;
-          let marked = &ime_state.marked_text;
+    if let Some(ime_state) = &self.ime_state
+      && !ime_state.marked_text.is_empty()
+      && let Some(ime_bounds) = prepaint.ime_cursor_bounds
+    {
+      let ime_pos = ime_bounds.origin;
+      let marked = &ime_state.marked_text;
 
-          let ime_style = TextRun {
-            len: marked.len(),
-            font: Font {
-              family: self.font_family.clone(),
-              ..Font::default()
-            },
-            color: cx.theme().foreground,
-            underline: Some(UnderlineStyle {
-              color: Some(cx.theme().foreground),
-              thickness: px(1.0),
-              wavy: false,
-            }),
-            ..Default::default()
-          };
+      let ime_style = TextRun {
+        len: marked.len(),
+        font: Font {
+          family: self.font_family.clone(),
+          ..Font::default()
+        },
+        color: cx.theme().foreground,
+        underline: Some(UnderlineStyle {
+          color: Some(cx.theme().foreground),
+          thickness: px(1.0),
+          wavy: false,
+        }),
+        ..Default::default()
+      };
 
-          let shaped = window.text_system().shape_line(
-            marked.clone().into(),
-            self.font_size,
-            std::slice::from_ref(&ime_style),
-            None,
-          );
+      let shaped = window.text_system().shape_line(
+        marked.clone().into(),
+        self.font_size,
+        std::slice::from_ref(&ime_style),
+        None,
+      );
 
-          // Background to cover terminal text behind marked text.
-          window.paint_quad(fill(
-            Bounds::new(ime_pos, size(shaped.width, metrics.line_height)),
-            cx.theme().background,
-          ));
+      // Background to cover terminal text behind marked text.
+      window.paint_quad(fill(
+        Bounds::new(ime_pos, size(shaped.width, metrics.line_height)),
+        cx.theme().background,
+      ));
 
-          let _ = shaped
-            .paint(ime_pos, metrics.line_height, TextAlign::Left, None, window, cx);
-        }
-      }
+      let _ = shaped
+        .paint(ime_pos, metrics.line_height, TextAlign::Left, None, window, cx);
     }
 
     // Paint cursor (hidden during IME composition).
-    if self.ime_state.is_none() || self.ime_state.as_ref().is_some_and(|s| s.marked_text.is_empty()) {
-      if let Some(cursor) = &prepaint.cursor {
-        if !matches!(cursor.shape, CursorShape::Hidden) {
+    if (self.ime_state.is_none() || self.ime_state.as_ref().is_some_and(|s| s.marked_text.is_empty()))
+      && let Some(cursor) = &prepaint.cursor
+      && !matches!(cursor.shape, CursorShape::Hidden)
+    {
           let pos = point(
             origin.x + metrics.cell_width * cursor.col as f32,
             origin.y + metrics.line_height * cursor.line as f32,
@@ -571,8 +572,6 @@ impl Element for TerminalElement {
             }
             CursorShape::Hidden => {}
           }
-        }
-      }
     }
   }
 }

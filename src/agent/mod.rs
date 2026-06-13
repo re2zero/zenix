@@ -19,6 +19,7 @@ pub enum AgentCliStatus {
 }
 
 /// Information about a known AI agent CLI.
+#[allow(dead_code)]
 pub struct AgentCliInfo {
     /// Short machine name (e.g. "claude").
     pub name: &'static str,

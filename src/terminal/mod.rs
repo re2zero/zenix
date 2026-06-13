@@ -32,6 +32,7 @@ pub use encoding::{
 // ── Types ────────────────────────────────────────────────────────────
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum BackendCommand {
     Input(Vec<u8>),
     Resize { cols: u16, rows: u16 },
@@ -39,6 +40,7 @@ pub enum BackendCommand {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum BackendEvent {
     Output { tab_id: String, bytes: Vec<u8> },
     Status { tab_id: String, text: String },
@@ -59,6 +61,7 @@ impl BackendTx {
     }
 }
 
+#[allow(dead_code)]
 pub struct TerminalTab {
     pub id: String,
     pub title: String,
@@ -85,6 +88,7 @@ pub struct RenderCell {
     pub cell: Cell,
 }
 
+#[allow(dead_code)]
 #[derive(Clone)]
 pub struct RenderSnapshot {
     pub cells: Vec<RenderCell>,
@@ -147,6 +151,7 @@ fn new_term(cols: u16, rows: u16, tab_id: String, events: Sender<BackendEvent>) 
         HerdrListener { tab_id, events },
     )
 }
+#[allow(dead_code)]
 impl TerminalTab {
     pub fn new_local(id: String, title: String, backend: BackendTx, events: Sender<BackendEvent>) -> Self {
         let tab_id = id.clone();

@@ -18,6 +18,7 @@ use crate::{
     config::ConfigStore,
     client as herdr,
     ui::{self as sidebar, Panel},
+    ui::settings::{ActionCb, SkillAction, McpAction, CliAction, McpFormState, InputDialogMode, SKILL_AGENTS},
     sys::{self as system_info, CpuSamples, SystemInfo},
     terminal::{
         self, BackendCommand, BackendEvent, BackendTx, ImeState, TerminalTab, TerminalElement,
@@ -55,10 +56,10 @@ pub struct ZenixApp {
     mcp_zenix_servers: Vec<crate::mcp::ZenixMcpServer>,
     mcp_per_agent: Vec<(String, Vec<crate::mcp::McpServerEntry>)>,
     skills: std::collections::HashMap<String, crate::skills::SkillInfo>,
-    mcp_form: Option<crate::ui::settings::McpFormState>,
+    mcp_form: Option<McpFormState>,
     mcp_available_agents: Vec<String>,
     dialog_input: Option<gpui::Entity<gpui_component::input::InputState>>,
-    dialog_input_mode: crate::ui::settings::InputDialogMode,
+    dialog_input_mode: InputDialogMode,
     sysinfo_polling: bool,
     terminal_cell_width: Pixels,
     terminal_line_height: Pixels,
@@ -70,8 +71,10 @@ pub struct ZenixApp {
 }
 fn write_to_pty(backend: &Option<BackendTx>, tab: &mut Option<TerminalTab>, bytes: Vec<u8>) {
     if let Some(backend) = backend {
-        if let Some(tab) = tab {
-            if tab.render_snapshot().display_offset > 0 { tab.scroll_to_bottom(); }
+        if let Some(tab) = tab
+            && tab.render_snapshot().display_offset > 0
+        {
+            tab.scroll_to_bottom();
         }
         backend.send(BackendCommand::Input(bytes));
     }
@@ -104,7 +107,7 @@ impl ZenixApp {
             mcp_form: None,
             mcp_available_agents: crate::mcp::claude_format_agent_names(),
             dialog_input: None,
-            dialog_input_mode: crate::ui::settings::InputDialogMode::Hidden,
+            dialog_input_mode: InputDialogMode::Hidden,
             sysinfo_polling: false,
             terminal_cell_width: px(14.0 * 0.6),
             terminal_line_height: px(14.0 * 1.15),
@@ -132,7 +135,7 @@ impl ZenixApp {
             changed = true;
             match event {
                 BackendEvent::Output { tab_id, bytes } => {
-                    if let Some(tab) = &mut self.tab { if tab.id == tab_id { tab.feed(&bytes); } }
+                    if let Some(tab) = &mut self.tab && tab.id == tab_id { tab.feed(&bytes); }
                 }
                 BackendEvent::TitleChanged { title, .. } => {
                     tracing::info!("terminal title: {title}");
@@ -337,10 +340,10 @@ impl ZenixApp {
         }
 
         // Terminal keystrokes (named keys, modified keys): encode and send.
-        if let Some(tab) = &self.tab {
-            if let Some(bytes) = encode_key(&event.keystroke, tab.app_cursor_mode(), false) {
-                write_to_pty(&self.backend, &mut self.tab, bytes);
-            }
+        if let Some(tab) = &self.tab
+            && let Some(bytes) = encode_key(&event.keystroke, tab.app_cursor_mode(), false)
+        {
+            write_to_pty(&self.backend, &mut self.tab, bytes);
         }
     }
     // ── Mouse dispatch ──────────────────────────────────────────────────
@@ -645,7 +648,7 @@ impl Render for ZenixApp {
                 .on_prepaint({
                     let view = cx.entity().clone();
                     move |bounds, _window, cx| {
-                        let _ = view.update(cx, |this, _| { this.terminal_bounds = Some(bounds); });
+                        view.update(cx, |this, _| { this.terminal_bounds = Some(bounds); });
                     }
                 })
                 .child(TerminalElement::new(snapshot, app_entity, focus2, FONT_FAMILY, px(fs), lh_px, cw_px, self.terminal_ascent, self.terminal_descent, ime))
@@ -704,7 +707,7 @@ impl Render for ZenixApp {
             let skills_ref = &self.skills;
             let entity = cx.entity().clone();
 
-            let on_tab_change: Box<dyn Fn(usize, &mut Window, &mut gpui::App)> = Box::new({
+            let on_tab_change: ActionCb<usize> = Box::new({
                 let entity = entity.clone();
                 move |idx: usize, _w: &mut Window, app: &mut gpui::App| {
                     entity.update(app, |this: &mut ZenixApp, cx| {
@@ -714,7 +717,7 @@ impl Render for ZenixApp {
                 }
             });
 
-            let on_locale_change: Box<dyn Fn(String, &mut Window, &mut gpui::App)> = Box::new({
+            let on_locale_change: ActionCb<String> = Box::new({
                 let entity = entity.clone();
                 move |new_locale: String, _w: &mut Window, app: &mut gpui::App| {
                     entity.update(app, |this: &mut ZenixApp, cx| {
@@ -726,32 +729,32 @@ impl Render for ZenixApp {
                 }
             });
 
-            let on_skill_action: Box<dyn Fn(crate::ui::settings::SkillAction, &mut Window, &mut gpui::App)> = Box::new({
+            let on_skill_action: ActionCb<SkillAction> = Box::new({
                 let entity = entity.clone();
-                move |action: crate::ui::settings::SkillAction, w: &mut Window, app: &mut gpui::App| {
+                move |action: SkillAction, w: &mut Window, app: &mut gpui::App| {
                     entity.update(app, |this: &mut ZenixApp, cx| {
                         match action {
-                            crate::ui::settings::SkillAction::Refresh => {
+                            SkillAction::Refresh => {
                                 this.skills = crate::skills::scan_all_skills();
                                 cx.notify();
                             }
-                            crate::ui::settings::SkillAction::Link { skill_name } => {
+                            SkillAction::Link { skill_name } => {
                                 // Link to all supported agents
-                                for agent in crate::ui::settings::SKILL_AGENTS {
+                                for agent in SKILL_AGENTS {
                                     let _ = crate::skills::link_skill(&skill_name, agent);
                                 }
                                 this.skills = crate::skills::scan_all_skills();
                                 cx.notify();
                             }
-                            crate::ui::settings::SkillAction::Unlink { skill_name } => {
+                            SkillAction::Unlink { skill_name } => {
                                 // Unlink from all agents
-                                for agent in crate::ui::settings::SKILL_AGENTS {
+                                for agent in SKILL_AGENTS {
                                     let _ = crate::skills::unlink_skill(&skill_name, agent);
                                 }
                                 this.skills = crate::skills::scan_all_skills();
                                 cx.notify();
                             }
-                            crate::ui::settings::SkillAction::InstallGit { url } => {
+                            SkillAction::InstallGit { url } => {
                                 if url.is_empty() {
                                     let input = cx.new(|cx| {
                                         gpui_component::input::InputState::new(w, cx)
@@ -768,12 +771,12 @@ impl Render for ZenixApp {
                                                 this.skills = crate::skills::scan_all_skills();
                                             }
                                             this.dialog_input = None;
-                                            this.dialog_input_mode = crate::ui::settings::InputDialogMode::Hidden;
+                                            this.dialog_input_mode = InputDialogMode::Hidden;
                                             cx.notify();
                                         }
                                     }).detach();
                                     this.dialog_input = Some(input);
-                                    this.dialog_input_mode = crate::ui::settings::InputDialogMode::SkillAddGit;
+                                    this.dialog_input_mode = InputDialogMode::SkillAddGit;
                                     cx.notify();
                                 } else {
                                     match crate::skills::install_from_git(&url) {
@@ -784,7 +787,7 @@ impl Render for ZenixApp {
                                     cx.notify();
                                 }
                             }
-                            crate::ui::settings::SkillAction::InstallLocal { path } => {
+                            SkillAction::InstallLocal { path } => {
                                 if path.is_empty() {
                                     let input = cx.new(|cx| {
                                         gpui_component::input::InputState::new(w, cx)
@@ -801,12 +804,12 @@ impl Render for ZenixApp {
                                                 this.skills = crate::skills::scan_all_skills();
                                             }
                                             this.dialog_input = None;
-                                            this.dialog_input_mode = crate::ui::settings::InputDialogMode::Hidden;
+                                            this.dialog_input_mode = InputDialogMode::Hidden;
                                             cx.notify();
                                         }
                                     }).detach();
                                     this.dialog_input = Some(input);
-                                    this.dialog_input_mode = crate::ui::settings::InputDialogMode::SkillAddLocal;
+                                    this.dialog_input_mode = InputDialogMode::SkillAddLocal;
                                     cx.notify();
                                 } else {
                                     match crate::skills::install_from_local(&path) {
@@ -817,7 +820,7 @@ impl Render for ZenixApp {
                                     cx.notify();
                                 }
                             }
-                            crate::ui::settings::SkillAction::Remove { skill_name } => {
+                            SkillAction::Remove { skill_name } => {
                                 let _ = crate::skills::remove_zenix_skill(&skill_name);
                                 this.skills = crate::skills::scan_all_skills();
                                 cx.notify();
@@ -827,12 +830,12 @@ impl Render for ZenixApp {
                 }
             });
 
-            let on_mcp_action: Box<dyn Fn(crate::ui::settings::McpAction, &mut Window, &mut gpui::App)> = Box::new({
+            let on_mcp_action: ActionCb<McpAction> = Box::new({
                 let entity = entity.clone();
-                move |action: crate::ui::settings::McpAction, w: &mut Window, app: &mut gpui::App| {
+                move |action: McpAction, w: &mut Window, app: &mut gpui::App| {
                     entity.update(app, |this: &mut ZenixApp, cx| {
                         match action {
-                            crate::ui::settings::McpAction::ShowAddForm => {
+                            McpAction::ShowAddForm => {
                                 let name_input = cx.new(|cx| {
                                     gpui_component::input::InputState::new(w, cx).placeholder("server-name")
                                 });
@@ -845,7 +848,7 @@ impl Render for ZenixApp {
                                 let env_input = cx.new(|cx| {
                                     gpui_component::input::InputState::new(w, cx).placeholder("KEY=value")
                                 });
-                                let form = crate::ui::settings::McpFormState {
+                                let form = McpFormState {
                                     editing_name: None,
                                     name: Some(name_input),
                                     command: Some(command_input),
@@ -856,11 +859,11 @@ impl Render for ZenixApp {
                                 this.mcp_form = Some(form);
                                 cx.notify();
                             }
-                            crate::ui::settings::McpAction::CancelAddForm => {
+                            McpAction::CancelAddForm => {
                                 this.mcp_form = None;
                                 cx.notify();
                             }
-                            crate::ui::settings::McpAction::SubmitAddForm => {
+                            McpAction::SubmitAddForm => {
                                 let form = this.mcp_form.take();
                                 if let Some(form) = form {
                                     let name_val = form.name.as_ref()
@@ -903,7 +906,7 @@ impl Render for ZenixApp {
                                             let old_agents = old.map(|s| s.enabled_agents.clone()).unwrap_or_default();
                                             let _ = crate::mcp::remove_zenix_mcp_server(old_name);
                                             // If name changed, remove old entry from CLI configs
-                                            if old_name != &name_val.trim() {
+                                            if old_name != name_val.trim() {
                                                 for agent in &old_agents {
                                                     let _ = crate::mcp::sync_zenix_server_to_agent(
                                                         &crate::mcp::ZenixMcpServer {
@@ -950,13 +953,13 @@ impl Render for ZenixApp {
                                     this.refresh_mcp_data(cx);
                                 }
                             }
-                            crate::ui::settings::McpAction::SetFormType { mcp_type } => {
+                            McpAction::SetFormType { mcp_type } => {
                                 if let Some(form) = &mut this.mcp_form {
                                     form.mcp_type = mcp_type;
                                 }
                                 cx.notify();
                             }
-                            crate::ui::settings::McpAction::EditZenix { name } => {
+                            McpAction::EditZenix { name } => {
                                 let server = this.mcp_zenix_servers.iter().find(|s| s.name == *name).cloned();
                                 if let Some(s) = server {
                                     let name_input = cx.new(|cx| {
@@ -971,18 +974,18 @@ impl Render for ZenixApp {
                                     });
                                     let args_input = cx.new(|cx| {
                                         let mut st = gpui_component::input::InputState::new(w, cx).placeholder("--port 3000");
-                                        st.set_value(&s.args.join(" "), w, cx);
+                                        st.set_value(s.args.join(" "), w, cx);
                                         st
                                     });
                                     let env_input = cx.new(|cx| {
                                         let mut st = gpui_component::input::InputState::new(w, cx).placeholder("KEY=value");
                                         st.set_value(
-                                            &s.env.iter().map(|(k,v)| format!("{k}={v}")).collect::<Vec<_>>().join(" "),
+                                            s.env.iter().map(|(k,v)| format!("{k}={v}")).collect::<Vec<_>>().join(" "),
                                             w, cx
                                         );
                                         st
                                     });
-                                    let form = crate::ui::settings::McpFormState {
+                                    let form = McpFormState {
                                         editing_name: Some(s.name.clone()),
                                         name: Some(name_input),
                                         command: Some(command_input),
@@ -997,19 +1000,19 @@ impl Render for ZenixApp {
                                 }
                                 cx.notify();
                             }
-                            crate::ui::settings::McpAction::RemoveZenix { name } => {
+                            McpAction::RemoveZenix { name } => {
                                 let _ = crate::mcp::remove_zenix_mcp_server(&name);
                                 this.refresh_mcp_data(cx);
                             }
-                            crate::ui::settings::McpAction::ToggleZenixAgent { server_name, agent } => {
+                            McpAction::ToggleZenixAgent { server_name, agent } => {
                                 let _ = crate::mcp::toggle_zenix_mcp_agent(&server_name, &agent);
                                 this.refresh_mcp_data(cx);
                             }
-                            crate::ui::settings::McpAction::RemoveFromAgent { name, agent } => {
+                            McpAction::RemoveFromAgent { name, agent } => {
                                 let _ = crate::mcp::remove_mcp_server_from_agent(&name, &agent);
                                 this.refresh_mcp_data(cx);
                             }
-                            crate::ui::settings::McpAction::ToggleForAgent { name, agent } => {
+                            McpAction::ToggleForAgent { name, agent } => {
                                 let _ = crate::mcp::toggle_mcp_server_for_agent(&name, &agent);
                                 this.refresh_mcp_data(cx);
                             }
@@ -1018,23 +1021,23 @@ impl Render for ZenixApp {
                 }
             });
 
-            let on_cli_action: Box<dyn Fn(crate::ui::settings::CliAction, &mut Window, &mut gpui::App)> = Box::new({
+            let on_cli_action: ActionCb<CliAction> = Box::new({
                 let entity = entity.clone();
-                move |action: crate::ui::settings::CliAction, _w: &mut Window, app: &mut gpui::App| {
+                move |action: CliAction, _w: &mut Window, app: &mut gpui::App| {
                     entity.update(app, |this: &mut ZenixApp, cx| {
                         match action {
-                            crate::ui::settings::CliAction::Install { name } => {
+                            CliAction::Install { name } => {
                                 tracing::info!("cli install {name}: hook asset bundling needed (TODO)");
                             }
-                            crate::ui::settings::CliAction::Update { name } => {
+                            CliAction::Update { name } => {
                                 tracing::info!("cli update {name}: hook asset bundling needed (TODO)");
                             }
-                            crate::ui::settings::CliAction::Uninstall { name } => {
+                            CliAction::Uninstall { name } => {
                                 let _ = crate::agent::uninstall_hook(&name);
                                 this.agent_statuses = crate::agent::detect_all_agents();
                                 cx.notify();
                             }
-                            crate::ui::settings::CliAction::InstallHook { name } => {
+                            CliAction::InstallHook { name } => {
                                 tracing::info!("cli install hook {name}: hook asset bundling needed (TODO)");
                             }
                         }

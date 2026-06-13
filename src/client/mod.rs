@@ -94,7 +94,7 @@ pub fn is_socket_ready(path: &std::path::Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::net::UnixStream;
-        return UnixStream::connect(path).is_ok();
+        UnixStream::connect(path).is_ok()
     }
 
     #[cfg(windows)]
@@ -112,7 +112,7 @@ pub fn is_socket_ready(path: &std::path::Path) -> bool {
             Ok(name) => name,
             Err(_) => return false,
         };
-        return LocalStream::connect(name).is_ok();
+        LocalStream::connect(name).is_ok()
     }
 
     #[cfg(not(any(unix, windows)))]

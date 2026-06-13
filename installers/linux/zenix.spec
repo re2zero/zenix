@@ -1,13 +1,9 @@
 # RPM spec for zenix — fedora / RHEL / openSUSE.
 #
-# The binary is pre-built with musl-static on the Ubuntu runner.
+# The binary is pre-built in CI (ubuntu24 glibc container).
 # This spec packages the pre-compiled binary and resources.
-#
-# Build in CI:
-#   rpmbuild -bb --define "version ${VERSION}" \
-#     --define "_topdir /tmp/rpmbuild" \
-#     installers/linux/zenix.spec
 
+%global debug_package %{nil}
 %define _rpmfilename %%{NAME}-%%{VERSION}-%%{RELEASE}.%%{ARCH}.rpm
 
 Name:    zenix
@@ -19,7 +15,7 @@ License: GPL-3.0-or-later
 URL:     https://github.com/re2zero/zenix
 Source0: %{name}-%{version}.tar.gz
 
-# Static musl binary — no glibc dependency; only runtime graphics libs.
+# Pre-built binary — runtime graphics libs required.
 Requires:       libxcb
 Requires:       libxkbcommon
 Requires:       fontconfig
@@ -87,5 +83,5 @@ update-desktop-database -q 2>/dev/null || :
 gtk-update-icon-cache -q -t /usr/share/icons/hicolor 2>/dev/null || :
 
 %changelog
-* 2025-06-13  re2zero <yangwu@uniontech.com>
+* Fri Jun 13 2025 re2zero <yangwu@uniontech.com>
 - Initial RPM package

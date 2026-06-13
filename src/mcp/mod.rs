@@ -23,15 +23,12 @@ pub struct McpServerEntry {
     pub disabled: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum McpType {
+    #[default]
     Stdio,
     Sse,
-}
-
-impl Default for McpType {
-    fn default() -> Self { McpType::Stdio }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -150,8 +147,8 @@ fn write_claude_mcp(path: &PathBuf, servers: &[McpServerEntry]) -> Result<(), St
     Ok(())
 }
 
+#[allow(dead_code)]
 // ── Public API ───────────────────────────────────────────────────────
-
 /// Scan all agents and return discovered MCP servers.
 /// Returns Vec<(agent_name, Vec<McpServerEntry>)>.
 pub fn scan_all_mcp_servers() -> Vec<(String, Vec<McpServerEntry>)> {
@@ -171,6 +168,7 @@ pub fn scan_all_mcp_servers() -> Vec<(String, Vec<McpServerEntry>)> {
         .collect()
 }
 
+#[allow(dead_code)]
 /// Deduplicate servers by name+command across agents.
 /// Returns a unified list with agent badges.
 pub fn deduplicated_servers(raw: &[(String, Vec<McpServerEntry>)]) -> Vec<UnifiedServer> {
@@ -215,6 +213,7 @@ pub struct UnifiedServer {
     pub disabled_agents: Vec<String>,
 }
 
+#[allow(dead_code)]
 /// Write an MCP server to selected agents' configs.
 pub fn save_mcp_server(
     server: &UnifiedServer,
@@ -243,6 +242,7 @@ pub fn save_mcp_server(
     Ok(())
 }
 
+#[allow(dead_code)]
 /// Remove an MCP server from all agents.
 pub fn remove_mcp_server(name: &str) -> Result<(), String> {
     for (_agent, path) in claude_format_configs() {
@@ -257,11 +257,13 @@ pub fn remove_mcp_server(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(dead_code)]
 /// Return only the agent names that use Claude-format configs.
 pub fn claude_format_config_names() -> Vec<String> {
     claude_format_configs().into_iter().map(|(name, _)| name).collect()
 }
 
+#[allow(dead_code)]
 /// Toggle a server's `disabled` field for a specific agent.
 pub fn toggle_mcp_agent(
     server_name: &str,
@@ -350,6 +352,7 @@ pub fn scan_per_agent_mcp() -> Vec<(String, Vec<McpServerEntry>)> {
         .collect()
 }
 
+#[allow(dead_code)]
 /// Read the raw JSON content of a specific agent's MCP config file.
 pub fn read_agent_mcp_json(agent_name: &str) -> Option<String> {
     let path = claude_format_configs().into_iter()

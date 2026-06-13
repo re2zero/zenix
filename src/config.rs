@@ -48,6 +48,7 @@ impl Default for ConfigStore {
         Self { path: config_path(), data: ConfigFile::default() }
     }
 }
+#[allow(dead_code)]
 impl ConfigStore {
     pub fn load() -> Result<Self> {
         let path = config_path();

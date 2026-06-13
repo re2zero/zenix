@@ -102,10 +102,10 @@ pub fn scan_all_skills() -> HashMap<String, SkillInfo> {
 pub fn best_source(skill: &SkillInfo) -> Option<(String, PathBuf)> {
     let preferred = ["claude", "codex", "pi", "omp", "kilo", "hermes"];
     for agent in &preferred {
-        if skill.source_agents.contains(&agent.to_string()) {
-            if let Some(dir) = source_dir_for(agent, &skill.name) {
-                return Some((agent.to_string(), dir));
-            }
+        if skill.source_agents.contains(&agent.to_string())
+            && let Some(dir) = source_dir_for(agent, &skill.name)
+        {
+            return Some((agent.to_string(), dir));
         }
     }
     for agent in &skill.source_agents {
