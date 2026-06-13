@@ -30,13 +30,24 @@ fn main() {
     }
 
     if profile == "release" {
-        // Release: always build from submodule for version guarantee.
-        // Also copy to res/ so cargo-deb can find it without interpreting as a bin target.
-        build_herdr(&herdr_dir, name, &dest);
-        let seed = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("res").join(name);
-        let _ = fs::create_dir_all(seed.parent().unwrap());
-        fs::copy(&dest, &seed).expect("failed to copy herdr seed to res/");
-        eprintln!("herdr seed → {}", seed.display());
+        #[cfg(target_os = "linux")]
+        {
+            build_herdr(&herdr_dir, name, &dest);
+            let seed = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("res").join(name);
+            let _ = fs::create_dir_all(seed.parent().unwrap());
+            fs::copy(&dest, &seed).expect("failed to copy herdr seed to res/");
+            eprintln!("herdr seed → {}", seed.display());
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            if let Some(sys) = find_system_herdr() {
+                let _ = fs::create_dir_all(dest.parent().unwrap());
+                fs::copy(&sys, &dest).expect("failed to copy system herdr");
+                eprintln!("copied system herdr from {}", sys.display());
+            } else {
+                eprintln!("NOTE: herdr not found. Install it to PATH for full functionality.");
+            }
+        }
     } else {
         // Dev: copy system herdr for speed; fall back to submodule build
         if let Some(sys) = find_system_herdr() {
@@ -44,7 +55,16 @@ fn main() {
             fs::copy(&sys, &dest).expect("failed to copy system herdr");
             eprintln!("copied system herdr from {}", sys.display());
         } else if env::var("HERDR_BUILD").is_ok() {
-            build_herdr(&herdr_dir, name, &dest);
+            #[cfg(target_os = "linux")]
+            {
+                build_herdr(&herdr_dir, name, &dest);
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                eprintln!(
+                    "NOTE: HERDR_BUILD is Linux-only. Install herdr to PATH on this platform."
+                );
+            }
         } else {
             eprintln!(
                 "NOTE: herdr binary not found.\n\
@@ -88,19 +108,30 @@ fn emit(dest: &std::path::Path) {
 }
 
 fn find_system_herdr() -> Option<PathBuf> {
-    let home = PathBuf::from(env::var("HOME").unwrap_or_else(|_| "/root".into()));
+    let home = home_dir();
+    let name = if cfg!(target_os = "windows") { "herdr.exe" } else { "herdr" };
     let candidates = [
-        home.join(".local/bin/herdr"),
-        home.join(".cargo/bin/herdr"),
+        home.join(".local/bin").join(name),
+        home.join(".cargo/bin").join(name),
     ];
     for c in candidates {
         if c.is_file() { return Some(c); }
     }
     if let Ok(path) = env::var("PATH") {
         for dir in env::split_paths(&path) {
-            let c = dir.join("herdr");
+            let c = dir.join(name);
             if c.is_file() { return Some(c); }
         }
     }
     None
+}
+
+fn home_dir() -> PathBuf {
+    if let Ok(home) = env::var("HOME") {
+        return PathBuf::from(home);
+    }
+    if let Ok(profile) = env::var("USERPROFILE") {
+        return PathBuf::from(profile);
+    }
+    PathBuf::from("/")
 }

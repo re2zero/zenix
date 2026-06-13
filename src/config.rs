@@ -119,6 +119,5 @@ impl ConfigStore {
 }
 
 fn config_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-    PathBuf::from(home).join(".config/zenix/config.json")
+    crate::platform::zenix_config_dir().join("config.json")
 }

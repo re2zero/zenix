@@ -657,7 +657,7 @@ impl Render for ZenixApp {
                 .child(div().text_size(px(14.)).text_color(theme.muted_foreground).child(self.status.clone()))
                 .child(Button::new("term").primary().label(t("landing.terminal_btn"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
-                        this.spawn_pty("bash", &[], cx); cx.notify();
+                        this.spawn_pty(crate::platform::default_shell(), &[], cx); cx.notify();
                     })))
                 .child(Button::new("herdr").ghost().label(t("landing.herdr_btn"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {

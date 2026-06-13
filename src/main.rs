@@ -6,6 +6,7 @@ mod client;
 mod config;
 mod agent;
 mod mcp;
+mod platform;
 mod skills;
 mod i18n;
 mod sys;

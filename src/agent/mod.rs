@@ -3,6 +3,8 @@
 
 use std::path::PathBuf;
 
+use crate::platform;
+
 /// Status of an agent CLI on this machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentCliStatus {
@@ -38,11 +40,9 @@ pub struct AgentCliInfo {
 fn binary_on_path(name: &str) -> bool {
     std::env::var_os("PATH")
         .as_ref()
-        .and_then(|p| p.to_str())
-        .map(|path| {
-            path.split(':').any(|dir| {
-                let p = PathBuf::from(dir).join(name);
-                p.is_file()
+        .map(|p| {
+            std::env::split_paths(p).any(|dir| {
+                dir.join(name).is_file()
             })
         })
         .unwrap_or(false)
@@ -64,75 +64,60 @@ fn parse_hook_version(path: &PathBuf) -> Option<u32> {
     None
 }
 
-/// Resolve home directory, falling back to `/root`.
-fn home() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/root".into()))
-}
-
-/// Resolve an env-var-based directory, with a `~`-based fallback.
-fn env_or_home(var: &str, fallback_suffix: &str) -> Option<PathBuf> {
-    if let Ok(dir) = std::env::var(var) {
-        let p = PathBuf::from(dir);
-        if p.exists() { return Some(p); }
-    }
-    let p = home().join(fallback_suffix.trim_start_matches("~/"));
-    if p.exists() { Some(p) } else { None }
-}
-
 // ── Hook directory functions ──────────────────────────────────────
 
 fn claude_hook_dir() -> Option<PathBuf> {
-    env_or_home("CLAUDE_CONFIG_DIR", "~/.claude")
+    platform::env_or_home("CLAUDE_CONFIG_DIR", "~/.claude")
         .map(|d| d.join("hooks"))
 }
 
 fn codex_hook_dir() -> Option<PathBuf> {
-    env_or_home("CODEX_HOME", "~/.codex")
+    platform::env_or_home("CODEX_HOME", "~/.codex")
         .map(|d| d.join("hooks"))
 }
 
 fn opencode_hook_dir() -> Option<PathBuf> {
-    Some(home().join(".config/opencode/plugins"))
+    Some(platform::opencode_config_dir().join("plugins"))
 }
 
 fn pi_hook_dir() -> Option<PathBuf> {
-    env_or_home("PI_CODING_AGENT_DIR", "~/.pi-coding-agent")
+    platform::env_or_home("PI_CODING_AGENT_DIR", "~/.pi-coding-agent")
         .map(|d| d.join("extensions"))
 }
 
 fn omp_hook_dir() -> Option<PathBuf> {
-    Some(home().join(".config/omp/extensions"))
+    Some(platform::omp_config_dir().join("extensions"))
 }
 
 fn copilot_hook_dir() -> Option<PathBuf> {
-    env_or_home("COPILOT_HOME", "~/.copilot")
+    platform::env_or_home("COPILOT_HOME", "~/.copilot")
         .map(|d| d.join("hooks"))
 }
 
 fn droid_hook_dir() -> Option<PathBuf> {
-    Some(home().join(".factory/hooks"))
+    Some(platform::home_dir().join(".factory/hooks"))
 }
 
 fn kimi_hook_dir() -> Option<PathBuf> {
-    env_or_home("KIMI_CODE_HOME", "~/.kimi-code")
+    platform::env_or_home("KIMI_CODE_HOME", "~/.kimi-code")
         .map(|d| d.join("hooks"))
 }
 
 fn kilo_hook_dir() -> Option<PathBuf> {
-    Some(home().join(".config/kilo/plugin"))
+    Some(platform::kilo_config_dir().join("plugin"))
 }
 
 fn hermes_hook_dir() -> Option<PathBuf> {
-    Some(home().join(".hermes/plugins/herdr-agent-state"))
+    Some(platform::home_dir().join(".hermes/plugins/herdr-agent-state"))
 }
 
 fn qoder_hook_dir() -> Option<PathBuf> {
-    env_or_home("QODER_CONFIG_DIR", "~/.qoder")
+    platform::env_or_home("QODER_CONFIG_DIR", "~/.qoder")
         .map(|d| d.join("hooks"))
 }
 
 fn cursor_hook_dir() -> Option<PathBuf> {
-    env_or_home("CURSOR_CONFIG_DIR", "~/.cursor")
+    platform::env_or_home("CURSOR_CONFIG_DIR", "~/.cursor")
         .map(|d| d.join("hooks"))
 }
 

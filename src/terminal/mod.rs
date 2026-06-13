@@ -273,10 +273,14 @@ pub fn spawn_command_in_pty(
     let mut cmd = CommandBuilder::new(program);
     for arg in args { cmd.arg(arg); }
     // Prepend ~/.local/bin so the bundled/bootstrapped herdr CLI takes precedence.
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-    let user_bin = format!("{}/.local/bin", home);
-    let path = std::env::var("PATH").unwrap_or_default();
-    cmd.env("PATH", format!("{user_bin}:{path}"));
+    let user_bin = crate::platform::local_bin_dir();
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    let mut paths = vec![std::path::PathBuf::from(&user_bin)];
+    paths.extend(std::env::split_paths(&path));
+    if let Ok(joined) = std::env::join_paths(paths) {
+        cmd.env("PATH", joined);
+    }
+    let home = crate::platform::home_dir();
     cmd.env("HOME", &home);
     if let Ok(shell) = std::env::var("SHELL") { cmd.env("SHELL", &shell); }
     cmd.env("TERM", "xterm-256color");

@@ -2,16 +2,14 @@
 
 use std::path::PathBuf;
 
+use crate::platform;
+
 /// Path to the herdr binary built/copied at compile time (dev/test convenience).
 const BUNDLED_HERDR: &str = env!("HERDR_BINARY");
 
-/// Seed path for herdr installed by the deb/rpm package.
-const SEED_HERDR: &str = "/usr/share/zenix/herdr";
-
 /// User-local install path — herdr self-updates from here.
 fn user_herdr_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-    PathBuf::from(home).join(".local/bin/herdr")
+    platform::local_bin_dir().join(platform::herdr_binary_name())
 }
 
 /// Ensure herdr is available, installing to ~/.local/bin/herdr on first run.
@@ -31,8 +29,9 @@ pub fn ensure_herdr() -> Option<PathBuf> {
 
     // 3. PATH lookup
     if let Ok(path) = std::env::var("PATH") {
+        let name = platform::herdr_binary_name();
         for dir in std::env::split_paths(&path) {
-            let c = dir.join("herdr");
+            let c = dir.join(name);
             if c.is_file() {
                 return Some(c);
             }
@@ -40,7 +39,7 @@ pub fn ensure_herdr() -> Option<PathBuf> {
     }
 
     // 4. Seed binary from package install — copy to user-local path
-    let seed = PathBuf::from(SEED_HERDR);
+    let seed = platform::seed_herdr();
     if seed.is_file() {
         let _ = std::fs::create_dir_all(user.parent().unwrap());
         if std::fs::copy(&seed, &user).is_ok() {
@@ -57,10 +56,8 @@ pub fn find_herdr_binary() -> Option<PathBuf> { ensure_herdr() }
 
 /// Compute the herdr client socket path.
 pub fn herdr_socket_path() -> PathBuf {
-    let home = std::env::var("HOME")
-        .unwrap_or_else(|_| "/root".to_string());
-    PathBuf::from(home)
-        .join(".config/herdr/herdr-client.sock")
+    platform::config_dir()
+        .join("herdr/herdr-client.sock")
 }
 
 /// Start the herdr server in the background.

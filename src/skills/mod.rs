@@ -9,6 +9,8 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::platform;
+
 /// Information about a skill installed across agents.
 #[derive(Debug, Clone)]
 pub struct SkillInfo {
@@ -21,43 +23,30 @@ pub struct SkillInfo {
 
 // ── Per-agent skills directories ─────────────────────────────────────
 
-fn home() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/root".into()))
-}
-
-fn env_or_home(var: &str, fallback: &str) -> Option<PathBuf> {
-    if let Ok(dir) = std::env::var(var) {
-        let p = PathBuf::from(dir);
-        if p.exists() { return Some(p); }
-    }
-    let p = home().join(fallback.trim_start_matches("~/"));
-    if p.exists() { Some(p) } else { None }
-}
-
 /// Returns Vec<(agent_name, skills_dir)> for agents that support skill directories.
 fn agent_skills_dirs() -> Vec<(String, PathBuf)> {
     let mut out = Vec::new();
 
     // Claude
-    if let Some(dir) = env_or_home("CLAUDE_CONFIG_DIR", "~/.claude") {
+    if let Some(dir) = platform::env_or_home("CLAUDE_CONFIG_DIR", "~/.claude") {
         out.push(("claude".into(), dir.join("skills")));
     }
     // Codex
-    if let Some(dir) = env_or_home("CODEX_HOME", "~/.codex") {
+    if let Some(dir) = platform::env_or_home("CODEX_HOME", "~/.codex") {
         out.push(("codex".into(), dir.join("skills")));
     }
     // OpenCode
-    out.push(("opencode".into(), home().join(".config/opencode/skills")));
+    out.push(("opencode".into(), platform::opencode_config_dir().join("skills")));
     // Pi
-    if let Some(dir) = env_or_home("PI_CODING_AGENT_DIR", "~/.pi-coding-agent") {
+    if let Some(dir) = platform::env_or_home("PI_CODING_AGENT_DIR", "~/.pi-coding-agent") {
         out.push(("pi".into(), dir.join("skills")));
     }
     // OMP
-    out.push(("omp".into(), home().join(".config/omp/skills")));
+    out.push(("omp".into(), platform::omp_config_dir().join("skills")));
     // Kilo
-    out.push(("kilo".into(), home().join(".config/kilo/skills")));
+    out.push(("kilo".into(), platform::kilo_config_dir().join("skills")));
     // Hermes
-    out.push(("hermes".into(), home().join(".hermes/skills")));
+    out.push(("hermes".into(), platform::home_dir().join(".hermes/skills")));
 
     out
 }
@@ -196,7 +185,7 @@ pub fn unlink_skill(skill_name: &str, target_agent: &str) -> Result<(), String> 
 
 /// Centralized skills directory managed by zenix.
 pub fn zenix_skills_dir() -> PathBuf {
-    home().join(".config/zenix/skills")
+    platform::zenix_config_dir().join("skills")
 }
 
 /// List skills in the zenix centralized directory.

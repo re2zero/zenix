@@ -1,7 +1,7 @@
 //! Unified MCP server management — read/write MCP configs across agents.
 //!
 //! Two data sources:
-//!   1. Zenix-managed servers: ~/.config/zenix/mcp.json (NDJSON)
+//!   1. Zenix-managed servers: <config_dir>/zenix/mcp.json (NDJSON)
 //!   2. Per-agent Claude-format configs (Claude, OpenCode, Pi, OMP, Kilo)
 //!
 //! Claude-format JSON:
@@ -10,6 +10,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+
+use crate::platform;
 
 /// A single MCP server entry.
 #[derive(Debug, Clone)]
@@ -48,43 +50,30 @@ pub struct ZenixMcpServer {
 
 // ── Per-agent config paths ───────────────────────────────────────────
 
-fn home() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/root".into()))
-}
-
-fn env_or_home(var: &str, fallback: &str) -> Option<PathBuf> {
-    if let Ok(dir) = std::env::var(var) {
-        let p = PathBuf::from(dir);
-        if p.exists() { return Some(p); }
-    }
-    let p = home().join(fallback.trim_start_matches("~/"));
-    if p.exists() { Some(p) } else { None }
-}
-
 /// Returns (agent_name, path) for agents that use Claude-format JSON MCP configs.
 fn claude_format_configs() -> Vec<(String, PathBuf)> {
     let mut out = Vec::new();
 
     // Claude
-    if let Some(dir) = env_or_home("CLAUDE_CONFIG_DIR", "~/.claude") {
+    if let Some(dir) = platform::env_or_home("CLAUDE_CONFIG_DIR", "~/.claude") {
         out.push(("claude".into(), dir.join("claude_desktop_config.json")));
     }
     // OpenCode
-    out.push(("opencode".into(), home().join(".config/opencode/config.json")));
+    out.push(("opencode".into(), platform::opencode_config_dir().join("config.json")));
     // Pi
-    if let Some(dir) = env_or_home("PI_CODING_AGENT_DIR", "~/.pi-coding-agent") {
+    if let Some(dir) = platform::env_or_home("PI_CODING_AGENT_DIR", "~/.pi-coding-agent") {
         out.push(("pi".into(), dir.join("config.json")));
     }
     // Codex
-    if let Some(dir) = env_or_home("CODEX_HOME", "~/.codex") {
+    if let Some(dir) = platform::env_or_home("CODEX_HOME", "~/.codex") {
         out.push(("codex".into(), dir.join("config.json")));
     }
     // OMP
-    out.push(("omp".into(), home().join(".config/omp/config.json")));
+    out.push(("omp".into(), platform::omp_config_dir().join("config.json")));
     // Kilo
-    out.push(("kilo".into(), home().join(".config/kilo/config.json")));
+    out.push(("kilo".into(), platform::kilo_config_dir().join("config.json")));
     // Hermes
-    out.push(("hermes".into(), home().join(".config/hermes/config.json")));
+    out.push(("hermes".into(), platform::hermes_config_dir().join("config.json")));
 
     out
 }
@@ -373,7 +362,7 @@ pub fn read_agent_mcp_json(agent_name: &str) -> Option<String> {
 // ── Zenix-managed MCP servers (NDJSON) ─────────────────────────
 
 fn zenix_mcp_path() -> PathBuf {
-    home().join(".config/zenix/mcp.json")
+    platform::zenix_config_dir().join("mcp.json")
 }
 
 pub fn load_zenix_mcp_servers() -> Vec<ZenixMcpServer> {
