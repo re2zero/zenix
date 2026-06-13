@@ -162,8 +162,13 @@ pub fn link_skill(skill_name: &str, target_agent: &str) -> Result<(), String> {
         return Err(format!("'{skill_name}' already exists in {target_agent}"));
     }
 
+    #[cfg(unix)]
     std::os::unix::fs::symlink(&source_dir, &link_path)
-        .map_err(|e| format!("symlink from {source_agent} to {target_agent}: {e}"))
+        .map_err(|e| format!("symlink from {source_agent} to {target_agent}: {e}"))?;
+    #[cfg(windows)]
+    std::os::windows::fs::symlink_dir(&source_dir, &link_path)
+        .map_err(|e| format!("symlink from {source_agent} to {target_agent}: {e}"))?;
+    Ok(())
 }
 
 /// Remove a symlink from target agent's skills dir. NEVER deletes real directories.

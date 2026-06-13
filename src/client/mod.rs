@@ -90,6 +90,14 @@ pub fn start_herdr_server() -> bool {
 
 /// Check whether the herdr client socket is ready.
 pub fn is_socket_ready(path: &std::path::Path) -> bool {
-    use std::os::unix::net::UnixStream;
-    UnixStream::connect(path).is_ok()
+    #[cfg(unix)]
+    {
+        use std::os::unix::net::UnixStream;
+        return UnixStream::connect(path).is_ok();
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        false
+    }
 }

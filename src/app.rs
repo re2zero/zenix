@@ -6,7 +6,7 @@ use alacritty_terminal::{index::Side, selection::SelectionType};
 use gpui::{
     Bounds, ClipboardItem, ClickEvent, Context, FocusHandle, InteractiveElement as _, IntoElement,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _,
-    Pixels, Point, Render, ScrollWheelEvent, StatefulInteractiveElement as _, Styled as _, Window, div, px,
+    Pixels, Point, Render, ScrollWheelEvent, Styled as _, Window, div, px,
 };
 use gpui_component::{
     ActiveTheme as _, ElementExt, Theme, ThemeRegistry,
@@ -375,7 +375,7 @@ impl ZenixApp {
         }
     }
 
-    fn on_scroll(&mut self, event: &ScrollWheelEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_scroll(&mut self, event: &ScrollWheelEvent, _window: &mut Window, _cx: &mut Context<Self>) {
         if self.show_settings { return; }
         let lh = f32::from(self.terminal_line_height);
         let delta = match event.delta {
@@ -566,14 +566,14 @@ impl Render for ZenixApp {
             })
             .collect();
         // Split into light/dark groups for 2-column layout
-        let light_themes: Vec<gpui::AnyElement> = registry.sorted_themes().iter().filter(|tc| tc.mode == gpui_component::ThemeMode::Light).map(|tc| {
+        let _light_themes: Vec<gpui::AnyElement> = registry.sorted_themes().iter().filter(|tc| tc.mode == gpui_component::ThemeMode::Light).map(|tc| {
             let name = tc.name.to_string();
             let is_current = name == current_theme_name;
             let prefix = if is_current { "\u{2713} " } else { "  " };
             let cb: sidebar::ThemeCallback = { let n = name.clone(); Box::new(cx.listener(move |this, _: &ClickEvent, window, cx| { this.switch_theme(&n, window, cx); })) };
             Button::new(format!("th-{name}")).ghost().label(format!("{prefix}{name}")).w_full().on_click(cb).into_any_element()
         }).collect();
-        let dark_themes: Vec<gpui::AnyElement> = registry.sorted_themes().iter().filter(|tc| tc.mode == gpui_component::ThemeMode::Dark).map(|tc| {
+        let _dark_themes: Vec<gpui::AnyElement> = registry.sorted_themes().iter().filter(|tc| tc.mode == gpui_component::ThemeMode::Dark).map(|tc| {
             let name = tc.name.to_string();
             let is_current = name == current_theme_name;
             let prefix = if is_current { "\u{2713} " } else { "  " };

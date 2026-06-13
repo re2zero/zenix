@@ -161,7 +161,7 @@ fn locale_btn(code: &str, label: &str, current: &str, on_change: std::rc::Rc<Box
 
 // ── Appearance ───────────────────────────────────────────────────────
 
-fn tab_appearance(font_size: f32, current_theme_name: &str, theme_buttons: Vec<AnyElement>, on_font_down: ThemeCallback, on_font_up: ThemeCallback) -> impl IntoElement {
+fn tab_appearance(font_size: f32, _current_theme_name: &str, theme_buttons: Vec<AnyElement>, on_font_down: ThemeCallback, on_font_up: ThemeCallback) -> impl IntoElement {
     let mid = (theme_buttons.len() + 1) / 2;
     let mut iter = theme_buttons.into_iter();
     let col1: Vec<_> = iter.by_ref().take(mid).collect();
@@ -437,6 +437,7 @@ fn per_agent_skill_card(
         )
 }
 
+#[expect(dead_code)]
 fn skill_agent_checkbox(agent: String, checked: bool) -> impl IntoElement {
     let prefix = if checked { "\u{2611}" } else { "\u{2610}" };
     div().id(format!("skill-cb-{agent}")).cursor_pointer().py(px(2.)).px(px(4.))
