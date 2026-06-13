@@ -164,6 +164,25 @@ pub fn detect_all_agents() -> Vec<AgentCliInfo> {
     }).collect()
 }
 
+/// Resolve the hook file path for a named agent.
+///
+/// Looks up the agent in the built-in registry by `agent_name`, then joins
+/// its hook directory (if resolved) with its hook filename.
+/// Returns `None` if the agent is unknown or its hook directory doesn't exist.
+pub fn hook_path_for(agent_name: &str) -> Option<PathBuf> {
+    let spec = AGENTS.iter().find(|a| a.name == agent_name)?;
+    let dir = (spec.hook_dir)()?;
+    Some(dir.join(spec.hook_filename))
+}
+
+/// Remove the hook file for a named agent.
+///
+/// Returns `Err` if no hook file exists for the agent.
+pub fn uninstall_hook(agent_name: &str) -> Result<(), String> {
+    let path = hook_path_for(agent_name).ok_or_else(|| "Hook not found".to_string())?;
+    std::fs::remove_file(&path).map_err(|e| e.to_string())
+}
+
 struct AgentSpec {
     name: &'static str,
     display_name: &'static str,

@@ -1,12 +1,13 @@
 //! Unified MCP server management — read/write MCP configs across agents.
 //!
-//! Supported agent formats:
-//!   Claude-format JSON (Claude, OpenCode, Pi, OMP, Kilo):
-//!     `{ "mcpServers": { <name>: { command, args?, env?, disabled? } } }`
+//! Two data sources:
+//!   1. Zenix-managed servers: ~/.config/zenix/mcp.json (NDJSON)
+//!   2. Per-agent Claude-format configs (Claude, OpenCode, Pi, OMP, Kilo)
 //!
-//! Agents without MCP config files (Copilot, Droid, Kimi, Qodercli, Cursor, Codex, Hermes)
-//! are skipped — their MCP is managed externally or via different mechanisms.
+//! Claude-format JSON:
+//!     `{ "mcpServers": { <name>: { command, args?, env?, disabled? } } }`
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -18,6 +19,31 @@ pub struct McpServerEntry {
     pub args: Vec<String>,
     pub env: HashMap<String, String>,
     pub disabled: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum McpType {
+    Stdio,
+    Sse,
+}
+
+impl Default for McpType {
+    fn default() -> Self { McpType::Stdio }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ZenixMcpServer {
+    pub name: String,
+    #[serde(rename = "type", default)]
+    pub mcp_type: McpType,
+    pub command: String,
+    #[serde(default)]
+    pub args: Vec<String>,
+    #[serde(default)]
+    pub env: HashMap<String, String>,
+    #[serde(default)]
+    pub enabled_agents: Vec<String>,
 }
 
 // ── Per-agent config paths ───────────────────────────────────────────
@@ -49,10 +75,16 @@ fn claude_format_configs() -> Vec<(String, PathBuf)> {
     if let Some(dir) = env_or_home("PI_CODING_AGENT_DIR", "~/.pi-coding-agent") {
         out.push(("pi".into(), dir.join("config.json")));
     }
+    // Codex
+    if let Some(dir) = env_or_home("CODEX_HOME", "~/.codex") {
+        out.push(("codex".into(), dir.join("config.json")));
+    }
     // OMP
     out.push(("omp".into(), home().join(".config/omp/config.json")));
     // Kilo
     out.push(("kilo".into(), home().join(".config/kilo/config.json")));
+    // Hermes
+    out.push(("hermes".into(), home().join(".config/hermes/config.json")));
 
     out
 }
@@ -234,4 +266,213 @@ pub fn remove_mcp_server(name: &str) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// Return only the agent names that use Claude-format configs.
+pub fn claude_format_config_names() -> Vec<String> {
+    claude_format_configs().into_iter().map(|(name, _)| name).collect()
+}
+
+/// Toggle a server's `disabled` field for a specific agent.
+pub fn toggle_mcp_agent(
+    server_name: &str,
+    agent_name: &str,
+    enabled: bool,
+) -> Result<(), String> {
+    let (path, config) = claude_format_configs().into_iter()
+        .find_map(|(name, path)| {
+            if name == agent_name && path.exists() {
+                let servers = read_claude_mcp(&path);
+                Some((path, servers))
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| format!("agent '{agent_name}' not found or config missing"))?;
+
+    let mut servers = config;
+    let server = servers.iter_mut()
+        .find(|s| s.name == server_name)
+        .ok_or_else(|| format!("server '{server_name}' not found in agent '{agent_name}'"))?;
+    server.disabled = !enabled;
+
+    write_claude_mcp(&path, &servers)
+}
+
+/// Remove an MCP server from a specific agent's config.
+pub fn remove_mcp_server_from_agent(
+    server_name: &str,
+    agent_name: &str,
+) -> Result<(), String> {
+    let (path, config) = claude_format_configs().into_iter()
+        .find_map(|(name, path)| {
+            if name == agent_name && path.exists() {
+                let servers = read_claude_mcp(&path);
+                Some((path, servers))
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| format!("agent '{agent_name}' not found or config missing"))?;
+
+    let before = config.len();
+    let servers: Vec<_> = config.into_iter().filter(|s| s.name != server_name).collect();
+    if servers.len() == before {
+        return Err(format!("server '{server_name}' not found in agent '{agent_name}'"));
+    }
+
+    write_claude_mcp(&path, &servers)
+}
+
+/// Toggle a server's `disabled` state (flip) for a specific agent.
+pub fn toggle_mcp_server_for_agent(
+    server_name: &str,
+    agent_name: &str,
+) -> Result<(), String> {
+    let (path, config) = claude_format_configs().into_iter()
+        .find_map(|(name, path)| {
+            if name == agent_name && path.exists() {
+                let servers = read_claude_mcp(&path);
+                Some((path, servers))
+            } else {
+                None
+            }
+        })
+        .ok_or_else(|| format!("agent '{agent_name}' not found or config missing"))?;
+
+    let mut servers = config;
+    let server = servers.iter_mut()
+        .find(|s| s.name == server_name)
+        .ok_or_else(|| format!("server '{server_name}' not found in agent '{agent_name}'"))?;
+    server.disabled = !server.disabled;
+
+    write_claude_mcp(&path, &servers)
+}
+
+/// Scan MCP servers per agent, returning only agents with non-empty server lists.
+pub fn scan_per_agent_mcp() -> Vec<(String, Vec<McpServerEntry>)> {
+    claude_format_configs().into_iter()
+        .filter_map(|(name, path)| {
+            if !path.exists() { return None; }
+            let servers = read_claude_mcp(&path);
+            if servers.is_empty() { return None; }
+            Some((name, servers))
+        })
+        .collect()
+}
+
+/// Read the raw JSON content of a specific agent's MCP config file.
+pub fn read_agent_mcp_json(agent_name: &str) -> Option<String> {
+    let path = claude_format_configs().into_iter()
+        .find_map(|(name, p)| {
+            if name == agent_name && p.exists() { Some(p) } else { None }
+        })?;
+    std::fs::read_to_string(&path).ok()
+}
+
+// ── Zenix-managed MCP servers (NDJSON) ─────────────────────────
+
+fn zenix_mcp_path() -> PathBuf {
+    home().join(".config/zenix/mcp.json")
+}
+
+pub fn load_zenix_mcp_servers() -> Vec<ZenixMcpServer> {
+    let path = zenix_mcp_path();
+    if !path.exists() { return vec![]; }
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return vec![],
+    };
+    content.lines()
+        .filter(|line| !line.trim().is_empty())
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect()
+}
+
+fn save_zenix_mcp_servers(servers: &[ZenixMcpServer]) -> Result<(), String> {
+    let path = zenix_mcp_path();
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("create dir: {e}"))?;
+    }
+    let ndjson: String = servers.iter()
+        .map(|s| serde_json::to_string(s).unwrap_or_default())
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(&path, if ndjson.is_empty() { "".into() } else { format!("{ndjson}\n") })
+        .map_err(|e| format!("write: {e}"))
+}
+
+pub fn add_zenix_mcp_server(server: &ZenixMcpServer) -> Result<(), String> {
+    let mut servers = load_zenix_mcp_servers();
+    servers.retain(|s| s.name != server.name);
+    servers.push(server.clone());
+    save_zenix_mcp_servers(&servers)
+}
+
+pub fn remove_zenix_mcp_server(name: &str) -> Result<(), String> {
+    let mut servers = load_zenix_mcp_servers();
+    let before = servers.len();
+    servers.retain(|s| s.name != name);
+    if servers.len() == before {
+        return Err(format!("server '{name}' not found"));
+    }
+    save_zenix_mcp_servers(&servers)
+}
+
+pub fn toggle_zenix_mcp_agent(server_name: &str, agent_name: &str) -> Result<(), String> {
+    let mut servers = load_zenix_mcp_servers();
+    let idx = servers.iter().position(|s| s.name == server_name)
+        .ok_or_else(|| format!("server '{server_name}' not found"))?;
+    let is_enabled = servers[idx].enabled_agents.iter().any(|a| a == agent_name);
+    if is_enabled {
+        servers[idx].enabled_agents.retain(|a| a != agent_name);
+    } else {
+        servers[idx].enabled_agents.push(agent_name.to_string());
+    }
+    let server = &servers[idx];
+    save_zenix_mcp_servers(&servers)?;
+    let _ = sync_zenix_server_to_agent(server, agent_name, !is_enabled);
+    Ok(())
+}
+
+pub fn sync_zenix_server_to_agent(server: &ZenixMcpServer, agent_name: &str, enable: bool) -> Result<(), String> {
+    let config_path = claude_format_configs().into_iter()
+        .find(|(name, _)| name == agent_name)
+        .map(|(_, p)| p)
+        .ok_or_else(|| format!("unknown agent: {agent_name}"))?;
+
+    if let Some(parent) = config_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("create dir: {e}"))?;
+    }
+
+    let mut entries = if config_path.exists() {
+        read_claude_mcp(&config_path)
+    } else {
+        vec![]
+    };
+
+    if enable {
+        if let Some(existing) = entries.iter_mut().find(|e| e.name == server.name) {
+            existing.command = server.command.clone();
+            existing.args = server.args.clone();
+            existing.env = server.env.clone();
+            existing.disabled = false;
+        } else {
+            entries.push(McpServerEntry {
+                name: server.name.clone(),
+                command: server.command.clone(),
+                args: server.args.clone(),
+                env: server.env.clone(),
+                disabled: false,
+            });
+        }
+    } else {
+        entries.retain(|e| e.name != server.name);
+    }
+
+    write_claude_mcp(&config_path, &entries)
+}
+
+pub fn claude_format_agent_names() -> Vec<String> {
+    claude_format_configs().into_iter().map(|(name, _)| name).collect()
 }

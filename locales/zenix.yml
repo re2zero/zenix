@@ -174,6 +174,24 @@ mcp:
   no_servers:
     en: "No MCP servers configured"
     zh-CN: "未配置 MCP 服务器"
+  per_agent_configs:
+    en: "Per-Agent MCP Configs"
+    zh-CN: "各代理 MCP 配置"
+  no_agent_configs:
+    en: "No agent MCP configs found"
+    zh-CN: "未找到代理 MCP 配置"
+  view_json:
+    en: "JSON"
+    zh-CN: "JSON"
+  view_preview:
+    en: "Preview"
+    zh-CN: "预览"
+  enable:
+    en: "Enable"
+    zh-CN: "启用"
+  disable:
+    en: "Disable"
+    zh-CN: "禁用"
 
 skills:
   refresh:
