@@ -1,0 +1,101 @@
+# Maintainer: re2zero <yangwu@uniontech.com>
+# Contributor: zenix contributors
+#
+# Build instructions for Arch Linux / Manjaro / EndeavourOS.
+#
+# Quick build from within the cloned repo:
+#   cd <repo-root> && makepkg -fp archlinux/PKGBUILD
+#
+# Or use the AUR / manual download workflow:
+#   curl -LO https://github.com/re2zero/zenix/archive/refs/tags/v0.1.0.tar.gz
+#   # then adjust pkgver and source below
+#
+# Required packages (install before building):
+#   sudo pacman -S --needed base-devel rust libxcb xcb-util \
+#     libxkbcommon fontconfig freetype2 expat wayland libglvnd
+
+pkgname=zenix
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="A cross-platform GPUI frontend for herdr terminal workspace manager — extensible with plugins and sub-apps"
+arch=('x86_64')
+url='https://github.com/re2zero/zenix'
+license=('GPL-3.0-or-later')
+depends=(
+  'libxcb'
+  'libxkbcommon'
+  'fontconfig'
+  'freetype2'
+  'wayland'
+  'libglvnd'
+)
+makedepends=(
+  'cargo'
+  'git'
+)
+install=zenix.install
+source=(
+  "${pkgname}::git+${url}.git#tag=v${pkgver}"
+)
+sha256sums=('SKIP')
+
+# The crates.io index is large; allow network access during build.
+validpgpkeys=()
+
+# Fetch git submodules (herdr is a submodule of zenix).
+prepare() {
+  cd "${srcdir}/${pkgname}"
+  git submodule update --init --recursive
+}
+
+pkgver() {
+  cd "${srcdir}/${pkgname}"
+  git describe --tags --always 2>/dev/null || echo "${pkgver}"
+}
+
+build() {
+  cd "${srcdir}/${pkgname}"
+  cargo build --release
+}
+
+package() {
+  cd "${srcdir}/${pkgname}"
+
+  install -Dm755 "target/release/zenix" "${pkgdir}/usr/bin/zenix"
+
+  # herdr companion binary (built by build.rs)
+  if [ -f "target/release/herdr" ]; then
+    install -Dm755 "target/release/herdr" "${pkgdir}/usr/share/zenix/herdr"
+  fi
+
+  # Desktop entry
+  install -Dm644 "res/zenix.desktop" "${pkgdir}/usr/share/applications/zenix.desktop"
+
+  # Icon
+  install -Dm644 "res/zenix.png" \
+    "${pkgdir}/usr/share/icons/hicolor/512x512/apps/zenix.png"
+
+  # Documentation
+  install -Dm644 "README.md" "${pkgdir}/usr/share/doc/zenix/README.md"
+  install -Dm644 "LICENSE"  "${pkgdir}/usr/share/doc/zenix/LICENSE"
+
+  # Fonts
+  install -Dm644 "assets/fonts/Lilex-Regular.ttf" \
+    "${pkgdir}/usr/share/zenix/fonts/Lilex-Regular.ttf"
+  install -Dm644 "assets/fonts/Lilex-Bold.ttf" \
+    "${pkgdir}/usr/share/zenix/fonts/Lilex-Bold.ttf"
+  install -Dm644 "assets/fonts/Lilex-Italic.ttf" \
+    "${pkgdir}/usr/share/zenix/fonts/Lilex-Italic.ttf"
+  install -Dm644 "assets/fonts/Lilex-BoldItalic.ttf" \
+    "${pkgdir}/usr/share/zenix/fonts/Lilex-BoldItalic.ttf"
+
+  # Themes
+  install -Dm644 "assets/themes/gruvbox.json" \
+    "${pkgdir}/usr/share/zenix/themes/gruvbox.json"
+  install -Dm644 "assets/themes/solarized.json" \
+    "${pkgdir}/usr/share/zenix/themes/solarized.json"
+  install -Dm644 "assets/themes/tokyonight.json" \
+    "${pkgdir}/usr/share/zenix/themes/tokyonight.json"
+  install -Dm644 "assets/themes/matrix.json" \
+    "${pkgdir}/usr/share/zenix/themes/matrix.json"
+}

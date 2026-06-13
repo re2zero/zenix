@@ -1,0 +1,436 @@
+# Release workflow — automatic build and publish on version tags.
+#
+# Trigger:      git push --tags v*
+#
+# Outputs:
+#   OS            Format(s)                              Job
+#   ─────────────────────────────────────────────────────────────────
+#   Windows x86_64  .exe installer (Inno Setup) + .zip    windows
+#   macOS x86_64    .dmg (app bundle) + .zip              macos-x86_64
+#   macOS aarch64   .dmg (app bundle) + .zip              macos-aarch64
+#   Linux (any)     .tar.gz + .deb (dpkg) + .rpm (musl)  linux-musl
+#   Arch Linux      .pkg.tar.zst                          archlinux
+#
+# Why musl on Linux:
+#   Deepin v20 ships glibc 2.28 but newer distros use 2.36+.  A binary
+#   linked against glibc from a modern build env will refuse to start
+#   on older systems.  Building with x86_64-unknown-linux-musl makes the
+#   binary completely agnostic to the host glibc — the only loaded
+#   glibc comes indirectly via dynamically-linked system libraries
+#   (fontconfig, xcb, …) which are already present on the target.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ═══════════════════════════════════════════════════════════════
+  #  Windows x86_64  — .exe installer + .zip
+  # ═══════════════════════════════════════════════════════════════
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo build --release
+
+      - name: Package (.zip)
+        shell: pwsh
+        run: |
+          $version = "$env:GITHUB_REF_NAME" -replace '^v', ''
+          New-Item -ItemType Directory -Path staging -Force
+          Copy-Item target/release/zenix.exe staging/
+          if (Test-Path target/release/herdr.exe) {
+            Copy-Item target/release/herdr.exe staging/
+          }
+          Compress-Archive -Path staging/* -DestinationPath "zenix-${version}-x86_64-pc-windows-msvc.zip"
+
+      - name: Build Inno Setup installer
+        shell: pwsh
+        run: |
+          $version = "$env:GITHUB_REF_NAME" -replace '^v', ''
+          choco install innosetup --no-progress -y
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\iscc.exe"
+          if (-not (Test-Path $iscc)) {
+            $iscc = "iscc"
+          }
+          & $iscc "/DMyAppVersion=$version" installers\windows\zenix.iss
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zenix-windows
+          path: |
+            zenix-*-x86_64-pc-windows-msvc.zip
+            zenix-*-x86_64-setup.exe
+
+  # ═══════════════════════════════════════════════════════════════
+  #  macOS x86_64 (Intel)  — .dmg + .zip
+  # ═══════════════════════════════════════════════════════════════
+  macos-x86_64:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo build --release
+
+      - name: Package (.zip)
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p staging
+          cp target/release/zenix staging/
+          test -f target/release/herdr && cp target/release/herdr staging/
+          cd staging && zip -r "../zenix-${version}-x86_64-apple-darwin.zip" ./*
+
+      - name: Package (.dmg)
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          bash installers/macos/package-dmg.sh \
+            "${version}" "x86_64" "target/release/"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zenix-macos-x86_64
+          path: |
+            zenix-*-x86_64-apple-darwin.zip
+            zenix-*-x86_64-apple-darwin.dmg
+
+  # ═══════════════════════════════════════════════════════════════
+  #  macOS aarch64 (Apple Silicon)  — .dmg + .zip
+  # ═══════════════════════════════════════════════════════════════
+  macos-aarch64:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: Swatinem/rust-cache@v2
+
+      - run: cargo build --release
+
+      - name: Package (.zip)
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p staging
+          cp target/release/zenix staging/
+          test -f target/release/herdr && cp target/release/herdr staging/
+          cd staging && zip -r "../zenix-${version}-aarch64-apple-darwin.zip" ./*
+
+      - name: Package (.dmg)
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          bash installers/macos/package-dmg.sh \
+            "${version}" "aarch64" "target/release/"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zenix-macos-aarch64
+          path: |
+            zenix-*-aarch64-apple-darwin.zip
+            zenix-*-aarch64-apple-darwin.dmg
+
+  # ═══════════════════════════════════════════════════════════════
+  #  Linux musl static  — .tar.gz + .deb + .rpm
+  # ═══════════════════════════════════════════════════════════════
+  linux-musl:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: musl
+
+      - name: Install system libraries for GPUI
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            musl-tools pkg-config              \
+            libxkbcommon-dev                   \
+            libfontconfig1-dev                 \
+            libfreetype6-dev                   \
+            libexpat1-dev                      \
+            libxcb-composite0-dev              \
+            libxcb-xfixes0-dev                 \
+            libxcb-xkb-dev                     \
+            libxcb-shape0-dev                  \
+            libxcb-randr0-dev                  \
+            libxcb-render0-dev                 \
+            libxcb-util-dev                    \
+            libwayland-dev                     \
+            libegl1-mesa-dev                   \
+            libgl1-mesa-dev
+
+      - run: rustup target add x86_64-unknown-linux-musl
+
+      - name: Build zenix (musl static)
+        run: cargo build --release --target x86_64-unknown-linux-musl
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: /usr/bin/musl-gcc
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          PKG_CONFIG_ALLOW_CROSS: 1
+
+      # build.rs compiles herdr for the HOST target (glibc).
+      # Rebuild with musl here and overwrite the glibc copy.
+      - name: Rebuild herdr (musl static)
+        run: |
+          cd herdr
+          cargo build --release --target x86_64-unknown-linux-musl
+          cp target/x86_64-unknown-linux-musl/release/herdr \
+             "${{ github.workspace }}/target/x86_64-unknown-linux-musl/release/"
+        env:
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER: /usr/bin/musl-gcc
+          CC_x86_64_unknown_linux_musl: musl-gcc
+          PKG_CONFIG_ALLOW_CROSS: 1
+
+      # ─────────── .tar.gz ───────────
+      - name: Package (.tar.gz)
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          BINDIR="target/x86_64-unknown-linux-musl/release"
+          mkdir -p "zenix-${version}"
+          cp "${BINDIR}/zenix" "zenix-${version}/"
+          test -f "${BINDIR}/herdr" && cp "${BINDIR}/herdr" "zenix-${version}/"
+          tar czf "zenix-${version}-x86_64-linux-musl.tar.gz" "zenix-${version}/"
+
+      # ─────────── .deb (dpkg-deb) ───────────
+      - name: Build .deb package
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          BINDIR="target/x86_64-unknown-linux-musl/release"
+
+          D="zenix-deb/zenix_${version}_amd64"
+          mkdir -p "${D}/DEBIAN" "${D}/usr/bin" "${D}/usr/share/applications" \
+                   "${D}/usr/share/icons/hicolor/512x512/apps" \
+                   "${D}/usr/share/doc/zenix" \
+                   "${D}/usr/share/zenix/fonts" "${D}/usr/share/zenix/themes"
+
+          cp "${BINDIR}/zenix" "${D}/usr/bin/"
+          test -f "${BINDIR}/herdr" && cp "${BINDIR}/herdr" "${D}/usr/share/zenix/"
+
+          cp res/zenix.desktop "${D}/usr/share/applications/"
+          cp res/zenix.png     "${D}/usr/share/icons/hicolor/512x512/apps/"
+          cp assets/fonts/*.ttf   "${D}/usr/share/zenix/fonts/"
+          cp assets/themes/*.json "${D}/usr/share/zenix/themes/"
+          cp README.md "${D}/usr/share/doc/zenix/"
+          test -f LICENSE && cp LICENSE "${D}/usr/share/doc/zenix/" || true
+
+          INSTALLED_SIZE="$(du -sk "${D}" | cut -f1)"
+
+          # Write control line-by-line (YAML block scalar + heredoc don't mix)
+          > "${D}/DEBIAN/control"
+          echo "Package: zenix"                                 >> "${D}/DEBIAN/control"
+          echo "Version: ${version}"                            >> "${D}/DEBIAN/control"
+          echo "Maintainer: re2zero <yangwu@uniontech.com>"     >> "${D}/DEBIAN/control"
+          echo "Description: A cross-platform GPUI frontend for herdr terminal workspace manager" >> "${D}/DEBIAN/control"
+          echo " zenix is an extensible terminal workspace manager designed for AI coding agents." >> "${D}/DEBIAN/control"
+          echo " It provides workspace, tab, and pane management with a client-server"            >> "${D}/DEBIAN/control"
+          echo " architecture, plus system monitoring and plugin support."                         >> "${D}/DEBIAN/control"
+          echo "Section: utils"                      >> "${D}/DEBIAN/control"
+          echo "Priority: optional"                  >> "${D}/DEBIAN/control"
+          echo "Architecture: amd64"                 >> "${D}/DEBIAN/control"
+          echo "Installed-Size: ${INSTALLED_SIZE}"   >> "${D}/DEBIAN/control"
+          echo "Depends: libxcb-composite0, libxcb-xfixes0, libxcb-xkb0, libxcb-shape0," >> "${D}/DEBIAN/control"
+          echo " libxkbcommon0, libfontconfig1, libwayland-client0, libegl1, libgl1"    >> "${D}/DEBIAN/control"
+
+          dpkg-deb --build -Zgzip --root-owner-group \
+            "zenix-deb/zenix_${version}_amd64" \
+            "zenix_${version}_amd64.deb"
+
+      # ─────────── .rpm (Fedora container) ───────────
+      - name: Build .rpm package
+        run: |
+          # NOTE: GITHUB_REF_NAME is passed to the container via -e so
+          # the inner shell can compute version from it.
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e GITHUB_REF_NAME="${{ github.ref_name }}" \
+            fedora:latest \
+            bash -e -c '
+              dnf install -y -q rpm-build
+
+              version="${GITHUB_REF_NAME#v}"
+              mkdir -p /tmp/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+
+              # Minimal source tarball for %setup -q
+              tar czf /tmp/rpmbuild/SOURCES/zenix-${version}.tar.gz \
+                --transform "s,^,zenix-${version}/," \
+                target/release/zenix \
+                target/release/herdr 2>/dev/null \
+                res/zenix.desktop res/zenix.png \
+                assets/fonts/ assets/themes/ \
+                README.md LICENSE 2>/dev/null
+
+              rpmbuild -bb \
+                --define "version ${version}" \
+                --define "_topdir /tmp/rpmbuild" \
+                --define "_rpmdir /workspace" \
+                --define "_rpmfilename %%{NAME}-%%{VERSION}-%%{RELEASE}.%%{ARCH}.rpm" \
+                installers/linux/zenix.spec
+
+              echo "=== rpm built ==="
+              ls -lh /workspace/zenix-*.rpm
+            '
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zenix-linux-musl
+          path: |
+            zenix-*-x86_64-linux-musl.tar.gz
+            zenix_*.deb
+            zenix-*.rpm
+
+  # ═══════════════════════════════════════════════════════════════
+  #  Arch Linux  — .pkg.tar.zst
+  # ═══════════════════════════════════════════════════════════════
+  archlinux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build and package inside Arch Linux container
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            -e GITHUB_REF_NAME="${{ github.ref_name }}" \
+            archlinux:latest \
+            bash -e -c '
+              pacman -S --noconfirm \
+                base-devel rustup git zstd \
+                libxcb xcb-util libxkbcommon fontconfig \
+                freetype2 expat wayland libglvnd
+
+              rustup default stable
+              cargo build --release
+
+              version="${GITHUB_REF_NAME#v}"
+              P="pkgdest/zenix-${version}-1-x86_64"
+
+              mkdir -p "${P}/usr/bin" \
+                       "${P}/usr/share/applications" \
+                       "${P}/usr/share/icons/hicolor/512x512/apps" \
+                       "${P}/usr/share/doc/zenix" \
+                       "${P}/usr/share/zenix/fonts" \
+                       "${P}/usr/share/zenix/themes"
+
+              cp target/release/zenix "${P}/usr/bin/"
+              if [ -f target/release/herdr ]; then
+                cp target/release/herdr "${P}/usr/share/zenix/"
+              fi
+
+              cp res/zenix.desktop "${P}/usr/share/applications/"
+              cp res/zenix.png     "${P}/usr/share/icons/hicolor/512x512/apps/"
+              cp assets/fonts/*.ttf   "${P}/usr/share/zenix/fonts/"
+              cp assets/themes/*.json "${P}/usr/share/zenix/themes/"
+              cp README.md "${P}/usr/share/doc/zenix/"
+              if [ -f LICENSE ]; then
+                cp LICENSE "${P}/usr/share/doc/zenix/"
+              fi
+
+              INSTALLED_SIZE="$(du -sk "${P}" | cut -f1)"
+
+              # .PKGINFO
+              > "${P}/.PKGINFO"
+              echo "pkgname = zenix"                                   >> "${P}/.PKGINFO"
+              echo "pkgbase = zenix"                                   >> "${P}/.PKGINFO"
+              echo "pkgver = ${version}-1"                             >> "${P}/.PKGINFO"
+              echo "pkgdesc = A cross-platform GPUI frontend for herdr terminal workspace manager" >> "${P}/.PKGINFO"
+              echo "url = https://github.com/re2zero/zenix"            >> "${P}/.PKGINFO"
+              echo "builddate = $(date +%s)"                           >> "${P}/.PKGINFO"
+              echo "packager = GitHub Actions"                         >> "${P}/.PKGINFO"
+              echo "size = $(( INSTALLED_SIZE * 1024 ))"               >> "${P}/.PKGINFO"
+              echo "arch = x86_64"                                     >> "${P}/.PKGINFO"
+              echo "license = GPL-3.0-or-later"                        >> "${P}/.PKGINFO"
+              echo "depend = libxcb"                                   >> "${P}/.PKGINFO"
+              echo "depend = libxkbcommon"                             >> "${P}/.PKGINFO"
+              echo "depend = fontconfig"                               >> "${P}/.PKGINFO"
+              echo "depend = freetype2"                                >> "${P}/.PKGINFO"
+              echo "depend = wayland"                                  >> "${P}/.PKGINFO"
+              echo "depend = libglvnd"                                 >> "${P}/.PKGINFO"
+
+              # .INSTALL
+              > "${P}/.INSTALL"
+              echo "post_install() {"                                  >> "${P}/.INSTALL"
+              echo "  update-desktop-database -q 2>/dev/null || true"   >> "${P}/.INSTALL"
+              echo "  gtk-update-icon-cache -q -t /usr/share/icons/hicolor 2>/dev/null || true" >> "${P}/.INSTALL"
+              echo "}"                                                 >> "${P}/.INSTALL"
+              echo ""                                                  >> "${P}/.INSTALL"
+              echo "post_upgrade() {"                                   >> "${P}/.INSTALL"
+              echo "  post_install"                                     >> "${P}/.INSTALL"
+              echo "}"                                                  >> "${P}/.INSTALL"
+              echo ""                                                   >> "${P}/.INSTALL"
+              echo "post_remove() {"                                    >> "${P}/.INSTALL"
+              echo "  post_install"                                      >> "${P}/.INSTALL"
+              echo "}"                                                   >> "${P}/.INSTALL"
+
+              cd "$(dirname "${P}")"
+              tar --zstd \
+                -cf "/workspace/zenix-${version}-1-x86_64.pkg.tar.zst" \
+                "zenix-${version}-1-x86_64/.PKGINFO" \
+                "zenix-${version}-1-x86_64/.INSTALL" \
+                "zenix-${version}-1-x86_64/usr"
+
+              echo "=== package built ==="
+              ls -lh "/workspace/zenix-${version}-1-x86_64.pkg.tar.zst"
+            '
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: zenix-archlinux
+          path: zenix-*.pkg.tar.zst
+
+  # ═══════════════════════════════════════════════════════════════
+  #  Release  — collect all artifacts → GitHub Release
+  # ═══════════════════════════════════════════════════════════════
+  release:
+    needs:
+      - windows
+      - macos-x86_64
+      - macos-aarch64
+      - linux-musl
+      - archlinux
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+
+      - name: Collect release assets
+        run: |
+          mkdir -p release-assets
+          find . -type f \
+            \( -name '*.zip' -o -name '*.tar.gz' -o -name '*.deb' \
+               -o -name '*.rpm' -o -name '*.pkg.tar.zst' \
+               -o -name '*.dmg' -o -name '*-setup.exe' \) \
+            -exec cp {} release-assets/ \;
+          echo "=== release assets ==="
+          ls -lh release-assets/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          generate_release_notes: true
