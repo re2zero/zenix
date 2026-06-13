@@ -32,6 +32,9 @@ gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["fo
 [target.'cfg(not(target_os = "linux"))'.dependencies]
 gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit"] }
 
+[target.'cfg(windows)'.dependencies]
+interprocess = "2"
+
 [profile.release]
 opt-level = 3
 lto = "thin"

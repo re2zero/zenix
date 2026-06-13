@@ -86,13 +86,36 @@ pub fn start_herdr_server() -> bool {
 }
 
 /// Check whether the herdr client socket is ready.
+///
+/// On Unix, connects via `UnixStream`.
+/// On Windows, connects via `interprocess` named pipe — matching herdr's own
+/// `connect_local_stream()` logic so client and server use the same pipe name.
 pub fn is_socket_ready(path: &std::path::Path) -> bool {
     #[cfg(unix)]
     {
         use std::os::unix::net::UnixStream;
         return UnixStream::connect(path).is_ok();
     }
-    #[cfg(not(unix))]
+
+    #[cfg(windows)]
+    {
+        use interprocess::local_socket::{
+            prelude::*,
+            GenericNamespaced,
+            Stream as LocalStream,
+        };
+        let name = match path
+            .to_string_lossy()
+            .to_string()
+            .to_ns_name::<GenericNamespaced>()
+        {
+            Ok(name) => name,
+            Err(_) => return false,
+        };
+        return LocalStream::connect(name).is_ok();
+    }
+
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = path;
         false
