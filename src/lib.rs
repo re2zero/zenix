@@ -3,6 +3,13 @@
 //! This crate is both a binary and a library. The library exposes
 //! the public API for plugins and sub-applications to integrate with zenix.
 
+rust_i18n::i18n!("locales");
+
+pub mod i18n;
+pub mod agent;
+pub mod mcp;
+pub mod skills;
+
 pub mod app;
 pub mod client;
 pub mod config;

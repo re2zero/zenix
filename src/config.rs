@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 fn default_terminal_font_size() -> f32 { 14.0 }
 fn default_dark_theme_name() -> String { "system".into() }
+fn default_locale() -> String { "en".into() }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigFile {
@@ -16,6 +17,12 @@ pub struct ConfigFile {
     pub theme_name: String,
     #[serde(default = "default_dark_theme_name")]
     pub dark_theme_name: String,
+    #[serde(default = "default_locale")]
+    pub locale: String,
+    #[serde(default)]
+    pub settings_window_size: Option<(f32, f32)>,
+    #[serde(default)]
+    pub active_settings_tab: usize,
 }
 
 impl Default for ConfigFile {
@@ -24,6 +31,9 @@ impl Default for ConfigFile {
             terminal_font_size: default_terminal_font_size(),
             theme_name: String::new(),
             dark_theme_name: default_dark_theme_name(),
+            locale: default_locale(),
+            settings_window_size: None,
+            active_settings_tab: 0,
         }
     }
 }
@@ -72,6 +82,30 @@ impl ConfigStore {
 
     pub fn set_theme_name(&mut self, name: String) {
         self.data.theme_name = name;
+    }
+
+    pub fn locale(&self) -> &str {
+        &self.data.locale
+    }
+
+    pub fn set_locale(&mut self, locale: String) {
+        self.data.locale = locale;
+    }
+
+    pub fn settings_window_size(&self) -> Option<(f32, f32)> {
+        self.data.settings_window_size
+    }
+
+    pub fn set_settings_window_size(&mut self, size: Option<(f32, f32)>) {
+        self.data.settings_window_size = size;
+    }
+
+    pub fn active_settings_tab(&self) -> usize {
+        self.data.active_settings_tab
+    }
+
+    pub fn set_active_settings_tab(&mut self, tab: usize) {
+        self.data.active_settings_tab = tab;
     }
 
     pub fn save(&self) -> Result<()> {

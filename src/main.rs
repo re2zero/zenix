@@ -1,8 +1,13 @@
 #![windows_subsystem = "windows"]
+rust_i18n::i18n!("locales");
 
 mod app;
 mod client;
 mod config;
+mod agent;
+mod mcp;
+mod skills;
+mod i18n;
 mod sys;
 mod terminal;
 mod ui;
@@ -50,6 +55,20 @@ fn load_embedded_fonts(cx: &mut App) {
 fn open_main_window(cx: &mut App) {
     let config = config::ConfigStore::load().unwrap_or_default();
 
+    // Apply saved locale, falling back to LANG env var
+    let saved_locale = config.locale();
+    let locale = if !saved_locale.is_empty() {
+        saved_locale.to_string()
+    } else {
+        std::env::var("LANG")
+            .unwrap_or_default()
+            .split('.')
+            .next()
+            .map(|s| s.replace("_", "-"))
+            .filter(|s| s == "zh-CN" || s == "en")
+            .unwrap_or_else(|| "en".to_string())
+    };
+    crate::i18n::set_locale(&locale);
     let bounds = cx
         .displays()
         .first()

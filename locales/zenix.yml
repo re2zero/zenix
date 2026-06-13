@@ -1,0 +1,220 @@
+_version: 2
+
+status:
+  initializing:
+    en: "Initializing..."
+    zh-CN: "正在初始化..."
+  connected:
+    en: "Connected"
+    zh-CN: "已连接"
+  disconnected:
+    en: "Disconnected: %{reason}"
+    zh-CN: "已断开: %{reason}"
+  waiting:
+    en: "Waiting (attempt %{n})..."
+    zh-CN: "等待中 (第 %{n} 次尝试)..."
+  timed_out:
+    en: "Timed out"
+    zh-CN: "连接超时"
+  not_found:
+    en: "herdr not found"
+    zh-CN: "未找到 herdr"
+  failed:
+    en: "Failed: %{err}"
+    zh-CN: "失败: %{err}"
+
+landing:
+  title:
+    en: "zenix"
+    zh-CN: "zenix"
+  terminal_btn:
+    en: "Terminal"
+    zh-CN: "终端"
+  herdr_btn:
+    en: "Launch herdr"
+    zh-CN: "启动 herdr"
+
+settings:
+  title:
+    en: "Settings"
+    zh-CN: "设置"
+  tab:
+    general:
+      en: "General"
+      zh-CN: "通用"
+    appearance:
+      en: "Appearance"
+      zh-CN: "外观"
+    terminal:
+      en: "Terminal"
+      zh-CN: "终端"
+    agent_cli:
+      en: "Agent CLI"
+      zh-CN: "Agent CLI"
+    mcp:
+      en: "MCP"
+      zh-CN: "MCP"
+    skills:
+      en: "Skills"
+      zh-CN: "Skills"
+  general:
+    language:
+      en: "Language"
+      zh-CN: "语言"
+  appearance:
+    title:
+      en: "Appearance"
+      zh-CN: "外观"
+    theme:
+      en: "Theme"
+      zh-CN: "主题"
+    font_size:
+      en: "Font size"
+      zh-CN: "字体大小"
+    active:
+      en: "Active"
+      zh-CN: "当前"
+  terminal:
+    title:
+      en: "Terminal"
+      zh-CN: "终端"
+    font_family:
+      en: "Font family"
+      zh-CN: "字体"
+    cursor_style:
+      en: "Cursor style"
+      zh-CN: "光标样式"
+    opacity:
+      en: "Opacity"
+      zh-CN: "透明度"
+    cursor_block:
+      en: "Block"
+      zh-CN: "方块"
+
+system:
+  title:
+    en: "System"
+    zh-CN: "系统"
+  overview:
+    en: "Overview"
+    zh-CN: "概览"
+  cpu:
+    en: "CPU"
+    zh-CN: "CPU"
+  cpu_overall:
+    en: "Overall %{pct}%"
+    zh-CN: "总使用率 %{pct}%"
+  cpu_load_avg:
+    en: "Load avg: %{l1}  %{l5}  %{l15}"
+    zh-CN: "平均负载: %{l1}  %{l5}  %{l15}"
+  memory:
+    en: "Memory"
+    zh-CN: "内存"
+  memory_used:
+    en: "%{used} / %{total} GB  (%{pct}%)"
+    zh-CN: "%{used} / %{total} GB  (%{pct}%)"
+  memory_cache:
+    en: "Cache %{cache} GB  ·  Buffers %{buffers} GB"
+    zh-CN: "缓存 %{cache} GB  ·  缓冲 %{buffers} GB"
+  swap:
+    en: "Swap"
+    zh-CN: "交换分区"
+  swap_used:
+    en: "%{used} / %{total} GB  (%{pct}%)"
+    zh-CN: "%{used} / %{total} GB  (%{pct}%)"
+  network:
+    en: "Network"
+    zh-CN: "网络"
+  disk:
+    en: "Disk"
+    zh-CN: "磁盘"
+
+agent:
+  not_installed:
+    en: "Not installed"
+    zh-CN: "未安装"
+  installed:
+    en: "Installed"
+    zh-CN: "已安装"
+  outdated:
+    en: "Outdated (v%{current} → v%{expected})"
+    zh-CN: "版本过旧 (v%{current} → v%{expected})"
+  binary_only:
+    en: "Binary only"
+    zh-CN: "仅二进制"
+  install:
+    en: "Install"
+    zh-CN: "安装"
+  update:
+    en: "Update"
+    zh-CN: "更新"
+  uninstall:
+    en: "Uninstall"
+    zh-CN: "卸载"
+  install_hook:
+    en: "Integrate"
+    zh-CN: "集成"
+
+mcp:
+  add_server:
+    en: "+ Add"
+    zh-CN: "+ 添加"
+  edit_server:
+    en: "Edit"
+    zh-CN: "编辑"
+  remove_server:
+    en: "Remove"
+    zh-CN: "移除"
+  enabled:
+    en: "Enabled"
+    zh-CN: "已启用"
+  disabled:
+    en: "Disabled"
+    zh-CN: "已禁用"
+  no_servers:
+    en: "No MCP servers configured"
+    zh-CN: "未配置 MCP 服务器"
+
+skills:
+  refresh:
+    en: "Refresh"
+    zh-CN: "刷新"
+  zenix_skills:
+    en: "Zenix Skills"
+    zh-CN: "Zenix Skills"
+  per_agent:
+    en: "Per-Agent Skills"
+    zh-CN: "各代理 Skills"
+  add_skill:
+    en: "+ Add Skill"
+    zh-CN: "+ 添加 Skill"
+  add_from_git:
+    en: "Git Clone"
+    zh-CN: "Git 克隆"
+  add_from_local:
+    en: "Local"
+    zh-CN: "本地"
+  link:
+    en: "Link"
+    zh-CN: "链接"
+  unlink:
+    en: "Disconnect"
+    zh-CN: "断开"
+  remove:
+    en: "Remove"
+    zh-CN: "移除"
+  move_to_zenix:
+    en: "Migrate"
+    zh-CN: "迁移"
+  no_skills:
+    en: "No skills found"
+    zh-CN: "未找到 Skills"
+  linked_to:
+    en: "Linked to %{count} agent(s)"
+    zh-CN: "已链接至 %{count} 个代理"
+  install_success:
+    en: "Installed: %{name}"
+    zh-CN: "已安装: %{name}"
+  install_fail:
+    en: "Install failed: %{err}"
+    zh-CN: "安装失败: %{err}"

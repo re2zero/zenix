@@ -6,7 +6,7 @@ use alacritty_terminal::{index::Side, selection::SelectionType};
 use gpui::{
     Bounds, ClipboardItem, ClickEvent, Context, FocusHandle, InteractiveElement as _, IntoElement,
     KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement as _,
-    Pixels, Point, Render, ScrollWheelEvent, Styled as _, Window, div, px,
+    Pixels, Point, Render, ScrollWheelEvent, StatefulInteractiveElement as _, Styled as _, Window, div, px,
 };
 use gpui_component::{
     ActiveTheme as _, ElementExt, Theme, ThemeRegistry,
@@ -24,6 +24,7 @@ use crate::{
         encode_key, encode_mouse_drag, encode_mouse_event, encode_mouse_motion, encode_mouse_scroll,
     },
 };
+use crate::i18n::t;
 
 const FONT_FAMILY: &str = "Lilex";
 const MAX_CONNECT_ATTEMPTS: usize = 200;
@@ -48,6 +49,11 @@ pub struct ZenixApp {
     active_panel: Panel,
     system_info: SystemInfo,
     sysinfo_cpu_sample: CpuSamples,
+    show_settings: bool,
+    active_settings_tab: usize,
+    agent_statuses: Vec<crate::agent::AgentCliInfo>,
+    mcp_servers: Vec<crate::mcp::UnifiedServer>,
+    skills: std::collections::HashMap<String, crate::skills::SkillInfo>,
     sysinfo_polling: bool,
     terminal_cell_width: Pixels,
     terminal_line_height: Pixels,
@@ -73,7 +79,7 @@ impl ZenixApp {
         let font_size = config.terminal_font_size();
         Self {
             focus_handle, backend: None, tab: None,
-            status: "initializing".into(),
+            status: t("status.initializing"),
             events_rx, events_tx,
             launch_attempts: 0, connected: false,
             connect_attempted: false, connect_ready: false,
@@ -84,6 +90,11 @@ impl ZenixApp {
             active_panel: Panel::None,
             system_info: SystemInfo::default(),
             sysinfo_cpu_sample: CpuSamples::default(),
+            show_settings: false,
+            active_settings_tab: 0,
+            agent_statuses: Vec::new(),
+            mcp_servers: Vec::new(),
+            skills: std::collections::HashMap::new(),
             sysinfo_polling: false,
             terminal_cell_width: px(14.0 * 0.6),
             terminal_line_height: px(14.0 * 1.15),
@@ -121,8 +132,7 @@ impl ZenixApp {
                     self.tab = None; self.connected = false;
                     self.connect_attempted = false;
                     self.launch_attempts = 0;
-                    self.connect_ready = false;
-                    self.status = format!("disconnected: {reason}");
+                    self.status = t("status.disconnected").replace("%{reason}", &reason);
                 }
                 _ => {}
             }
@@ -135,17 +145,15 @@ impl ZenixApp {
                 changed = true;
             } else {
                 self.launch_attempts += 1;
-                if self.launch_attempts % 20 == 0 {
-                    self.status = format!("waiting (attempt {})...", self.launch_attempts);
-                    changed = true;
-                }
+                self.status = t("status.waiting").replace("%{n}", &self.launch_attempts.to_string());
+                changed = true;
             }
         }
-        if self.launch_attempts >= MAX_CONNECT_ATTEMPTS {
-            self.status = "timed out".into();
-            changed = true;
-        }
-        changed
+    if self.launch_attempts >= MAX_CONNECT_ATTEMPTS {
+        self.status = t("status.timed_out");
+        changed = true;
+    }
+    changed
     }
 
     fn spawn_pty(&mut self, program: &str, args: &[&str], cx: &mut Context<Self>) {
@@ -161,12 +169,12 @@ impl ZenixApp {
                 self.tab = Some(tab);
                 self.backend = Some(backend);
                 self.connected = true;
-                self.status = "connected".into();
+                self.status = t("status.connected");
                 cx.notify();
             }
             Err(err) => {
                 tracing::error!("spawn_pty failed: {err}");
-                self.status = format!("failed: {err}");
+                self.status = t("status.failed").replace("%{err}", &err.to_string());
             }
         }
     }
@@ -175,7 +183,7 @@ impl ZenixApp {
         self.connect_attempted = true;
         let binary = match herdr::find_herdr_binary() {
             Some(p) => p.to_string_lossy().to_string(),
-            None => { self.status = "herdr not found".into(); return; }
+            None => { self.status = t("status.not_found"); return; }
         };
         let socket = herdr::herdr_socket_path();
         if herdr::is_socket_ready(&socket) {
@@ -185,7 +193,7 @@ impl ZenixApp {
             tracing::info!("socket not ready, starting server");
             if self.launch_attempts == 0 { herdr::start_herdr_server(); }
             self.launch_attempts = 1;
-            self.status = format!("waiting (attempt {})...", 1);
+            self.status = t("status.waiting").replace("%{n}", "1");
         }
     }
 
@@ -273,9 +281,14 @@ impl ZenixApp {
         let modifiers = event.keystroke.modifiers;
         let key = &event.keystroke.key;
 
-        // App-level shortcuts (not terminal input).
+        // Escape closes settings dialog
+        if self.show_settings && key.eq_ignore_ascii_case("escape") {
+            self.show_settings = false;
+            cx.notify();
+            return;
+        }
         if (modifiers.secondary() && key.eq_ignore_ascii_case(",")) || key.eq_ignore_ascii_case("f1") {
-            self.toggle_panel(Panel::Settings);
+            self.show_settings = !self.show_settings;
             cx.notify();
             return;
         }
@@ -321,6 +334,7 @@ impl ZenixApp {
     // ── Mouse dispatch ──────────────────────────────────────────────────
 
     fn on_mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.show_settings { return; }
         window.focus(&self.focus_handle, cx);
         if self.tab.as_ref().is_some_and(|t| t.mouse_mode()) {
             self.send_mouse_to_pty(event.position, event.button, true, cx);
@@ -330,6 +344,7 @@ impl ZenixApp {
     }
 
     fn on_mouse_move(&mut self, event: &MouseMoveEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.show_settings { return; }
         if self.terminal_selecting {
             if event.pressed_button == Some(MouseButton::Left) {
                 if self.update_terminal_selection(event.position) { cx.notify(); }
@@ -349,6 +364,7 @@ impl ZenixApp {
     }
 
     fn on_mouse_up(&mut self, event: &MouseUpEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.show_settings { return; }
         if self.terminal_selecting {
             self.terminal_selecting = false;
             cx.notify();
@@ -360,28 +376,27 @@ impl ZenixApp {
     }
 
     fn on_scroll(&mut self, event: &ScrollWheelEvent, _window: &mut Window, cx: &mut Context<Self>) {
+        if self.show_settings { return; }
         let lh = f32::from(self.terminal_line_height);
         let delta = match event.delta {
-            gpui::ScrollDelta::Lines(p) => p.y.round() as i32,
-            gpui::ScrollDelta::Pixels(p) => (f32::from(p.y) / lh).round() as i32,
+            gpui::ScrollDelta::Lines(lines) => px(lines.y * lh),
+            gpui::ScrollDelta::Pixels(px) => px.y,
         };
         if self.tab.as_ref().is_some_and(|t| t.mouse_mode()) {
             if let Some((row, col)) = self.terminal_grid_point(event.position) {
-                let up = delta < 0;
-                for _ in 0..delta.unsigned_abs() {
+                let up = delta < px(0.0);
+                let steps = (f32::from(delta).abs() / lh).ceil() as u32;
+                for _ in 0..steps {
                     write_to_pty(&self.backend, &mut self.tab,
                         encode_mouse_scroll(row as u16, col as u16, up, false, false, false));
                 }
-                cx.notify();
             }
         } else if let Some(tab) = &mut self.tab {
-            tab.scroll_history(delta);
+            tab.scroll_history(f32::from(delta) as i32);
         }
     }
 
     // ── Mouse → PTY helpers ─────────────────────────────────────────────
-
-    /// Regular button press/release (forwarded verbatim to PTY).
     fn send_mouse_to_pty(&mut self, position: Point<Pixels>, button: MouseButton, pressed: bool, cx: &mut Context<Self>) {
         let Some((row, col)) = self.terminal_grid_point(position) else { return; };
         let btn = match button {
@@ -550,6 +565,21 @@ impl Render for ZenixApp {
                     .into_any_element()
             })
             .collect();
+        // Split into light/dark groups for 2-column layout
+        let light_themes: Vec<gpui::AnyElement> = registry.sorted_themes().iter().filter(|tc| tc.mode == gpui_component::ThemeMode::Light).map(|tc| {
+            let name = tc.name.to_string();
+            let is_current = name == current_theme_name;
+            let prefix = if is_current { "\u{2713} " } else { "  " };
+            let cb: sidebar::ThemeCallback = { let n = name.clone(); Box::new(cx.listener(move |this, _: &ClickEvent, window, cx| { this.switch_theme(&n, window, cx); })) };
+            Button::new(format!("th-{name}")).ghost().label(format!("{prefix}{name}")).w_full().on_click(cb).into_any_element()
+        }).collect();
+        let dark_themes: Vec<gpui::AnyElement> = registry.sorted_themes().iter().filter(|tc| tc.mode == gpui_component::ThemeMode::Dark).map(|tc| {
+            let name = tc.name.to_string();
+            let is_current = name == current_theme_name;
+            let prefix = if is_current { "\u{2713} " } else { "  " };
+            let cb: sidebar::ThemeCallback = { let n = name.clone(); Box::new(cx.listener(move |this, _: &ClickEvent, window, cx| { this.switch_theme(&n, window, cx); })) };
+            Button::new(format!("th-{name}")).ghost().label(format!("{prefix}{name}")).w_full().on_click(cb).into_any_element()
+        }).collect();
 
         // Callbacks for sidebar buttons (Box<dyn Fn> works with .on_click)
         let sysinfo_cb: sidebar::ThemeCallback = Box::new(cx.listener(|this, _: &ClickEvent, _window, cx| {
@@ -557,7 +587,18 @@ impl Render for ZenixApp {
             cx.notify();
         }));
         let settings_cb: sidebar::ThemeCallback = Box::new(cx.listener(|this, _: &ClickEvent, _window, cx| {
-            this.toggle_panel(Panel::Settings);
+            // Lazy-init on first open
+            if this.agent_statuses.is_empty() {
+                this.agent_statuses = crate::agent::detect_all_agents();
+            }
+            if this.mcp_servers.is_empty() {
+                let raw = crate::mcp::scan_all_mcp_servers();
+                this.mcp_servers = crate::mcp::deduplicated_servers(&raw);
+            }
+            if this.skills.is_empty() {
+                this.skills = crate::skills::scan_all_skills();
+            }
+            this.show_settings = !this.show_settings;
             cx.notify();
         }));
         let font_down_cb: sidebar::ThemeCallback = Box::new(cx.listener(|this, _: &ClickEvent, _window, cx| {
@@ -568,16 +609,12 @@ impl Render for ZenixApp {
             this.change_font_size(this.terminal_font_size + 1.0);
             cx.notify();
         }));
-        // Expanded panel (conditionally shown)
+        // Expanded panel (conditionally shown) — only SystemInfo now, Settings is a dialog
         let panel: Option<gpui::AnyElement> = match self.active_panel {
-            Panel::Settings => Some(sidebar::settings_panel(
-                &theme, fs, &current_theme_name,
-                theme_buttons, font_down_cb, font_up_cb,
-            ).into_any_element()),
             Panel::SystemInfo => Some(sidebar::system_info_panel(
                 &theme, &self.system_info,
             ).into_any_element()),
-            Panel::None => None,
+            _ => None,
         };
 
         // Terminal area content
@@ -598,21 +635,20 @@ impl Render for ZenixApp {
             },
             _ => v_flex()
                 .size_full().items_center().justify_center().gap_6()
-                .child(div().text_size(px(24.)).child("zenix"))
+                .child(div().text_size(px(24.)).child(t("landing.title")))
                 .child(div().text_size(px(14.)).text_color(theme.muted_foreground).child(self.status.clone()))
-                .child(Button::new("term").primary().label("Terminal")
+                .child(Button::new("term").primary().label(t("landing.terminal_btn"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
                         this.spawn_pty("bash", &[], cx); cx.notify();
                     })))
-                .child(Button::new("herdr").ghost().label("Launch herdr")
+                .child(Button::new("herdr").ghost().label(t("landing.herdr_btn"))
                     .on_click(cx.listener(|this, _: &ClickEvent, _window, cx| {
                         this.launch_attempts = 0; this.connect_attempted = false;
                         this.connect_herdr(cx); cx.notify();
                     })))
                 .into_any_element(),
         };
-
-        h_flex()
+        let main_ui = h_flex()
             .size_full()
             .bg(theme.background)
             .text_color(theme.foreground)
@@ -620,7 +656,6 @@ impl Render for ZenixApp {
             .track_focus(&focus)
             .on_key_down(cx.listener(Self::on_key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
-            .on_mouse_down(MouseButton::Middle, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -629,6 +664,131 @@ impl Render for ZenixApp {
             .on_scroll_wheel(cx.listener(Self::on_scroll))
             .child(div().flex_grow(1.0).h_full().child(terminal_area))
             .children(panel)
-            .child(sidebar::sidebar(&theme, self.active_panel, sysinfo_cb, settings_cb))
+            .child(sidebar::sidebar(&theme, self.active_panel, self.show_settings, sysinfo_cb, settings_cb));
+
+
+
+        if self.show_settings {
+            let bounds = window.bounds();
+            let w = bounds.size.width;
+            let h = bounds.size.height;
+            let locale = crate::i18n::locale().to_string();
+            let tab = self.active_settings_tab;
+            let cur_theme = current_theme_name.clone();
+            let tbs = theme_buttons;
+            let font_down = font_down_cb;
+            let font_up = font_up_cb;
+            let agents_ref = &self.agent_statuses;
+            let mcp_ref = &self.mcp_servers;
+            let skills_ref = &self.skills;
+            let entity = cx.entity().clone();
+
+            let on_tab_change: Box<dyn Fn(usize, &mut Window, &mut gpui::App)> = Box::new({
+                let entity = entity.clone();
+                move |idx: usize, _w: &mut Window, app: &mut gpui::App| {
+                    entity.update(app, |this: &mut ZenixApp, cx| {
+                        this.active_settings_tab = idx;
+                        cx.notify();
+                    });
+                }
+            });
+
+            let on_locale_change: Box<dyn Fn(String, &mut Window, &mut gpui::App)> = Box::new({
+                let entity = entity.clone();
+                move |new_locale: String, _w: &mut Window, app: &mut gpui::App| {
+                    entity.update(app, |this: &mut ZenixApp, cx| {
+                        crate::i18n::set_locale(&new_locale);
+                        this.config.set_locale(new_locale);
+                        let _ = this.config.save();
+                        cx.notify();
+                    });
+                }
+            });
+
+            let on_skill_action: Box<dyn Fn(crate::ui::settings::SkillAction, &mut Window, &mut gpui::App)> = Box::new({
+                let entity = entity.clone();
+                move |action: crate::ui::settings::SkillAction, _w: &mut Window, app: &mut gpui::App| {
+                    entity.update(app, |this: &mut ZenixApp, cx| {
+                        match action {
+                            crate::ui::settings::SkillAction::Refresh => {
+                                this.skills = crate::skills::scan_all_skills();
+                                cx.notify();
+                            }
+                            crate::ui::settings::SkillAction::Link { skill_name } => {
+                                // Link to all supported agents
+                                for agent in crate::ui::settings::SKILL_AGENTS {
+                                    let _ = crate::skills::link_skill(&skill_name, agent);
+                                }
+                                this.skills = crate::skills::scan_all_skills();
+                                cx.notify();
+                            }
+                            crate::ui::settings::SkillAction::Unlink { skill_name } => {
+                                // Unlink from all agents
+                                for agent in crate::ui::settings::SKILL_AGENTS {
+                                    let _ = crate::skills::unlink_skill(&skill_name, agent);
+                                }
+                                this.skills = crate::skills::scan_all_skills();
+                                cx.notify();
+                            }
+                            crate::ui::settings::SkillAction::InstallGit { url } => {
+                                if url.is_empty() {
+                                    // TODO: show input dialog for URL
+                                    tracing::info!("install from git: no URL provided (input dialog needed)");
+                                } else {
+                                    match crate::skills::install_from_git(&url) {
+                                        Ok(name) => tracing::info!("installed skill: {name}"),
+                                        Err(e) => tracing::warn!("install failed: {e}"),
+                                    }
+                                    this.skills = crate::skills::scan_all_skills();
+                                    cx.notify();
+                                }
+                            }
+                            crate::ui::settings::SkillAction::InstallLocal { path } => {
+                                if path.is_empty() {
+                                    // TODO: show file picker dialog
+                                    tracing::info!("install from local: no path provided (file picker needed)");
+                                } else {
+                                    match crate::skills::install_from_local(&path) {
+                                        Ok(name) => tracing::info!("installed skill: {name}"),
+                                        Err(e) => tracing::warn!("install failed: {e}"),
+                                    }
+                                    this.skills = crate::skills::scan_all_skills();
+                                    cx.notify();
+                                }
+                            }
+                            crate::ui::settings::SkillAction::Remove { skill_name } => {
+                                let _ = crate::skills::remove_zenix_skill(&skill_name);
+                                this.skills = crate::skills::scan_all_skills();
+                                cx.notify();
+                            }
+                        }
+                    });
+                }
+            });
+
+            div().size_full()
+                .child(main_ui)
+                .child(
+                    super::ui::settings_dialog(
+                        tab, on_tab_change,
+                        {
+                            let entity = entity.clone();
+                            Box::new(move |_w: &mut Window, app: &mut gpui::App| {
+                                entity.update(app, |this: &mut ZenixApp, cx| {
+                                    this.show_settings = false; cx.notify();
+                                });
+                            })
+                        },
+                        fs, &cur_theme, tbs, font_down, font_up,
+                        &locale, on_locale_change,
+                        agents_ref, mcp_ref, skills_ref,
+                        on_skill_action,
+                        f32::from(w), f32::from(h),
+                    )
+                )
+                .into_any_element()
+        } else {
+            main_ui.into_any_element()
+        }
     }
 }

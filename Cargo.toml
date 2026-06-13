@@ -32,6 +32,10 @@ thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1", features = ["v4"] }
+# Internationalization
+rust-i18n = "4"
+rust-i18n-macro = "4"
+toml = "0.8"
 
 [profile.release]
 opt-level = 3
