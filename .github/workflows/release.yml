@@ -8,8 +8,8 @@
 #   Windows x86_64  .exe installer (Inno Setup)                windows
 #   macOS x86_64    .dmg (app bundle)                          macos-x86_64
 #   macOS aarch64   .dmg (app bundle)                          macos-aarch64
-#   Linux (any)     .deb + .AppImage (matrix: 3 glibc bases)   linux
-#   Linux (any)     .rpm (ubuntu24 glibc baseline)              linux
+#   Linux (any)     .deb + .AppImage + .rpm (single build,      linux
+#                  glibc ≥2.28 via zigbuild)
 #   Arch Linux      .pkg.tar.zst                                archlinux
 
 name: Release
@@ -112,26 +112,22 @@ jobs:
           path: zenix-*-aarch64-apple-darwin.dmg
 
   # ═══════════════════════════════════════════════════════════════
-  #  Linux  — .deb + .AppImage + .rpm (matrix: 3 glibc baselines)
+  #  Linux  — .deb + .AppImage + .rpm (single build, glibc ≥2.28 via zigbuild)
   # ═══════════════════════════════════════════════════════════════
   linux:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - image: ubuntu:20.04
-            suffix: ubuntu20
           - image: ubuntu:22.04
-            suffix: ubuntu22
-          - image: ubuntu:24.04
-            suffix: ubuntu24
+            suffix: linux
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Build inside ${{ matrix.image }}
+      - name: Build inside ${{ matrix.image }} (zigbuild, glibc 2.28)
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
@@ -158,18 +154,21 @@ jobs:
                 | tar -xJ -C /usr/local
               ln -s /usr/local/zig-x86_64-linux-0.15.2/zig /usr/local/bin/zig
 
-              cargo build --release
-              cd herdr && cargo build --release && cd ..
-              cp herdr/target/release/herdr target/release/ 2>/dev/null || true
+              cargo install cargo-zigbuild
+
+              cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.28
+
+              cd herdr && cargo zigbuild --release --target x86_64-unknown-linux-gnu.2.28 && cd ..
+              mkdir -p target/x86_64-unknown-linux-gnu/release/
+              cp herdr/target/x86_64-unknown-linux-gnu/release/herdr target/x86_64-unknown-linux-gnu/release/ 2>/dev/null || true
             '
 
       - name: Package (.deb)
         run: |
           version="${GITHUB_REF_NAME#v}"
-          suffix="${{ matrix.suffix }}"
-          BINDIR="target/release"
+          BINDIR="target/x86_64-unknown-linux-gnu/release"
 
-          D="zenix-deb/zenix_${version}_${suffix}_amd64"
+          D="zenix-deb/zenix_${version}_amd64"
           mkdir -p "${D}/DEBIAN" "${D}/usr/bin" "${D}/usr/share/applications" \
                    "${D}/usr/share/icons/hicolor/512x512/apps" \
                    "${D}/usr/share/doc/zenix" \
@@ -202,14 +201,13 @@ jobs:
           echo "Depends: libxcb1, libxkbcommon0, libxkbcommon-x11-0, libfreetype6, libfontconfig1, libwayland-client0, libegl1, libgl1" >> "${D}/DEBIAN/control"
 
           dpkg-deb --build -Zgzip --root-owner-group \
-            "zenix-deb/zenix_${version}_${suffix}_amd64" \
-            "zenix_${version}_${suffix}_amd64.deb"
+            "zenix-deb/zenix_${version}_amd64" \
+            "zenix_${version}_amd64.deb"
 
       - name: Build AppImage
         run: |
           version="${GITHUB_REF_NAME#v}"
-          suffix="${{ matrix.suffix }}"
-          BINDIR="target/release"
+          BINDIR="target/x86_64-unknown-linux-gnu/release"
           APPDIR="zenix.AppDir"
 
           #linuxdeploy and plugin needs a Linux host — run inside the build container
@@ -221,11 +219,7 @@ jobs:
             ${{ matrix.image }} \
             bash -e -c '
               export DEBIAN_FRONTEND=noninteractive
-              apt-get update -qq || {
-                sed -i "s|archive.ubuntu.com|old-releases.ubuntu.com|g" /etc/apt/sources.list
-                sed -i "s|security.ubuntu.com|old-releases.ubuntu.com|g" /etc/apt/sources.list
-                apt-get update -qq
-              }
+              apt-get update -qq
               apt-get install -y -qq --no-install-recommends \
                 libxcb1 libxkbcommon0 libxkbcommon-x11-0 \
                 libfontconfig1 libfreetype6 \
@@ -238,8 +232,7 @@ jobs:
               chmod +x "linuxdeploy-${ARCH}.AppImage"
 
               version="${GITHUB_REF_NAME#v}"
-              suffix="${{ matrix.suffix }}"
-              BINDIR="target/release"
+              BINDIR="target/x86_64-unknown-linux-gnu/release"
               APPDIR="zenix.AppDir"
 
               mkdir -p "${APPDIR}/usr/bin" \
@@ -257,7 +250,7 @@ jobs:
 
               cp res/zenix.png "${APPDIR}/zenix.png"
 
-              OUTPUT="Zenix-${version}-${suffix}-x86_64.AppImage" \
+              OUTPUT="Zenix-${version}-x86_64.AppImage" \
                 ./linuxdeploy-x86_64.AppImage \
                   --appdir "${APPDIR}" \
                   --output appimage \
@@ -269,7 +262,6 @@ jobs:
             '
 
       - name: Build .rpm package
-        if: matrix.suffix == 'ubuntu24'
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
@@ -283,8 +275,9 @@ jobs:
               mkdir -p /tmp/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
 
               # Build source tarball with only files that exist
-              src_files="target/release/zenix"
-              test -f target/release/herdr && src_files="$src_files target/release/herdr"
+              BINDIR="target/x86_64-unknown-linux-gnu/release"
+              src_files="${BINDIR}/zenix"
+              test -f ${BINDIR}/herdr && src_files="$src_files ${BINDIR}/herdr"
               src_files="$src_files res/zenix.desktop res/zenix.png"
               src_files="$src_files assets/fonts/ assets/themes/"
               test -f README.md && src_files="$src_files README.md"
@@ -312,7 +305,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: zenix-linux-${{ matrix.suffix }}
+          name: zenix-linux
           path: |
             zenix_*_*.deb
             Zenix-*.AppImage
