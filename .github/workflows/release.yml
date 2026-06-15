@@ -147,11 +147,9 @@ jobs:
               }
               apt-get install -y -qq --no-install-recommends \
                 ca-certificates curl pkg-config make gcc g++ xz-utils \
-                libxkbcommon-dev libxkbcommon-x11-dev \
+                libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev \
                 libfontconfig1-dev libfreetype6-dev libexpat1-dev \
-                libxcb-composite0-dev libxcb-xfixes0-dev libxcb-xkb-dev \
-                libxcb-shape0-dev libxcb-randr0-dev libxcb-render0-dev \
-                libxcb-util-dev libwayland-dev libegl1-mesa-dev libgl1-mesa-dev
+                libwayland-dev libegl1-mesa-dev libgl1-mesa-dev
 
               curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
               source "$HOME/.cargo/env"
@@ -201,8 +199,7 @@ jobs:
           echo "Priority: optional"                  >> "${D}/DEBIAN/control"
           echo "Architecture: amd64"                 >> "${D}/DEBIAN/control"
           echo "Installed-Size: ${INSTALLED_SIZE}"   >> "${D}/DEBIAN/control"
-          echo "Depends: libxcb-composite0, libxcb-xfixes0, libxcb-xkb0, libxcb-shape0," >> "${D}/DEBIAN/control"
-          echo " libxkbcommon0, libfontconfig1, libwayland-client0, libegl1, libgl1"    >> "${D}/DEBIAN/control"
+          echo "Depends: libxcb1, libxkbcommon0, libxkbcommon-x11-0, libfreetype6, libfontconfig1, libwayland-client0, libegl1, libgl1" >> "${D}/DEBIAN/control"
 
           dpkg-deb --build -Zgzip --root-owner-group \
             "zenix-deb/zenix_${version}_${suffix}_amd64" \
@@ -230,9 +227,7 @@ jobs:
                 apt-get update -qq
               }
               apt-get install -y -qq --no-install-recommends \
-                libxcb-composite0 libxcb-xfixes0 libxcb-shape0 \
-                libxcb-randr0 libxcb-render0 \
-                libxkbcommon0 libxkbcommon-x11-0 \
+                libxcb1 libxkbcommon0 libxkbcommon-x11-0 \
                 libfontconfig1 libfreetype6 \
                 libwayland-client0 libegl1 libgl1 \
                 file curl ca-certificates
@@ -343,7 +338,7 @@ jobs:
             bash -e -c '
               pacman -Sy --noconfirm \
                 base-devel rustup git zstd \
-                libxcb xcb-util libxkbcommon libxkbcommon-x11 \
+                libxcb libxkbcommon libxkbcommon-x11 \
                 fontconfig \
                 freetype2 expat wayland libglvnd
 

@@ -42,18 +42,12 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
+            libxcb1-dev                        \
             libxkbcommon-dev                   \
             libxkbcommon-x11-dev               \
             libfontconfig1-dev                 \
             libfreetype6-dev                   \
             libexpat1-dev                      \
-            libxcb-composite0-dev              \
-            libxcb-xfixes0-dev                 \
-            libxcb-xkb-dev                     \
-            libxcb-shape0-dev                  \
-            libxcb-randr0-dev                  \
-            libxcb-render0-dev                 \
-            libxcb-util-dev                    \
             libwayland-dev                     \
             libegl1-mesa-dev                   \
             libgl1-mesa-dev

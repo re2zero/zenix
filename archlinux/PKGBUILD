@@ -11,7 +11,7 @@
 #   # then adjust pkgver and source below
 #
 # Required packages (install before building):
-#   sudo pacman -S --needed base-devel rust libxcb xcb-util \
+#   sudo pacman -S --needed base-devel rust libxcb \
 #     libxkbcommon fontconfig freetype2 expat wayland libglvnd
 
 pkgname=zenix
