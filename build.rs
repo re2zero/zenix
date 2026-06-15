@@ -79,26 +79,54 @@ fn main() {
 
 #[cfg(target_os = "linux")]
 fn build_herdr(herdr_dir: &std::path::Path, name: &str, dest: &std::path::Path) {
-    eprintln!("building herdr from submodule...");
-    let status = Command::new("cargo")
-        .args(["build", "--release"])
-        .current_dir(herdr_dir)
-        .env("CARGO_TARGET_DIR", herdr_dir.join("target"))
-        .status();
+    let target = env::var("TARGET").unwrap_or_default();
+    // Detect glibc-versioned target (e.g. x86_64-unknown-linux-gnu.2.28)
+    let is_zigbuild = target.contains(".2.") && target.contains("linux-gnu");
 
-    match status {
-        Ok(s) if s.success() => {
-            let src = herdr_dir.join("target/release").join(name);
-            if src.exists() {
-                let _ = fs::create_dir_all(dest.parent().unwrap());
-                fs::copy(&src, dest).expect("failed to copy herdr binary");
-                eprintln!("herdr built → {}", dest.display());
-            } else {
-                panic!("herdr build succeeded but binary missing at {}", src.display());
+    if is_zigbuild {
+        eprintln!("building herdr from submodule (zigbuild, target={target})...");
+        let status = Command::new("cargo")
+            .args(["zigbuild", "--release", "--target", &target])
+            .current_dir(herdr_dir)
+            .env("CARGO_TARGET_DIR", herdr_dir.join("target"))
+            .status();
+
+        match status {
+            Ok(s) if s.success() => {
+                let src = herdr_dir.join("target").join(&target).join("release").join(name);
+                if src.exists() {
+                    let _ = fs::create_dir_all(dest.parent().unwrap());
+                    fs::copy(&src, dest).expect("failed to copy herdr binary");
+                    eprintln!("herdr built → {}", dest.display());
+                } else {
+                    panic!("herdr build succeeded but binary missing at {}", src.display());
+                }
             }
+            Ok(s) => panic!("herdr build failed: {s}"),
+            Err(e) => panic!("cargo zigbuild for herdr failed: {e}"),
         }
-        Ok(s) => panic!("herdr build failed: {}", s),
-        Err(e) => panic!("cargo build for herdr failed: {}", e),
+    } else {
+        eprintln!("building herdr from submodule...");
+        let status = Command::new("cargo")
+            .args(["build", "--release"])
+            .current_dir(herdr_dir)
+            .env("CARGO_TARGET_DIR", herdr_dir.join("target"))
+            .status();
+
+        match status {
+            Ok(s) if s.success() => {
+                let src = herdr_dir.join("target/release").join(name);
+                if src.exists() {
+                    let _ = fs::create_dir_all(dest.parent().unwrap());
+                    fs::copy(&src, dest).expect("failed to copy herdr binary");
+                    eprintln!("herdr built → {}", dest.display());
+                } else {
+                    panic!("herdr build succeeded but binary missing at {}", src.display());
+                }
+            }
+            Ok(s) => panic!("herdr build failed: {s}"),
+            Err(e) => panic!("cargo build for herdr failed: {e}"),
+        }
     }
 }
 
