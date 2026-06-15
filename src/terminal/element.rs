@@ -337,15 +337,16 @@ impl TerminalElement {
     for rc in &self.snapshot.cells {
       let cell = &rc.cell;
 
-      // Skip hidden and spacer cells.
-      if cell
-        .flags
-        .intersects(Flags::HIDDEN | Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
-      {
+      // Skip hidden cells entirely.
+      if cell.flags.contains(Flags::HIDDEN) {
         continue;
       }
 
-      // Background rect (skip default bg).
+      let is_spacer = cell
+        .flags
+        .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER);
+
+      // Background rect (skip default bg) — render even for spacer cells.
       if !is_default_bg(cell.bg) {
         let color = color_to_hsla(cell.bg, cx);
         // Try to extend last rect on same line, same color, adjacent column.
@@ -361,6 +362,14 @@ impl TerminalElement {
         } else {
           rects.push(LayoutRect { line: rc.row, col: rc.col, cells: 1, color });
         }
+      }
+
+      // Skip spacers for text rendering only.
+      if is_spacer {
+        if let Some(run) = current_run.take() {
+          runs.push(run);
+        }
+        continue;
       }
 
       // Skip blank cells (spaces without decorations).

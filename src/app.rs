@@ -331,7 +331,7 @@ impl ZenixApp {
         // All printable characters without ctrl/alt/platform modifiers are handled by
         // the InputHandler's replace_text_in_range. We must NOT send
         // them here to avoid double input (including shift+letter).
-        if event.keystroke.key.len() == 1
+        if (event.keystroke.key.len() == 1 || event.keystroke.key.eq_ignore_ascii_case("space"))
             && !event.keystroke.modifiers.alt
             && !event.keystroke.modifiers.control
             && !event.keystroke.modifiers.platform
@@ -399,7 +399,7 @@ impl ZenixApp {
         };
         if self.tab.as_ref().is_some_and(|t| t.mouse_mode()) {
             if let Some((row, col)) = self.terminal_grid_point(event.position) {
-                let up = delta < px(0.0);
+                let up = delta > px(0.0);
                 let steps = (f32::from(delta).abs() / lh).ceil() as u32;
                 for _ in 0..steps {
                     write_to_pty(&self.backend, &mut self.tab,
