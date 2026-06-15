@@ -1,9 +1,12 @@
 //! Agent CLI detection — checks local filesystem for installed agent CLIs
-//! and their herdr integration hooks. No herdr socket dependency.
+//! and their herdr integration hooks. Uses the ProviderRegistry for
+//! agent definitions instead of a hardcoded list.
+
+pub mod hooks;
 
 use std::path::PathBuf;
 
-use crate::platform;
+use crate::provider::ProviderRegistry;
 
 /// Status of an agent CLI on this machine.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -27,10 +30,10 @@ pub struct AgentCliInfo {
     pub display_name: &'static str,
     /// Binary names to check on PATH (first match wins).
     pub binary_names: &'static [&'static str],
-    /// Function that returns the herdr integration hook directory (if any).
-    pub hook_dir: fn() -> Option<PathBuf>,
+    /// Resolved hook directory (if provider supports hooks and config dir exists).
+    pub hook_dir: Option<PathBuf>,
     /// Name of the hook file within the hook directory.
-    pub hook_filename: &'static str,
+    pub hook_filename: Option<&'static str>,
     /// Expected version in the hook file (HERDR_INTEGRATION_VERSION line).
     pub expected_version: u32,
     /// Detected status.
@@ -65,214 +68,31 @@ fn parse_hook_version(path: &PathBuf) -> Option<u32> {
     None
 }
 
-// ── Hook directory functions ──────────────────────────────────────
-
-fn claude_hook_dir() -> Option<PathBuf> {
-    platform::env_or_home("CLAUDE_CONFIG_DIR", "~/.claude")
-        .map(|d| d.join("hooks"))
-}
-
-fn codex_hook_dir() -> Option<PathBuf> {
-    platform::env_or_home("CODEX_HOME", "~/.codex")
-        .map(|d| d.join("hooks"))
-}
-
-fn opencode_hook_dir() -> Option<PathBuf> {
-    Some(platform::opencode_config_dir().join("plugins"))
-}
-
-fn pi_hook_dir() -> Option<PathBuf> {
-    platform::env_or_home("PI_CODING_AGENT_DIR", "~/.pi-coding-agent")
-        .map(|d| d.join("extensions"))
-}
-
-fn omp_hook_dir() -> Option<PathBuf> {
-    Some(platform::omp_config_dir().join("extensions"))
-}
-
-fn copilot_hook_dir() -> Option<PathBuf> {
-    platform::env_or_home("COPILOT_HOME", "~/.copilot")
-        .map(|d| d.join("hooks"))
-}
-
-fn droid_hook_dir() -> Option<PathBuf> {
-    Some(platform::home_dir().join(".factory/hooks"))
-}
-
-fn kimi_hook_dir() -> Option<PathBuf> {
-    platform::env_or_home("KIMI_CODE_HOME", "~/.kimi-code")
-        .map(|d| d.join("hooks"))
-}
-
-fn kilo_hook_dir() -> Option<PathBuf> {
-    Some(platform::kilo_config_dir().join("plugin"))
-}
-
-fn hermes_hook_dir() -> Option<PathBuf> {
-    Some(platform::home_dir().join(".hermes/plugins/herdr-agent-state"))
-}
-
-fn qoder_hook_dir() -> Option<PathBuf> {
-    platform::env_or_home("QODER_CONFIG_DIR", "~/.qoder")
-        .map(|d| d.join("hooks"))
-}
-
-fn cursor_hook_dir() -> Option<PathBuf> {
-    platform::env_or_home("CURSOR_CONFIG_DIR", "~/.cursor")
-        .map(|d| d.join("hooks"))
-}
-
-// ── Registry ──────────────────────────────────────────────────────
-
 /// Detect all known agent CLIs and return their status.
 pub fn detect_all_agents() -> Vec<AgentCliInfo> {
-    AGENTS.iter().map(|spec| {
-        let has_binary = any_binary_on_path(spec.binary_names);
-        let hook_path = (spec.hook_dir)().map(|d| d.join(spec.hook_filename));
+    let registry = ProviderRegistry::builtin();
+    registry.all().iter().map(|prov| {
+        let has_binary = any_binary_on_path(prov.binary_names);
+        let hook_path = prov.hook_path();
         let hook_version = hook_path.as_ref().and_then(parse_hook_version);
 
+        let expected = prov.expected_hook_version.unwrap_or(0);
+
         let status = match (has_binary, hook_version) {
-            (_, Some(v)) if v >= spec.expected_version => AgentCliStatus::Installed { version: v },
-            (_, Some(v)) => AgentCliStatus::Outdated { current: v, expected: spec.expected_version },
+            (_, Some(v)) if v >= expected => AgentCliStatus::Installed { version: v },
+            (_, Some(v)) => AgentCliStatus::Outdated { current: v, expected },
             (true, None) => AgentCliStatus::BinaryOnly,
             (false, None) => AgentCliStatus::NotInstalled,
         };
 
         AgentCliInfo {
-            name: spec.name,
-            display_name: spec.display_name,
-            binary_names: spec.binary_names,
-            hook_dir: spec.hook_dir,
-            hook_filename: spec.hook_filename,
-            expected_version: spec.expected_version,
+            name: prov.name,
+            display_name: prov.display_name,
+            binary_names: prov.binary_names,
+            hook_dir: prov.hook_dir_path(),
+            hook_filename: prov.hook_filename,
+            expected_version: expected,
             status,
         }
     }).collect()
 }
-
-/// Resolve the hook file path for a named agent.
-///
-/// Looks up the agent in the built-in registry by `agent_name`, then joins
-/// its hook directory (if resolved) with its hook filename.
-/// Returns `None` if the agent is unknown or its hook directory doesn't exist.
-pub fn hook_path_for(agent_name: &str) -> Option<PathBuf> {
-    let spec = AGENTS.iter().find(|a| a.name == agent_name)?;
-    let dir = (spec.hook_dir)()?;
-    Some(dir.join(spec.hook_filename))
-}
-
-/// Remove the hook file for a named agent.
-///
-/// Returns `Err` if no hook file exists for the agent.
-pub fn uninstall_hook(agent_name: &str) -> Result<(), String> {
-    let path = hook_path_for(agent_name).ok_or_else(|| "Hook not found".to_string())?;
-    std::fs::remove_file(&path).map_err(|e| e.to_string())
-}
-
-struct AgentSpec {
-    name: &'static str,
-    display_name: &'static str,
-    binary_names: &'static [&'static str],
-    hook_dir: fn() -> Option<PathBuf>,
-    hook_filename: &'static str,
-    expected_version: u32,
-}
-
-static AGENTS: &[AgentSpec] = &[
-    AgentSpec {
-        name: "claude",
-        display_name: "Claude Code",
-        binary_names: &["claude"],
-        hook_dir: claude_hook_dir,
-        hook_filename: "herdr-agent-state.sh",
-        expected_version: 5,
-    },
-    AgentSpec {
-        name: "codex",
-        display_name: "OpenAI Codex",
-        binary_names: &["codex"],
-        hook_dir: codex_hook_dir,
-        hook_filename: "herdr-agent-state.sh",
-        expected_version: 5,
-    },
-    AgentSpec {
-        name: "opencode",
-        display_name: "OpenCode",
-        binary_names: &["opencode"],
-        hook_dir: opencode_hook_dir,
-        hook_filename: "herdr-agent-state.js",
-        expected_version: 5,
-    },
-    AgentSpec {
-        name: "pi",
-        display_name: "Pi Coding Agent",
-        binary_names: &["pi"],
-        hook_dir: pi_hook_dir,
-        hook_filename: "herdr-agent-state.ts",
-        expected_version: 2,
-    },
-    AgentSpec {
-        name: "omp",
-        display_name: "OMP",
-        binary_names: &["omp"],
-        hook_dir: omp_hook_dir,
-        hook_filename: "herdr-omp-agent-state.ts",
-        expected_version: 2,
-    },
-    AgentSpec {
-        name: "copilot",
-        display_name: "GitHub Copilot",
-        binary_names: &["copilot"],
-        hook_dir: copilot_hook_dir,
-        hook_filename: "herdr-agent-state.sh",
-        expected_version: 2,
-    },
-    AgentSpec {
-        name: "droid",
-        display_name: "Factory Droid",
-        binary_names: &["droid", "factory"],
-        hook_dir: droid_hook_dir,
-        hook_filename: "herdr-agent-state.sh",
-        expected_version: 2,
-    },
-    AgentSpec {
-        name: "kimi",
-        display_name: "Kimi Code",
-        binary_names: &["kimi-code", "kimi"],
-        hook_dir: kimi_hook_dir,
-        hook_filename: "herdr-agent-state.sh",
-        expected_version: 3,
-    },
-    AgentSpec {
-        name: "kilo",
-        display_name: "Kilo Code",
-        binary_names: &["kilo"],
-        hook_dir: kilo_hook_dir,
-        hook_filename: "herdr-agent-state.js",
-        expected_version: 1,
-    },
-    AgentSpec {
-        name: "hermes",
-        display_name: "Hermes",
-        binary_names: &["hermes"],
-        hook_dir: hermes_hook_dir,
-        hook_filename: "__init__.py",
-        expected_version: 2,
-    },
-    AgentSpec {
-        name: "qoder",
-        display_name: "Qoder CLI",
-        binary_names: &["qoder"],
-        hook_dir: qoder_hook_dir,
-        hook_filename: "herdr-agent-state.sh",
-        expected_version: 2,
-    },
-    AgentSpec {
-        name: "cursor",
-        display_name: "Cursor",
-        binary_names: &["cursor"],
-        hook_dir: cursor_hook_dir,
-        hook_filename: "herdr-agent-state.sh",
-        expected_version: 1,
-    },
-];

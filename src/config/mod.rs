@@ -1,4 +1,13 @@
-//! Simple config store for persisting user preferences.
+//! Configuration layer — zenix config store + JSONC parsing + config scanning.
+//!
+//! Sub-modules:
+//! - `jsonc`: JSON-with-comments parser
+//! - `scanner`: `ConfigMap` for field-preserving JSON/JSONC read/write
+
+pub mod jsonc;
+pub mod scanner;
+
+// ── Original ConfigStore ─────────────────────────────────────────────
 
 use std::{fs, path::PathBuf};
 

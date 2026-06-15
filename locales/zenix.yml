@@ -57,6 +57,9 @@ settings:
     skills:
       en: "Skills"
       zh-CN: "Skills"
+    api:
+      en: "API"
+      zh-CN: "API"
   general:
     language:
       en: "Language"

@@ -13,7 +13,9 @@ use gpui_component::{
     input::Input,
 };
 use crate::agent::{AgentCliInfo, AgentCliStatus};
+use crate::api_provider::{ApiFormat, ApiProviderConfig, ThinkingLevel};
 use crate::i18n::t;
+use crate::provider::ProviderRegistry;
 
 use super::ThemeCallback;
 
@@ -55,8 +57,22 @@ pub enum McpAction {
 pub enum CliAction {
     Install { name: String },
     Update { name: String },
-    Uninstall { name: String },
-    InstallHook { name: String },
+}
+
+/// Actions that the API Providers tab can request from the app.
+#[derive(Clone)]
+pub enum ApiProviderAction {
+    ShowAddForm,
+    CancelForm,
+    SubmitForm,
+    SetFormat { format: ApiFormat },
+    SetThinkingLevel { level: ThinkingLevel },
+    SetSuffix { suffix: String },
+    Edit { name: String },
+    Remove { name: String },
+    FetchModels { name: String },
+    SelectModel { model: String },
+    ToggleAgent { name: String, agent: String },
 }
 
 /// Mode for the inline dialog input in settings tabs.
@@ -77,12 +93,28 @@ pub struct McpFormState {
     pub mcp_type: String,
 }
 
+/// State for the API Provider add/edit form.
+pub struct ApiProviderFormState {
+    pub editing_name: Option<String>,
+    pub name: Option<gpui::Entity<gpui_component::input::InputState>>,
+    pub base_url: Option<gpui::Entity<gpui_component::input::InputState>>,
+    pub api_key: Option<gpui::Entity<gpui_component::input::InputState>>,
+    pub url_suffix: Option<gpui::Entity<gpui_component::input::InputState>>,
+    pub format: ApiFormat,
+    pub thinking_level: ThinkingLevel,
+    /// Models fetched from API, populated by FetchModels action.
+    pub available_models: Vec<String>,
+    pub selected_model: String,
+}
+
 const TAB_PANEL_W: f32 = 140.0;
 const TAB_MIN_W: f32 = 480.0;
 const TAB_MIN_H: f32 = 360.0;
 
 // ── Agents that support skills (directory with SKILL.md) ───────────
-pub const SKILL_AGENTS: &[&str] = &["claude", "codex", "opencode", "pi", "omp", "kilo", "hermes"];
+pub fn skill_agent_names() -> Vec<String> {
+    ProviderRegistry::builtin().skill_agent_names()
+}
 
 #[allow(clippy::too_many_arguments)]
 pub fn settings_dialog(
@@ -107,6 +139,9 @@ pub fn settings_dialog(
     on_skill_action: ActionCb<SkillAction>,
     on_mcp_action: ActionCb<McpAction>,
     on_cli_action: ActionCb<CliAction>,
+    api_providers: &[ApiProviderConfig],
+    api_provider_form: Option<&ApiProviderFormState>,
+    on_api_action: ActionCb<ApiProviderAction>,
     win_w: f32,
     win_h: f32,
 ) -> impl IntoElement {
@@ -117,12 +152,14 @@ pub fn settings_dialog(
     let osa = Rc::new(on_skill_action);
     let oma = Rc::new(on_mcp_action);
     let oca = Rc::new(on_cli_action);
+    let oaa = Rc::new(on_api_action);
     let oc = Rc::new(on_close);
 
     let tab_labels = [
         t("settings.tab.general"), t("settings.tab.appearance"),
         t("settings.tab.terminal"), t("settings.tab.agent_cli"),
         t("settings.tab.mcp"), t("settings.tab.skills"),
+        t("settings.tab.api"),
     ];
 
     div()
@@ -170,7 +207,8 @@ pub fn settings_dialog(
                                     on_font_down, on_font_up, locale, on_locale_change,
                                     agents, mcp_zenix_servers, mcp_per_agent, mcp_form,
                                     mcp_available_agents, skills, skill_dialog_input, skill_dialog_mode,
-                                    &osa, &oma, &oca))
+                                    &osa, &oma, &oca,
+                                    api_providers, api_provider_form, &oaa))
                         )
                 )
         )
@@ -207,6 +245,9 @@ fn tab_content(
     on_skill_action: &SharedActionCb<SkillAction>,
     on_mcp_action: &SharedActionCb<McpAction>,
     on_cli_action: &SharedActionCb<CliAction>,
+    api_providers: &[ApiProviderConfig],
+    api_provider_form: Option<&ApiProviderFormState>,
+    on_api_action: &SharedActionCb<ApiProviderAction>,
 ) -> AnyElement {
     match active_tab {
         0 => tab_general(locale, on_locale_change).into_any_element(),
@@ -218,6 +259,7 @@ fn tab_content(
                 on_mcp_action).into_any_element()
         }
         5 => tab_skills(skills, skill_dialog_input, skill_dialog_mode, on_skill_action).into_any_element(),
+        6 => tab_api_providers(api_providers, api_provider_form, mcp_available_agents, on_api_action).into_any_element(),
         _ => tab_placeholder().into_any_element(),
     }
 }
@@ -289,7 +331,7 @@ fn agent_card(
     let (status_text, status_color) = match &info.status {
         AgentCliStatus::Installed { version } => (format!("v{version}"), gpui::rgba(0x00DD44FF)),
         AgentCliStatus::Outdated { current, expected } => (format!("v{current}\u{2192}v{expected}"), gpui::rgba(0xFFAA00FF)),
-        AgentCliStatus::BinaryOnly => ("binary only".into(), gpui::rgba(0x8888FFFF)),
+        AgentCliStatus::BinaryOnly => ("detected".into(), gpui::rgba(0x44DD88FF)),
         AgentCliStatus::NotInstalled => ("not installed".into(), gpui::rgba(0xFF4444FF)),
     };
     v_flex().gap(px(4.)).py(px(8.)).px(px(10.)).w(px(170.))
@@ -549,40 +591,14 @@ fn agent_action_buttons(
                 .into_any_element());
         }
         AgentCliStatus::Outdated { .. } => {
-            let n1 = name.clone();
-            let n2 = name.clone();
-            let n3 = name.clone();
-            let oca1 = on_cli_action.clone();
-            let oca2 = on_cli_action.clone();
-            let oca3 = on_cli_action.clone();
-            btns.push(Button::new(format!("update-{n1}")).ghost().compact().label(t("agent.update"))
-                .on_click(move |_, w, a| { oca1(CliAction::Update { name: n1.clone() }, w, a); })
-                .into_any_element());
-            btns.push(Button::new(format!("uninstall-{n2}")).ghost().compact().label(t("agent.uninstall"))
-                .on_click(move |_, w, a| { oca2(CliAction::Uninstall { name: n2.clone() }, w, a); })
-                .into_any_element());
-            btns.push(Button::new(format!("hook-{n3}")).ghost().compact().label(t("agent.install_hook"))
-                .on_click(move |_, w, a| { oca3(CliAction::InstallHook { name: n3.clone() }, w, a); })
-                .into_any_element());
-        }
-        AgentCliStatus::Installed { .. } => {
-            let n1 = name.clone();
-            let n2 = name.clone();
-            let oca1 = on_cli_action.clone();
-            let oca2 = on_cli_action.clone();
-            btns.push(Button::new(format!("uninstall-{n1}")).ghost().compact().label(t("agent.uninstall"))
-                .on_click(move |_, w, a| { oca1(CliAction::Uninstall { name: n1.clone() }, w, a); })
-                .into_any_element());
-            btns.push(Button::new(format!("hook-{n2}")).ghost().compact().label(t("agent.install_hook"))
-                .on_click(move |_, w, a| { oca2(CliAction::InstallHook { name: n2.clone() }, w, a); })
-                .into_any_element());
-        }
-        AgentCliStatus::BinaryOnly => {
             let n = name.clone();
             let oca = on_cli_action.clone();
-            btns.push(Button::new(format!("hook-{n}")).ghost().compact().label(t("agent.install_hook"))
-                .on_click(move |_, w, a| { oca(CliAction::InstallHook { name: n.clone() }, w, a); })
+            btns.push(Button::new(format!("update-{n}")).ghost().compact().label(t("agent.update"))
+                .on_click(move |_, w, a| { oca(CliAction::Update { name: n.clone() }, w, a); })
                 .into_any_element());
+        }
+        AgentCliStatus::Installed { .. } | AgentCliStatus::BinaryOnly => {
+            // No actions — user manages install/uninstall externally
         }
     }
     btns
@@ -620,11 +636,12 @@ fn tab_skills(
             .child(add_skill_card(on_skill_action)))
         // ── Per-Agent Skills section ──
         .child(setting_group_header(t("skills.per_agent")))
-        .child(v_flex().gap(px(12.)).children(SKILL_AGENTS.iter().filter_map(|agent| {
-            let agent_skills = per_agent.get(agent)?;
+        .child(v_flex().gap(px(12.)).children(skill_agent_names().iter().filter_map(|agent| {
+            let agent_str = agent.as_str();
+            let agent_skills = per_agent.get(agent_str)?;
             let mut sorted_skills: Vec<&crate::skills::SkillInfo> = agent_skills.clone();
             sorted_skills.sort_by(|a, b| a.name.cmp(&b.name));
-            Some(per_agent_section(agent, &sorted_skills, on_skill_action))
+            Some(per_agent_section(agent_str, &sorted_skills, on_skill_action))
         })))
         .when_some(skill_dialog_input, |el, inp| {
             el.when(*skill_dialog_mode == InputDialogMode::SkillAddGit, |el| {
@@ -753,6 +770,244 @@ fn per_agent_skill_card(
                     Button::new(format!("unlink-{name}")).ghost().compact().label(t("skills.unlink")).on_click(unlink_cb).into_any_element()
                 })
         )
+}
+
+// ── API Providers ────────────────────────────────────────────────────
+
+fn tab_api_providers(
+    providers: &[ApiProviderConfig],
+    form: Option<&ApiProviderFormState>,
+    available_agents: &[String],
+    on_action: &SharedActionCb<ApiProviderAction>,
+) -> impl IntoElement {
+    let on_api = on_action.clone();
+
+    let add_cb = {
+        let on_api = on_api.clone();
+        move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+            on_api(ApiProviderAction::ShowAddForm, w, a);
+        }
+    };
+
+    v_flex().gap(px(12.))
+        .child(h_flex().gap(px(8.)).items_center().justify_between()
+            .child(setting_group_header("API Providers"))
+            .child(Button::new("add-api-provider").ghost().label("+ Add").on_click(add_cb)))
+        // Add/Edit form
+        .when_some(form, |el, f| el.child(api_provider_form(f, on_action)))
+        // Provider list
+        .child(if providers.is_empty() && form.is_none() {
+            txt(px(12.)).text_color(gpui::rgba(0x888888FF)).child("No API providers configured").into_any_element()
+        } else {
+            v_flex().gap(px(8.)).children(providers.iter().map(|p| {
+                api_provider_card(p, available_agents, on_action)
+            })).into_any_element()
+        })
+}
+
+fn api_provider_card(
+    p: &ApiProviderConfig,
+    available_agents: &[String],
+    on_action: &SharedActionCb<ApiProviderAction>,
+) -> impl IntoElement {
+    let name = p.name.clone();
+    let format_label = p.format.label();
+    let format_color = match p.format {
+        ApiFormat::OpenAI => gpui::rgba(0x44AADDFF),
+        ApiFormat::Anthropic => gpui::rgba(0xDD8844FF),
+    };
+    let endpoint = format!("{}{}", p.base_url.trim_end_matches('/'), p.url_suffix);
+    let think = format!("think: {}", p.thinking_level.label());
+    let masked_key = if p.api_key.len() > 8 {
+        format!("{}...{}", &p.api_key[..4], &p.api_key[p.api_key.len()-4..])
+    } else {
+        "****".to_string()
+    };
+
+    let edit_cb = {
+        let on = on_action.clone();
+        let n = name.clone();
+        move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+            on(ApiProviderAction::Edit { name: n.clone() }, w, a);
+        }
+    };
+    let remove_cb = {
+        let on = on_action.clone();
+        let n = name.clone();
+        move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+            on(ApiProviderAction::Remove { name: n.clone() }, w, a);
+        }
+    };
+    let fetch_cb = {
+        let on = on_action.clone();
+        let n = name.clone();
+        move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+            on(ApiProviderAction::FetchModels { name: n.clone() }, w, a);
+        }
+    };
+
+    v_flex().gap(px(6.)).py(px(8.)).px(px(10.))
+        .border_1().border_color(gpui::rgba(0x45475a44)).rounded_md()
+        .child(h_flex().gap(px(8.)).items_center().justify_between()
+            .child(h_flex().gap(px(8.)).items_center()
+                .child(txt(px(13.)).font_weight(gpui::FontWeight::MEDIUM).child(name.clone()))
+                .child(txt(px(10.)).text_color(format_color).child(format_label)))
+            .child(h_flex().gap(px(4.))
+                .child(Button::new(format!("edit-api-{name}")).ghost().compact().label("Edit").on_click(edit_cb))
+                .child(Button::new(format!("fetch-api-{name}")).ghost().compact().label("Models").on_click(fetch_cb))
+                .child(Button::new(format!("rm-api-{name}")).ghost().compact().label("Remove").on_click(remove_cb))))
+        .child(txt(px(11.)).text_color(gpui::rgba(0x888888FF)).child(endpoint))
+        .child(h_flex().gap(px(12.))
+            .child(txt(px(11.)).text_color(gpui::rgba(0x888888FF)).child(format!("model: {}", p.model)))
+            .child(txt(px(11.)).text_color(gpui::rgba(0x888888FF)).child(think))
+            .child(txt(px(11.)).text_color(gpui::rgba(0x666666FF)).child(format!("key: {masked_key}"))))
+        // Agent toggle checkboxes
+        .child(h_flex().gap(px(4.)).flex_wrap().children(available_agents.iter().map(|agent| {
+            let checked = p.enabled_agents.contains(agent);
+            let srv = name.clone();
+            let agent_name = agent.clone();
+            let on = on_action.clone();
+            Button::new(format!("api-agent-{srv}-{agent_name}"))
+                .when(checked, |b| b.primary())
+                .when(!checked, |b| b.ghost())
+                .compact()
+                .label(format!(
+                    "{} {}",
+                    if checked { "\u{2611}" } else { "\u{2610}" },
+                    agent_name
+                ))
+                .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                    on(ApiProviderAction::ToggleAgent {
+                        name: srv.clone(),
+                        agent: agent_name.clone(),
+                    }, w, a);
+                })
+        })))
+}
+
+fn api_provider_form(
+    form: &ApiProviderFormState,
+    on_action: &SharedActionCb<ApiProviderAction>,
+) -> impl IntoElement {
+    let cancel_cb = {
+        let on = on_action.clone();
+        move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| { on(ApiProviderAction::CancelForm, w, a); }
+    };
+    let submit_cb = {
+        let on = on_action.clone();
+        move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| { on(ApiProviderAction::SubmitForm, w, a); }
+    };
+
+    let form_title = if form.editing_name.is_some() { "Edit API Provider" } else { "Add API Provider" };
+    let submit_label = if form.editing_name.is_some() { "Update" } else { "Add" };
+
+    v_flex().gap(px(8.)).py(px(10.)).px(px(12.))
+        .border_1().border_color(gpui::rgba(0x45475a66)).rounded_md()
+        .child(txt(px(13.)).font_weight(gpui::FontWeight::BOLD).child(form_title))
+        // Name
+        .child(form_field("Name", form.name.as_ref()))
+        // Format selector
+        .child(h_flex().gap(px(8.)).items_center()
+            .child(txt(px(12.)).w(px(80.)).child("Format"))
+            .child(api_format_btn(ApiFormat::OpenAI, form.format, on_action))
+            .child(api_format_btn(ApiFormat::Anthropic, form.format, on_action)))
+        // URL suffix (selectable presets based on format)
+        .child(h_flex().gap(px(8.)).items_center()
+            .child(txt(px(12.)).w(px(80.)).child("Suffix"))
+            .child(h_flex().gap(px(4.)).children(
+                form.format.suffix_options().iter().map(|suffix| {
+                    let s = suffix.to_string();
+                    let on = on_action.clone();
+                    Button::new(format!("suffix-{}", s.replace('/', "-")))
+                        .ghost()
+                        .compact()
+                        .label(s.clone())
+                        .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                            on(ApiProviderAction::SetSuffix { suffix: s.clone() }, w, a);
+                        })
+                })
+            )))
+        // Manual suffix input (for custom or confirmation)
+        .child(form_field("Custom", form.url_suffix.as_ref()))
+        // Base URL
+        .child(form_field("Base URL", form.base_url.as_ref()))
+        // API Key
+        .child(form_field("API Key", form.api_key.as_ref()))
+        // Thinking level
+        .child(h_flex().gap(px(8.)).items_center()
+            .child(txt(px(12.)).w(px(80.)).child("Think"))
+            .child(h_flex().gap(px(4.)).children(
+                ThinkingLevel::all().iter().map(|level| {
+                    let lev = *level;
+                    let selected = lev == form.thinking_level;
+                    let on = on_action.clone();
+                    Button::new(format!("think-{}", lev.label().to_lowercase()))
+                        .when(selected, |b| b.primary())
+                        .when(!selected, |b| b.ghost())
+                        .compact()
+                        .label(lev.label().to_string())
+                        .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                            on(ApiProviderAction::SetThinkingLevel { level: lev }, w, a);
+                        })
+                })
+            )))
+        // Model (show available models as compact buttons)
+        .child(if !form.available_models.is_empty() {
+            let selected = form.selected_model.clone();
+            v_flex().gap(px(4.))
+                .child(txt(px(12.)).child("Model"))
+                .child(txt(px(11.)).text_color(gpui::rgba(0x44DD88FF))
+                    .child(format!("{} models available — select one below:", form.available_models.len())))
+                .child(h_flex().gap(px(4.)).flex_wrap().children(
+                    form.available_models.iter().take(10).map(|m| {
+                        let m_clone = m.clone();
+                        let sel = *m == selected;
+                        let on = on_action.clone();
+                        Button::new(format!("model-{}", m_clone))
+                            .when(sel, |b| b.primary())
+                            .when(!sel, |b| b.ghost())
+                            .compact()
+                            .label(m_clone.clone())
+                            .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                                on(ApiProviderAction::SelectModel { model: m_clone.clone() }, w, a);
+                            })
+                    })
+                ))
+                .into_any_element()
+        } else {
+            txt(px(12.)).text_color(gpui::rgba(0x888888FF)).child("Model: (fetch to populate)").into_any_element()
+        })
+        // Buttons
+        .child(h_flex().gap(px(8.)).justify_end()
+            .child(Button::new("api-form-cancel").ghost().label("Cancel").on_click(cancel_cb))
+            .child(Button::new("api-form-submit").primary().label(submit_label).on_click(submit_cb)))
+}
+
+fn api_format_btn(
+    fmt: ApiFormat,
+    current: ApiFormat,
+    on_action: &SharedActionCb<ApiProviderAction>,
+) -> impl IntoElement {
+    let selected = fmt == current;
+    let on = on_action.clone();
+    Button::new(format!("api-fmt-{}", fmt.label().to_lowercase()))
+        .when(selected, |b| b.primary())
+        .when(!selected, |b| b.ghost())
+        .compact()
+        .label(fmt.label().to_string())
+        .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+            on(ApiProviderAction::SetFormat { format: fmt }, w, a);
+        })
+}
+
+fn form_field(
+    label: &str,
+    input: Option<&gpui::Entity<gpui_component::input::InputState>>,
+) -> impl IntoElement {
+    h_flex().gap(px(8.)).items_center()
+        .child(txt(px(12.)).w(px(80.)).child(label.to_string()))
+        .child(input.map(|e| Input::new(e).into_any_element())
+            .unwrap_or_else(|| txt(px(12.)).text_color(gpui::rgba(0x888888FF)).child("_").into_any_element()))
 }
 
 fn tab_placeholder() -> impl IntoElement {

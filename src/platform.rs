@@ -3,7 +3,7 @@
 //! All home/config/data path resolution should go through this module
 //! instead of directly reading `HOME` or hardcoding `~/.config/...`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Cross-platform home directory.
 ///
@@ -78,6 +78,24 @@ pub fn herdr_binary_name() -> &'static str {
         "herdr.exe"
     } else {
         "herdr"
+    }
+}
+
+/// Create a directory symlink, cross-platform.
+///
+/// Uses `symlink` on Unix and `symlink_dir` on Windows.
+/// On Windows, this may require administrator privileges or developer mode.
+#[allow(dead_code)]
+pub fn symlink_dir(src: &Path, dst: &Path) -> Result<(), String> {
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(src, dst)
+            .map_err(|e| format!("symlink({src:?} -> {dst:?}): {e}"))
+    }
+    #[cfg(windows)]
+    {
+        std::os::windows::fs::symlink_dir(src, dst)
+            .map_err(|e| format!("symlink_dir({src:?} -> {dst:?}): {e}"))
     }
 }
 

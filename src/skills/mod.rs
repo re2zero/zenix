@@ -1,15 +1,16 @@
 //! Unified skills management — scan and symlink skills across compatible agents.
 //!
-//! Compatibility matrix:
+//! Uses the ProviderRegistry for agent paths instead of hardcoded lists.
+//!
+//! Compatibility matrix (derived from ProviderRegistry):
 //!   Group A (Claude-format: directory with SKILL.md): Claude, Codex, Pi, OMP, Kilo, Hermes
 //!   Group B (OpenCode-format, also reads Claude-format): OpenCode
-//!
-//! OpenCode can read both formats, so skills for Group A are also usable by OpenCode.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::platform;
+use crate::provider::ProviderRegistry;
 
 /// Information about a skill installed across agents.
 #[derive(Debug, Clone)]
@@ -21,34 +22,18 @@ pub struct SkillInfo {
     pub linked_agents: Vec<String>,
 }
 
-// ── Per-agent skills directories ─────────────────────────────────────
+// ── Per-agent skills directories (delegated to ProviderRegistry) ────
 
 /// Returns Vec<(agent_name, skills_dir)> for agents that support skill directories.
 fn agent_skills_dirs() -> Vec<(String, PathBuf)> {
-    let mut out = Vec::new();
-
-    // Claude
-    if let Some(dir) = platform::env_or_home("CLAUDE_CONFIG_DIR", "~/.claude") {
-        out.push(("claude".into(), dir.join("skills")));
-    }
-    // Codex
-    if let Some(dir) = platform::env_or_home("CODEX_HOME", "~/.codex") {
-        out.push(("codex".into(), dir.join("skills")));
-    }
-    // OpenCode
-    out.push(("opencode".into(), platform::opencode_config_dir().join("skills")));
-    // Pi
-    if let Some(dir) = platform::env_or_home("PI_CODING_AGENT_DIR", "~/.pi-coding-agent") {
-        out.push(("pi".into(), dir.join("skills")));
-    }
-    // OMP
-    out.push(("omp".into(), platform::omp_config_dir().join("skills")));
-    // Kilo
-    out.push(("kilo".into(), platform::kilo_config_dir().join("skills")));
-    // Hermes
-    out.push(("hermes".into(), platform::home_dir().join(".hermes/skills")));
-
-    out
+    let registry = ProviderRegistry::builtin();
+    registry.skills_supporting()
+        .into_iter()
+        .filter_map(|prov| {
+            let dir = prov.skills_path()?;
+            Some((prov.name.to_string(), dir))
+        })
+        .collect()
 }
 
 // ── Scanning ─────────────────────────────────────────────────────────
@@ -151,11 +136,7 @@ pub fn link_skill(skill_name: &str, target_agent: &str) -> Result<(), String> {
         return Err(format!("'{skill_name}' already exists in {target_agent}"));
     }
 
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(&source_dir, &link_path)
-        .map_err(|e| format!("symlink from {source_agent} to {target_agent}: {e}"))?;
-    #[cfg(windows)]
-    std::os::windows::fs::symlink_dir(&source_dir, &link_path)
+    platform::symlink_dir(&source_dir, &link_path)
         .map_err(|e| format!("symlink from {source_agent} to {target_agent}: {e}"))?;
     Ok(())
 }
@@ -233,12 +214,10 @@ pub fn install_from_git(url: &str) -> Result<String, String> {
         .map_err(|e| format!("git clone failed: {e}"))?;
 
     if !status.success() {
-        // Clean up partial clone
         let _ = std::fs::remove_dir_all(&dest);
         return Err(format!("git clone exited with {:?}", status.code()));
     }
 
-    // Validate: must contain SKILL.md
     if !dest.join("SKILL.md").exists() {
         let _ = std::fs::remove_dir_all(&dest);
         return Err("cloned repo does not contain SKILL.md — not a valid skill".into());

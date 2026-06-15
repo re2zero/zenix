@@ -7,6 +7,8 @@ mod config;
 mod agent;
 mod mcp;
 mod platform;
+mod provider;
+mod api_provider;
 mod skills;
 mod i18n;
 mod sys;

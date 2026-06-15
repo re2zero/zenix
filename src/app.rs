@@ -18,7 +18,9 @@ use crate::{
     config::ConfigStore,
     client as herdr,
     ui::{self as sidebar, Panel},
-    ui::settings::{ActionCb, SkillAction, McpAction, CliAction, McpFormState, InputDialogMode, SKILL_AGENTS},
+    ui::settings::{ActionCb, SkillAction, McpAction, CliAction, McpFormState, InputDialogMode, skill_agent_names,
+        ApiProviderAction, ApiProviderFormState},
+    api_provider::{ApiProviderConfig, ApiFormat, ThinkingLevel},
     sys::{self as system_info, CpuSamples, SystemInfo},
     terminal::{
         self, BackendCommand, BackendEvent, BackendTx, ImeState, TerminalTab, TerminalElement,
@@ -60,6 +62,8 @@ pub struct ZenixApp {
     mcp_available_agents: Vec<String>,
     dialog_input: Option<gpui::Entity<gpui_component::input::InputState>>,
     dialog_input_mode: InputDialogMode,
+    api_providers: Vec<ApiProviderConfig>,
+    api_provider_form: Option<ApiProviderFormState>,
     sysinfo_polling: bool,
     terminal_cell_width: Pixels,
     terminal_line_height: Pixels,
@@ -108,6 +112,8 @@ impl ZenixApp {
             mcp_available_agents: crate::mcp::claude_format_agent_names(),
             dialog_input: None,
             dialog_input_mode: InputDialogMode::Hidden,
+            api_providers: Vec::new(),
+            api_provider_form: None,
             sysinfo_polling: false,
             terminal_cell_width: px(14.0 * 0.6),
             terminal_line_height: px(14.0 * 1.15),
@@ -619,6 +625,9 @@ impl Render for ZenixApp {
             if this.skills.is_empty() {
                 this.skills = crate::skills::scan_all_skills();
             }
+            if this.api_providers.is_empty() {
+                this.api_providers = crate::api_provider::load_all();
+            }
             this.show_settings = !this.show_settings;
             cx.notify();
         }));
@@ -740,7 +749,7 @@ impl Render for ZenixApp {
                             }
                             SkillAction::Link { skill_name } => {
                                 // Link to all supported agents
-                                for agent in SKILL_AGENTS {
+                                for agent in &skill_agent_names() {
                                     let _ = crate::skills::link_skill(&skill_name, agent);
                                 }
                                 this.skills = crate::skills::scan_all_skills();
@@ -748,7 +757,7 @@ impl Render for ZenixApp {
                             }
                             SkillAction::Unlink { skill_name } => {
                                 // Unlink from all agents
-                                for agent in SKILL_AGENTS {
+                                for agent in &skill_agent_names() {
                                     let _ = crate::skills::unlink_skill(&skill_name, agent);
                                 }
                                 this.skills = crate::skills::scan_all_skills();
@@ -1027,23 +1036,204 @@ impl Render for ZenixApp {
                     entity.update(app, |this: &mut ZenixApp, cx| {
                         match action {
                             CliAction::Install { name } => {
-                                tracing::info!("cli install {name}: hook asset bundling needed (TODO)");
-                            }
-                            CliAction::Update { name } => {
-                                tracing::info!("cli update {name}: hook asset bundling needed (TODO)");
-                            }
-                            CliAction::Uninstall { name } => {
-                                let _ = crate::agent::uninstall_hook(&name);
+                                let _ = crate::agent::hooks::install_hook(&name);
                                 this.agent_statuses = crate::agent::detect_all_agents();
                                 cx.notify();
                             }
-                            CliAction::InstallHook { name } => {
-                                tracing::info!("cli install hook {name}: hook asset bundling needed (TODO)");
+                            CliAction::Update { name } => {
+                                let _ = crate::agent::hooks::install_hook(&name);
+                                this.agent_statuses = crate::agent::detect_all_agents();
+                                cx.notify();
                             }
                         }
                     });
                 }
             });
+
+            let on_api_action: ActionCb<ApiProviderAction> = Box::new({
+                let entity = entity.clone();
+                move |action: ApiProviderAction, w: &mut Window, app: &mut gpui::App| {
+                    entity.update(app, |this: &mut ZenixApp, cx| {
+                        match action {
+                            ApiProviderAction::ShowAddForm => {
+                                let name_input = cx.new(|cx| {
+                                    gpui_component::input::InputState::new(w, cx).placeholder("my-provider")
+                                });
+                                let base_url_input = cx.new(|cx| {
+                                    gpui_component::input::InputState::new(w, cx).placeholder("https://api.openai.com")
+                                });
+                                let api_key_input = cx.new(|cx| {
+                                    gpui_component::input::InputState::new(w, cx).placeholder("sk-...")
+                                });
+                                let suffix_input = cx.new(|cx| {
+                                    gpui_component::input::InputState::new(w, cx).placeholder("/v1/chat/completions")
+                                });
+                                this.api_provider_form = Some(ApiProviderFormState {
+                                    editing_name: None,
+                                    name: Some(name_input),
+                                    base_url: Some(base_url_input),
+                                    api_key: Some(api_key_input),
+                                    url_suffix: Some(suffix_input),
+                                    format: ApiFormat::OpenAI,
+                                    thinking_level: ThinkingLevel::default(),
+                                    available_models: vec![],
+                                    selected_model: String::new(),
+                                });
+                                cx.notify();
+                            }
+                            ApiProviderAction::CancelForm => {
+                                this.api_provider_form = None;
+                                cx.notify();
+                            }
+                            ApiProviderAction::SubmitForm => {
+                                let form = this.api_provider_form.take();
+                                if let Some(form) = form {
+                                    let name_val = form.name.as_ref()
+                                        .map(|e| e.read(cx).value().to_string()).unwrap_or_default();
+                                    let base_val = form.base_url.as_ref()
+                                        .map(|e| e.read(cx).value().to_string()).unwrap_or_default();
+                                    let key_val = form.api_key.as_ref()
+                                        .map(|e| e.read(cx).value().to_string()).unwrap_or_default();
+                                    let suffix_val = form.url_suffix.as_ref()
+                                        .map(|e| e.read(cx).value().to_string()).unwrap_or_default();
+                                    if !name_val.trim().is_empty() {
+                                        let existing_agents = if form.editing_name.is_some() {
+                                            this.api_providers.iter()
+                                                .find(|p| p.name == form.editing_name.as_deref().unwrap_or(""))
+                                                .map(|p| p.enabled_agents.clone())
+                                                .unwrap_or_default()
+                                        } else {
+                                            vec![]
+                                        };
+                                        let cfg = ApiProviderConfig {
+                                            name: name_val.trim().to_string(),
+                                            format: form.format,
+                                            base_url: base_val.trim().to_string(),
+                                            api_key: key_val.trim().to_string(),
+                                            model: form.selected_model,
+                                            thinking_level: form.thinking_level,
+                                            url_suffix: suffix_val.trim().to_string(),
+                                            enabled_agents: existing_agents,
+                                        };
+                                        let _ = crate::api_provider::upsert(&cfg);
+                                        this.api_providers = crate::api_provider::load_all();
+                                    }
+                                    cx.notify();
+                                }
+                            }
+                            ApiProviderAction::SetFormat { format } => {
+                                if let Some(form) = &mut this.api_provider_form {
+                                    form.format = format;
+                                    // Reset suffix to default for new format
+                                    if let Some(suffix_input) = &form.url_suffix {
+                                        suffix_input.update(cx, |state, cx| {
+                                            state.set_value(format.default_suffix(), w, cx);
+                                        });
+                                    }
+                                }
+                                cx.notify();
+                            }
+                            ApiProviderAction::SetThinkingLevel { level } => {
+                                if let Some(form) = &mut this.api_provider_form {
+                                    form.thinking_level = level;
+                                }
+                                cx.notify();
+                            }
+                            ApiProviderAction::SetSuffix { suffix } => {
+                                if let Some(form) = &mut this.api_provider_form {
+                                    if let Some(suffix_input) = &form.url_suffix {
+                                        suffix_input.update(cx, |state, cx| {
+                                            state.set_value(&suffix, w, cx);
+                                        });
+                                    }
+                                }
+                                cx.notify();
+                            }
+                            ApiProviderAction::Edit { name } => {
+                                if let Some(cfg) = this.api_providers.iter().find(|p| p.name == name).cloned() {
+                                    let name_input = cx.new(|cx| {
+                                        let mut st = gpui_component::input::InputState::new(w, cx).placeholder("name");
+                                        st.set_value(&cfg.name, w, cx);
+                                        st
+                                    });
+                                    let base_url_input = cx.new(|cx| {
+                                        let mut st = gpui_component::input::InputState::new(w, cx).placeholder("url");
+                                        st.set_value(&cfg.base_url, w, cx);
+                                        st
+                                    });
+                                    let api_key_input = cx.new(|cx| {
+                                        let mut st = gpui_component::input::InputState::new(w, cx).placeholder("key");
+                                        st.set_value(&cfg.api_key, w, cx);
+                                        st
+                                    });
+                                    let suffix_input = cx.new(|cx| {
+                                        let mut st = gpui_component::input::InputState::new(w, cx).placeholder("suffix");
+                                        st.set_value(&cfg.url_suffix, w, cx);
+                                        st
+                                    });
+                                    this.api_provider_form = Some(ApiProviderFormState {
+                                        editing_name: Some(cfg.name.clone()),
+                                        name: Some(name_input),
+                                        base_url: Some(base_url_input),
+                                        api_key: Some(api_key_input),
+                                        url_suffix: Some(suffix_input),
+                                        format: cfg.format,
+                                        thinking_level: cfg.thinking_level,
+                                        available_models: vec![],
+                                        selected_model: cfg.model.clone(),
+                                    });
+                                }
+                                cx.notify();
+                            }
+                            ApiProviderAction::Remove { name } => {
+                                let _ = crate::api_provider::remove(&name);
+                                this.api_providers = crate::api_provider::load_all();
+                                cx.notify();
+                            }
+                            ApiProviderAction::FetchModels { name } => {
+                                let cfg = this.api_providers.iter().find(|p| p.name == name).cloned();
+                                if let Some(cfg) = cfg {
+                                    // Run fetch in background
+                                    let models = std::thread::spawn(move || {
+                                        crate::api_provider::fetch_models(&cfg)
+                                    }).join().unwrap_or_else(|_| Err("thread panic".into()));
+
+                                    match models {
+                                        Ok(list) => {
+                                            if let Some(form) = &mut this.api_provider_form {
+                                                form.available_models = list;
+                                                if form.selected_model.is_empty() {
+                                                    form.selected_model = form.available_models.first().cloned().unwrap_or_default();
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!("fetch models failed for {name}: {e}");
+                                        }
+                                    }
+                                }
+                                cx.notify();
+                            }
+                            ApiProviderAction::SelectModel { model } => {
+                                if let Some(form) = &mut this.api_provider_form {
+                                    form.selected_model = model;
+                                }
+                                cx.notify();
+                            }
+                            ApiProviderAction::ToggleAgent { name, agent } => {
+                                if let Some(prov) = this.api_providers.iter_mut().find(|p| p.name == name) {
+                                    let _ = crate::api_provider::toggle_api_agent(prov, &agent);
+                                    this.api_providers = crate::api_provider::load_all();
+                                }
+                                cx.notify();
+                            }
+                        }
+                    });
+                }
+            });
+
+            let api_ref = &self.api_providers;
+            let api_form_ref = self.api_provider_form.as_ref();
 
             div().size_full()
                 .child(main_ui)
@@ -1064,6 +1254,7 @@ impl Render for ZenixApp {
                         skills_ref,
                         self.dialog_input.as_ref(), &self.dialog_input_mode,
                         on_skill_action, on_mcp_action, on_cli_action,
+                        api_ref, api_form_ref, on_api_action,
                         f32::from(w), f32::from(h),
                     )
                 )

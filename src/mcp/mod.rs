@@ -2,16 +2,20 @@
 //!
 //! Two data sources:
 //!   1. Zenix-managed servers: <config_dir>/zenix/mcp.json (NDJSON)
-//!   2. Per-agent Claude-format configs (Claude, OpenCode, Pi, OMP, Kilo)
+//!   2. Per-agent Claude-format configs (Claude, OpenCode, Pi, OMP, Kilo, Hermes)
 //!
 //! Claude-format JSON:
 //!     `{ "mcpServers": { <name>: { command, args?, env?, disabled? } } }`
+//!
+//! Uses the ProviderRegistry for agent config paths and supports JSONC config files.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use crate::config::scanner::ConfigMap;
 use crate::platform;
+use crate::provider::ProviderRegistry;
 
 /// A single MCP server entry.
 #[derive(Debug, Clone)]
@@ -45,50 +49,35 @@ pub struct ZenixMcpServer {
     pub enabled_agents: Vec<String>,
 }
 
-// ── Per-agent config paths ───────────────────────────────────────────
+// ── Per-agent config paths (delegated to ProviderRegistry) ──────────
 
-/// Returns (agent_name, path) for agents that use Claude-format JSON MCP configs.
+/// Returns (agent_name, mcp_config_path) for agents that use Claude-format JSON MCP configs.
 fn claude_format_configs() -> Vec<(String, PathBuf)> {
-    let mut out = Vec::new();
-
-    // Claude
-    if let Some(dir) = platform::env_or_home("CLAUDE_CONFIG_DIR", "~/.claude") {
-        out.push(("claude".into(), dir.join("claude_desktop_config.json")));
-    }
-    // OpenCode
-    out.push(("opencode".into(), platform::opencode_config_dir().join("config.json")));
-    // Pi
-    if let Some(dir) = platform::env_or_home("PI_CODING_AGENT_DIR", "~/.pi-coding-agent") {
-        out.push(("pi".into(), dir.join("config.json")));
-    }
-    // Codex
-    if let Some(dir) = platform::env_or_home("CODEX_HOME", "~/.codex") {
-        out.push(("codex".into(), dir.join("config.json")));
-    }
-    // OMP
-    out.push(("omp".into(), platform::omp_config_dir().join("config.json")));
-    // Kilo
-    out.push(("kilo".into(), platform::kilo_config_dir().join("config.json")));
-    // Hermes
-    out.push(("hermes".into(), platform::hermes_config_dir().join("config.json")));
-
-    out
+    let registry = ProviderRegistry::builtin();
+    registry.mcp_supporting()
+        .into_iter()
+        .filter_map(|prov| {
+            let path = prov.mcp_config_path()?;
+            Some((prov.name.to_string(), path))
+        })
+        .collect()
 }
 
-// ── JSON read/write ──────────────────────────────────────────────────
+/// Agents that use Claude-format MCP configs (names only).
+pub fn claude_format_agent_names() -> Vec<String> {
+    ProviderRegistry::builtin().mcp_agent_names()
+}
 
-/// Parse MCP servers from a Claude-format JSON config.
+// ── JSON read/write (now using JSONC-aware ConfigMap) ────────────────
+
+/// Parse MCP servers from a Claude-format JSON/JSONC config.
 fn read_claude_mcp(path: &PathBuf) -> Vec<McpServerEntry> {
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
+    let map = match ConfigMap::load(path) {
+        Ok(m) => m,
         Err(_) => return vec![],
     };
-    let root: serde_json::Value = match serde_json::from_str(&content) {
-        Ok(v) => v,
-        Err(_) => return vec![],
-    };
-    let servers = match root.get("mcpServers") {
-        Some(serde_json::Value::Object(map)) => map,
+    let servers = match map.get(&["mcpServers"]) {
+        Some(serde_json::Value::Object(obj)) => obj,
         _ => return vec![],
     };
 
@@ -108,14 +97,12 @@ fn read_claude_mcp(path: &PathBuf) -> Vec<McpServerEntry> {
 }
 
 /// Write MCP servers to a Claude-format JSON config, preserving all other fields.
+/// Backs up the original file before writing.
 fn write_claude_mcp(path: &PathBuf, servers: &[McpServerEntry]) -> Result<(), String> {
-    // Read existing config
-    let content = std::fs::read_to_string(path).unwrap_or_else(|_| "{}".into());
-    let mut root: serde_json::Value = serde_json::from_str(&content)
-        .unwrap_or(serde_json::Value::Object(Default::default()));
+    let mut map = ConfigMap::load(path)?;
 
     // Build servers object
-    let mut map = serde_json::Map::new();
+    let mut servers_map = serde_json::Map::new();
     for s in servers {
         let mut entry = serde_json::Map::new();
         entry.insert("command".into(), serde_json::Value::String(s.command.clone()));
@@ -131,24 +118,14 @@ fn write_claude_mcp(path: &PathBuf, servers: &[McpServerEntry]) -> Result<(), St
         if s.disabled {
             entry.insert("disabled".into(), serde_json::Value::Bool(true));
         }
-        map.insert(s.name.clone(), serde_json::Value::Object(entry));
+        servers_map.insert(s.name.clone(), serde_json::Value::Object(entry));
     }
-    root["mcpServers"] = serde_json::Value::Object(map);
-
-    // Backup
-    let bak_path = path.with_extension("json.zenix.bak");
-    let _ = std::fs::copy(path, &bak_path);
-
-    // Write
-    let pretty = serde_json::to_string_pretty(&root)
-        .map_err(|e| format!("serialize error: {e}"))?;
-    std::fs::write(path, pretty).map_err(|e| format!("write error: {e}"))?;
-
-    Ok(())
+    map.upsert(&["mcpServers"], serde_json::Value::Object(servers_map));
+    map.save()
 }
 
-#[allow(dead_code)]
 // ── Public API ───────────────────────────────────────────────────────
+
 /// Scan all agents and return discovered MCP servers.
 /// Returns Vec<(agent_name, Vec<McpServerEntry>)>.
 pub fn scan_all_mcp_servers() -> Vec<(String, Vec<McpServerEntry>)> {
@@ -168,7 +145,6 @@ pub fn scan_all_mcp_servers() -> Vec<(String, Vec<McpServerEntry>)> {
         .collect()
 }
 
-#[allow(dead_code)]
 /// Deduplicate servers by name+command across agents.
 /// Returns a unified list with agent badges.
 pub fn deduplicated_servers(raw: &[(String, Vec<McpServerEntry>)]) -> Vec<UnifiedServer> {
@@ -213,7 +189,6 @@ pub struct UnifiedServer {
     pub disabled_agents: Vec<String>,
 }
 
-#[allow(dead_code)]
 /// Write an MCP server to selected agents' configs.
 pub fn save_mcp_server(
     server: &UnifiedServer,
@@ -231,7 +206,6 @@ pub fn save_mcp_server(
         if !target_agents.contains(&agent) && !server.agents.contains(&agent) {
             continue;
         }
-        // Read current, upsert the entry, write back
         let mut current = read_claude_mcp(&path);
         current.retain(|s| s.name != server.name);
         if target_agents.contains(&agent) || server.agents.contains(&agent) {
@@ -242,7 +216,6 @@ pub fn save_mcp_server(
     Ok(())
 }
 
-#[allow(dead_code)]
 /// Remove an MCP server from all agents.
 pub fn remove_mcp_server(name: &str) -> Result<(), String> {
     for (_agent, path) in claude_format_configs() {
@@ -257,13 +230,11 @@ pub fn remove_mcp_server(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[allow(dead_code)]
 /// Return only the agent names that use Claude-format configs.
 pub fn claude_format_config_names() -> Vec<String> {
     claude_format_configs().into_iter().map(|(name, _)| name).collect()
 }
 
-#[allow(dead_code)]
 /// Toggle a server's `disabled` field for a specific agent.
 pub fn toggle_mcp_agent(
     server_name: &str,
@@ -352,7 +323,6 @@ pub fn scan_per_agent_mcp() -> Vec<(String, Vec<McpServerEntry>)> {
         .collect()
 }
 
-#[allow(dead_code)]
 /// Read the raw JSON content of a specific agent's MCP config file.
 pub fn read_agent_mcp_json(agent_name: &str) -> Option<String> {
     let path = claude_format_configs().into_iter()
@@ -463,8 +433,4 @@ pub fn sync_zenix_server_to_agent(server: &ZenixMcpServer, agent_name: &str, ena
     }
 
     write_claude_mcp(&config_path, &entries)
-}
-
-pub fn claude_format_agent_names() -> Vec<String> {
-    claude_format_configs().into_iter().map(|(name, _)| name).collect()
 }

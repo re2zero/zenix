@@ -7,8 +7,10 @@ rust_i18n::i18n!("locales");
 
 pub mod i18n;
 pub mod agent;
+pub mod api_provider;
 pub mod mcp;
 pub mod platform;
+pub mod provider;
 pub mod skills;
 
 pub mod app;
