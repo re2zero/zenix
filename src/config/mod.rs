@@ -15,6 +15,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 fn default_terminal_font_size() -> f32 { 14.0 }
+fn default_font_family() -> String { "Lilex".into() }
 fn default_dark_theme_name() -> String { "system".into() }
 fn default_locale() -> String { "en".into() }
 
@@ -22,6 +23,8 @@ fn default_locale() -> String { "en".into() }
 pub struct ConfigFile {
     #[serde(default = "default_terminal_font_size")]
     pub terminal_font_size: f32,
+    #[serde(default = "default_font_family")]
+    pub font_family: String,
     #[serde(default)]
     pub theme_name: String,
     #[serde(default = "default_dark_theme_name")]
@@ -38,6 +41,7 @@ impl Default for ConfigFile {
     fn default() -> Self {
         Self {
             terminal_font_size: default_terminal_font_size(),
+            font_family: default_font_family(),
             theme_name: String::new(),
             dark_theme_name: default_dark_theme_name(),
             locale: default_locale(),
@@ -76,6 +80,14 @@ impl ConfigStore {
 
     pub fn set_terminal_font_size(&mut self, size: f32) {
         self.data.terminal_font_size = size;
+    }
+
+    pub fn font_family(&self) -> &str {
+        &self.data.font_family
+    }
+
+    pub fn set_font_family(&mut self, family: String) {
+        self.data.font_family = family;
     }
 
     pub fn dark_theme_name(&self) -> &str {

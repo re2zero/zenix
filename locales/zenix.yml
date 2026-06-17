@@ -71,9 +71,18 @@ settings:
     theme:
       en: "Theme"
       zh-CN: "主题"
+    font:
+      en: "Font"
+      zh-CN: "字体"
     font_size:
       en: "Font size"
       zh-CN: "字体大小"
+    font_family:
+      en: "Font family"
+      zh-CN: "字体"
+    change_font:
+      en: "Change"
+      zh-CN: "更改"
     active:
       en: "Active"
       zh-CN: "当前"

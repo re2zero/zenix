@@ -12,6 +12,8 @@ use gpui_component::{
     ActiveTheme as _, ElementExt, Theme, ThemeRegistry,
     button::{Button, ButtonVariants},
     h_flex, v_flex,
+    select::SelectState,
+    searchable_list::SearchableVec,
 };
 
 use crate::{
@@ -29,7 +31,6 @@ use crate::{
 };
 use crate::i18n::t;
 
-const FONT_FAMILY: &str = "Lilex";
 const MAX_CONNECT_ATTEMPTS: usize = 200;
 const FONT_SIZE_MIN: f32 = 8.0;
 const FONT_SIZE_MAX: f32 = 24.0;
@@ -62,6 +63,8 @@ pub struct ZenixApp {
     mcp_available_agents: Vec<String>,
     dialog_input: Option<gpui::Entity<gpui_component::input::InputState>>,
     dialog_input_mode: InputDialogMode,
+    font_names: Vec<String>,
+    font_select: Option<gpui::Entity<FontSelect>>,
     api_providers: Vec<ApiProviderConfig>,
     api_provider_form: Option<ApiProviderFormState>,
     sysinfo_polling: bool,
@@ -73,6 +76,8 @@ pub struct ZenixApp {
     last_selection_cell: Option<(usize, usize)>,
     ime_state: Option<ImeState>,
 }
+type FontSelect = SelectState<SearchableVec<String>>;
+
 fn write_to_pty(backend: &Option<BackendTx>, tab: &mut Option<TerminalTab>, bytes: Vec<u8>) {
     if let Some(backend) = backend {
         if let Some(tab) = tab
@@ -112,6 +117,8 @@ impl ZenixApp {
             mcp_available_agents: crate::mcp::claude_format_agent_names(),
             dialog_input: None,
             dialog_input_mode: InputDialogMode::Hidden,
+            font_names: Vec::new(),
+            font_select: None,
             api_providers: Vec::new(),
             api_provider_form: None,
             sysinfo_polling: false,
@@ -232,8 +239,9 @@ impl ZenixApp {
         if let Some(config) = config {
             let theme = Theme::global_mut(cx);
             theme.apply_config(&config);
-            // Force embedded Lilex font — theme configs may override font_family.
-            theme.font_family = "Lilex".into();
+            // Force config font — theme configs may override font_family.
+            let font_family = self.config.font_family().to_string();
+            theme.font_family = font_family.into();
             window.refresh();
             self.config.set_theme_name(name.to_string());
             if let Err(e) = self.config.save() {
@@ -535,7 +543,7 @@ impl Render for ZenixApp {
 
         // Cell metrics from font, line height = Zed Standard (1.3x)
         let text_system = window.text_system();
-        let font = gpui::Font { family: FONT_FAMILY.into(), ..gpui::Font::default() };
+        let font = gpui::Font { family: self.config.font_family().into(), ..gpui::Font::default() };
         let font_id = text_system.resolve_font(&font);
         let cw_px = text_system.advance(font_id, fs_px, 'm').map(|s| s.width).unwrap_or(fs_px * 0.6);
         let ascent = text_system.ascent(font_id, fs_px);
@@ -613,7 +621,7 @@ impl Render for ZenixApp {
             this.toggle_panel(Panel::SystemInfo);
             cx.notify();
         }));
-        let settings_cb: sidebar::ThemeCallback = Box::new(cx.listener(|this, _: &ClickEvent, _window, cx| {
+        let settings_cb: sidebar::ThemeCallback = Box::new(cx.listener(|this, _: &ClickEvent, window, cx| {
             // Lazy-init on first open
             if this.agent_statuses.is_empty() {
                 this.agent_statuses = crate::agent::detect_all_agents();
@@ -627,6 +635,35 @@ impl Render for ZenixApp {
             }
             if this.api_providers.is_empty() {
                 this.api_providers = crate::api_provider::load_all();
+            }
+            if this.font_select.is_none() {
+                let mut all = window.text_system().all_font_names();
+                let embedded = "Lilex".to_string();
+                all.retain(|n| n != &embedded && !n.starts_with('.'));
+                let mut names = vec![embedded];
+                names.extend(all);
+                this.font_names = names;
+
+                // Find current font index
+                let current = this.config.font_family().to_string();
+                let selected_idx = this.font_names.iter().position(|n| *n == current)
+                    .map(|i| gpui_component::IndexPath::new(i));
+                let delegate = gpui_component::searchable_list::SearchableVec::new(this.font_names.clone());
+                let font_select = cx.new(|cx| {
+                    FontSelect::new(delegate, selected_idx, window, cx)
+                        .searchable(true)
+                });
+                // Subscribe to font selection confirm
+                cx.subscribe_in(&font_select, window, |this, _font_sel, event: &gpui_component::select::SelectEvent<gpui_component::searchable_list::SearchableVec<String>>, _window, cx| {
+                    if let gpui_component::select::SelectEvent::Confirm(Some(font_name)) = event {
+                        this.config.set_font_family(font_name.clone());
+                        let _ = this.config.save();
+                        let theme = gpui_component::Theme::global_mut(cx);
+                        theme.font_family = font_name.into();
+                    }
+                    cx.notify();
+                }).detach();
+                this.font_select = Some(font_select);
             }
             this.show_settings = !this.show_settings;
             cx.notify();
@@ -660,7 +697,7 @@ impl Render for ZenixApp {
                         view.update(cx, |this, _| { this.terminal_bounds = Some(bounds); });
                     }
                 })
-                .child(TerminalElement::new(snapshot, app_entity, focus2, FONT_FAMILY, px(fs), lh_px, cw_px, self.terminal_ascent, self.terminal_descent, ime))
+                .child(TerminalElement::new(snapshot, app_entity, focus2, self.config.font_family(), px(fs), lh_px, cw_px, self.terminal_ascent, self.terminal_descent, ime))
                 .into_any_element()
             },
             _ => v_flex()
@@ -682,7 +719,7 @@ impl Render for ZenixApp {
             .size_full()
             .bg(theme.background)
             .text_color(theme.foreground)
-            .font_family(FONT_FAMILY)
+            .font_family(self.config.font_family())
             .track_focus(&focus)
             .on_key_down(cx.listener(Self::on_key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
@@ -1234,6 +1271,7 @@ impl Render for ZenixApp {
 
             let api_ref = &self.api_providers;
             let api_form_ref = self.api_provider_form.as_ref();
+            let font_select_ref = self.font_select.as_ref();
 
             div().size_full()
                 .child(main_ui)
@@ -1255,6 +1293,7 @@ impl Render for ZenixApp {
                         self.dialog_input.as_ref(), &self.dialog_input_mode,
                         on_skill_action, on_mcp_action, on_cli_action,
                         api_ref, api_form_ref, on_api_action,
+                        font_select_ref,
                         f32::from(w), f32::from(h),
                     )
                 )

@@ -11,6 +11,8 @@ use gpui_component::{
     button::{Button, ButtonVariants as _},
     h_flex, scroll::ScrollableElement as _, v_flex,
     input::Input,
+    select::{Select, SelectState},
+    searchable_list::SearchableVec,
 };
 use crate::agent::{AgentCliInfo, AgentCliStatus};
 use crate::api_provider::{ApiFormat, ApiProviderConfig, ThinkingLevel};
@@ -142,6 +144,7 @@ pub fn settings_dialog(
     api_providers: &[ApiProviderConfig],
     api_provider_form: Option<&ApiProviderFormState>,
     on_api_action: ActionCb<ApiProviderAction>,
+    font_select: Option<&gpui::Entity<SelectState<SearchableVec<String>>>>,
     win_w: f32,
     win_h: f32,
 ) -> impl IntoElement {
@@ -183,7 +186,6 @@ pub fn settings_dialog(
                 .border_1().border_color(gpui::rgba(0x45475aff))
                 .rounded_lg().shadow_lg()
                 .flex().flex_col()
-                .font_family("Lilex")
                 .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 // Header
                 .child(
@@ -208,7 +210,8 @@ pub fn settings_dialog(
                                     agents, mcp_zenix_servers, mcp_per_agent, mcp_form,
                                     mcp_available_agents, skills, skill_dialog_input, skill_dialog_mode,
                                     &osa, &oma, &oca,
-                                    api_providers, api_provider_form, &oaa))
+                                    api_providers, api_provider_form, &oaa,
+                                    font_select))
                         )
                 )
         )
@@ -248,10 +251,11 @@ fn tab_content(
     api_providers: &[ApiProviderConfig],
     api_provider_form: Option<&ApiProviderFormState>,
     on_api_action: &SharedActionCb<ApiProviderAction>,
+    font_select: Option<&gpui::Entity<SelectState<SearchableVec<String>>>>,
 ) -> AnyElement {
     match active_tab {
         0 => tab_general(locale, on_locale_change).into_any_element(),
-        1 => tab_appearance(font_size, current_theme_name, theme_buttons, on_font_down, on_font_up).into_any_element(),
+        1 => tab_appearance(font_size, current_theme_name, theme_buttons, on_font_down, on_font_up, font_select).into_any_element(),
         2 => tab_terminal().into_any_element(),
         3 => tab_agent_cli(agents, on_cli_action).into_any_element(),
         4 => {
@@ -284,7 +288,11 @@ fn locale_btn(code: &str, label: &str, current: &str, on_change: SharedActionCb<
 
 // ── Appearance ───────────────────────────────────────────────────────
 
-fn tab_appearance(font_size: f32, _current_theme_name: &str, theme_buttons: Vec<AnyElement>, on_font_down: ThemeCallback, on_font_up: ThemeCallback) -> impl IntoElement {
+fn tab_appearance(
+    font_size: f32, _current_theme_name: &str, theme_buttons: Vec<AnyElement>,
+    on_font_down: ThemeCallback, on_font_up: ThemeCallback,
+    font_select: Option<&gpui::Entity<SelectState<SearchableVec<String>>>>,
+) -> impl IntoElement {
     let mid = theme_buttons.len().div_ceil(2);
     let mut iter = theme_buttons.into_iter();
     let col1: Vec<_> = iter.by_ref().take(mid).collect();
@@ -295,11 +303,15 @@ fn tab_appearance(font_size: f32, _current_theme_name: &str, theme_buttons: Vec<
         .child(h_flex().gap(px(8.))
             .child(v_flex().flex_grow(1.0).gap(px(4.)).children(col1))
             .child(v_flex().flex_grow(1.0).gap(px(4.)).children(col2)))
-        .child(setting_row(t("settings.appearance.font_size"),
+        .child(setting_row(t("settings.appearance.font"),
             h_flex().gap(px(8.)).items_center()
                 .child(Button::new("f-dn").ghost().label("\u{2212}").on_click(on_font_down))
                 .child(txt(px(15.)).w(px(44.)).text_center().child(format!("{:.0}px", font_size)))
-                .child(Button::new("f-up").ghost().label("+").on_click(on_font_up))))
+                .child(Button::new("f-up").ghost().label("+").on_click(on_font_up))
+                .child(
+                    font_select.map(|sel| Select::new(sel).w(px(220.)).into_any_element())
+                        .unwrap_or_else(|| div().w(px(220.)).child(t("settings.appearance.change_font")).into_any_element())
+                )))
 }
 
 // ── Terminal ─────────────────────────────────────────────────────────
@@ -307,7 +319,6 @@ fn tab_appearance(font_size: f32, _current_theme_name: &str, theme_buttons: Vec<
 fn tab_terminal() -> impl IntoElement {
     v_flex().gap(px(12.))
         .child(setting_group_header(t("settings.terminal.title")))
-        .child(setting_row(t("settings.terminal.font_family"), txt(px(12.)).child("Lilex")))
         .child(setting_row(t("settings.terminal.cursor_style"), txt(px(12.)).child(t("settings.terminal.cursor_block"))))
         .child(setting_row(t("settings.terminal.opacity"), txt(px(12.)).child("100%")))
 }

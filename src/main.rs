@@ -103,9 +103,10 @@ fn open_main_window(cx: &mut App) {
                 Theme::global_mut(cx).apply_config(&tc);
             }
         }
-        // Force embedded Lilex font after all theme applications.
+        // Force embedded font after all theme applications.
+        let font_family = config.font_family().to_string();
         let theme = Theme::global_mut(cx);
-        theme.font_family = "Lilex".into();
+        theme.font_family = font_family.into();
 
         let view = cx.new(|cx| ZenixApp::new(window, cx, config));
         cx.new(|cx| Root::new(view, window, cx))
@@ -129,7 +130,7 @@ fn main() {
         load_embedded_themes(cx);
         load_embedded_fonts(cx);
 
-        // Override gpui_component's default font family with embedded Lilex.
+        // Override gpui_component's default font family with embedded font.
         let theme = Theme::global_mut(cx);
         theme.font_family = "Lilex".into();
 
