@@ -397,6 +397,51 @@ pub fn toggle_zenix_mcp_agent(server_name: &str, agent_name: &str) -> Result<(),
     Ok(())
 }
 
+/// Test connectivity of a Zenix-managed MCP server.
+pub fn test_mcp_server(server: &ZenixMcpServer) -> Result<String, String> {
+    match server.mcp_type {
+        McpType::Stdio => {
+            let mut child = std::process::Command::new(&server.command)
+                .args(&server.args)
+                .envs(&server.env)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .spawn()
+                .map_err(|e| format!("Failed to spawn: {e}"))?;
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    // Process exited — likely an error
+                    Err(format!("Failed to start: exited with {status}"))
+                }
+                Ok(None) => {
+                    // Still running — good sign
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    Ok("OK: server started and running".into())
+                }
+                Err(e) => Err(format!("Wait failed: {e}")),
+            }
+        }
+        McpType::Sse => {
+            match ureq::get(&server.command)
+                .timeout(std::time::Duration::from_secs(5))
+                .call()
+            {
+                Ok(resp) => {
+                    let status = resp.status();
+                    if status == 200 {
+                        Ok("OK: SSE endpoint accessible".into())
+                    } else {
+                        Err(format!("HTTP {status}: unexpected response"))
+                    }
+                }
+                Err(e) => Err(format!("Connection failed: {e}")),
+            }
+        }
+    }
+}
+
 pub fn sync_zenix_server_to_agent(server: &ZenixMcpServer, agent_name: &str, enable: bool) -> Result<(), String> {
     let config_path = claude_format_configs().into_iter()
         .find(|(name, _)| name == agent_name)

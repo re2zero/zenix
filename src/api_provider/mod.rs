@@ -54,6 +54,15 @@ impl ThinkingLevel {
 
 // ── API Format ──────────────────────────────────────────────────────
 
+/// A preset API provider configuration.
+#[derive(Debug, Clone)]
+pub struct ProviderPreset {
+    pub name: &'static str,
+    pub base_url: &'static str,
+    pub suffix: &'static str,
+    pub format: ApiFormat,
+}
+
 /// Supported API format families.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ApiFormat {
@@ -95,6 +104,23 @@ impl ApiFormat {
         match self {
             ApiFormat::OpenAI => "OpenAI",
             ApiFormat::Anthropic => "Anthropic",
+        }
+    }
+
+    /// All preset providers for this format.
+    pub fn presets(&self) -> Vec<ProviderPreset> {
+        match self {
+            ApiFormat::OpenAI => vec![
+                ProviderPreset { name: "OpenAI", base_url: "https://api.openai.com/v1", suffix: "/v1/chat/completions", format: ApiFormat::OpenAI },
+                ProviderPreset { name: "Groq", base_url: "https://api.groq.com/openai/v1", suffix: "/v1/chat/completions", format: ApiFormat::OpenAI },
+                ProviderPreset { name: "DeepSeek", base_url: "https://api.deepseek.com/v1", suffix: "/v1/chat/completions", format: ApiFormat::OpenAI },
+                ProviderPreset { name: "Together", base_url: "https://api.together.xyz/v1", suffix: "/v1/chat/completions", format: ApiFormat::OpenAI },
+                ProviderPreset { name: "OpenRouter", base_url: "https://openrouter.ai/api/v1", suffix: "/v1/chat/completions", format: ApiFormat::OpenAI },
+                ProviderPreset { name: "Ollama", base_url: "http://localhost:11434/v1", suffix: "/v1/chat/completions", format: ApiFormat::OpenAI },
+            ],
+            ApiFormat::Anthropic => vec![
+                ProviderPreset { name: "Anthropic", base_url: "https://api.anthropic.com/v1", suffix: "/v1/messages", format: ApiFormat::Anthropic },
+            ],
         }
     }
 }
@@ -361,6 +387,28 @@ pub fn remove(name: &str) -> Result<(), String> {
         return Err(format!("provider '{name}' not found"));
     }
     save_all(&all)
+}
+
+/// Test connection to an API provider endpoint.
+pub fn test_connection(config: &ApiProviderConfig) -> Result<String, String> {
+    use std::time::Duration;
+    let url = config.models_url();
+    match ureq::get(&url)
+        .set("Authorization", &format!("Bearer {}", config.api_key))
+        .set("Content-Type", "application/json")
+        .timeout(Duration::from_secs(10))
+        .call()
+    {
+        Ok(resp) => {
+            let status = resp.status();
+            if status == 200 || status == 401 || status == 403 || status == 400 {
+                Ok(format!("OK: endpoint reachable (HTTP {status})"))
+            } else {
+                Err(format!("HTTP {status}: unexpected response"))
+            }
+        }
+        Err(e) => Err(format!("Connection failed: {e}")),
+    }
 }
 
 // ── Model fetching ───────────────────────────────────────────────────

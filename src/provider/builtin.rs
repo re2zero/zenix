@@ -2,7 +2,7 @@
 //!
 //! Each provider declares its name, binary names for PATH detection,
 //! config directory resolver, and which capabilities it supports
-//! (MCP config, skills directory, herdr hooks).
+//! (MCP config, skills directory).
 
 use crate::platform;
 use super::Provider;
@@ -17,9 +17,6 @@ pub fn all_providers() -> Vec<Provider> {
             config_dir: || platform::env_or_home("CLAUDE_CONFIG_DIR", "~/.claude"),
             mcp_config_file: Some("claude_desktop_config.json"),
             skills_dir: Some("skills"),
-            hook_dir: Some("hooks"),
-            hook_filename: Some("herdr-agent-state.sh"),
-            expected_hook_version: Some(5),
         },
         Provider {
             name: "codex",
@@ -28,9 +25,6 @@ pub fn all_providers() -> Vec<Provider> {
             config_dir: || platform::env_or_home("CODEX_HOME", "~/.codex"),
             mcp_config_file: Some("config.json"),
             skills_dir: Some("skills"),
-            hook_dir: Some("hooks"),
-            hook_filename: Some("herdr-agent-state.sh"),
-            expected_hook_version: Some(5),
         },
         Provider {
             name: "opencode",
@@ -39,9 +33,6 @@ pub fn all_providers() -> Vec<Provider> {
             config_dir: || Some(platform::opencode_config_dir()),
             mcp_config_file: Some("config.json"),
             skills_dir: Some("skills"),
-            hook_dir: Some("plugins"),
-            hook_filename: Some("herdr-agent-state.js"),
-            expected_hook_version: Some(5),
         },
         Provider {
             name: "pi",
@@ -50,9 +41,6 @@ pub fn all_providers() -> Vec<Provider> {
             config_dir: || platform::env_or_home("PI_CODING_AGENT_DIR", "~/.pi-coding-agent"),
             mcp_config_file: Some("config.json"),
             skills_dir: Some("skills"),
-            hook_dir: Some("extensions"),
-            hook_filename: Some("herdr-agent-state.ts"),
-            expected_hook_version: Some(2),
         },
         Provider {
             name: "omp",
@@ -61,9 +49,6 @@ pub fn all_providers() -> Vec<Provider> {
             config_dir: || Some(platform::omp_config_dir()),
             mcp_config_file: Some("config.json"),
             skills_dir: Some("skills"),
-            hook_dir: Some("extensions"),
-            hook_filename: Some("herdr-omp-agent-state.ts"),
-            expected_hook_version: Some(2),
         },
         Provider {
             name: "copilot",
@@ -72,9 +57,6 @@ pub fn all_providers() -> Vec<Provider> {
             config_dir: || platform::env_or_home("COPILOT_HOME", "~/.copilot"),
             mcp_config_file: None,
             skills_dir: None,
-            hook_dir: Some("hooks"),
-            hook_filename: Some("herdr-agent-state.sh"),
-            expected_hook_version: Some(2),
         },
         Provider {
             name: "droid",
@@ -83,9 +65,6 @@ pub fn all_providers() -> Vec<Provider> {
             config_dir: || Some(platform::home_dir().join(".factory")),
             mcp_config_file: None,
             skills_dir: None,
-            hook_dir: Some("hooks"),
-            hook_filename: Some("herdr-agent-state.sh"),
-            expected_hook_version: Some(2),
         },
         Provider {
             name: "kimi",
@@ -94,9 +73,6 @@ pub fn all_providers() -> Vec<Provider> {
             config_dir: || platform::env_or_home("KIMI_CODE_HOME", "~/.kimi-code"),
             mcp_config_file: None,
             skills_dir: None,
-            hook_dir: Some("hooks"),
-            hook_filename: Some("herdr-agent-state.sh"),
-            expected_hook_version: Some(3),
         },
         Provider {
             name: "kilo",
@@ -105,9 +81,6 @@ pub fn all_providers() -> Vec<Provider> {
             config_dir: || Some(platform::kilo_config_dir()),
             mcp_config_file: Some("config.json"),
             skills_dir: Some("skills"),
-            hook_dir: Some("plugin"),
-            hook_filename: Some("herdr-agent-state.js"),
-            expected_hook_version: Some(1),
         },
         Provider {
             name: "hermes",
@@ -116,9 +89,6 @@ pub fn all_providers() -> Vec<Provider> {
             config_dir: || Some(platform::hermes_config_dir()),
             mcp_config_file: Some("config.json"),
             skills_dir: Some("skills"),
-            hook_dir: Some("plugins/herdr-agent-state"),
-            hook_filename: Some("__init__.py"),
-            expected_hook_version: Some(2),
         },
         Provider {
             name: "qoder",
@@ -127,9 +97,6 @@ pub fn all_providers() -> Vec<Provider> {
             config_dir: || platform::env_or_home("QODER_CONFIG_DIR", "~/.qoder"),
             mcp_config_file: None,
             skills_dir: None,
-            hook_dir: Some("hooks"),
-            hook_filename: Some("herdr-agent-state.sh"),
-            expected_hook_version: Some(2),
         },
         Provider {
             name: "cursor",
@@ -138,9 +105,6 @@ pub fn all_providers() -> Vec<Provider> {
             config_dir: || platform::env_or_home("CURSOR_CONFIG_DIR", "~/.cursor"),
             mcp_config_file: None,
             skills_dir: None,
-            hook_dir: Some("hooks"),
-            hook_filename: Some("herdr-agent-state.sh"),
-            expected_hook_version: Some(1),
         },
     ]
 }

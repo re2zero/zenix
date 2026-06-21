@@ -20,7 +20,7 @@ use crate::{
     config::ConfigStore,
     client as herdr,
     ui::{self as sidebar, Panel},
-    ui::settings::{ActionCb, SkillAction, McpAction, CliAction, McpFormState, InputDialogMode, skill_agent_names,
+    ui::settings::{ActionCb, ExtensionSubTab, ToastMessage, ContextMenuState, PendingConfirm, SkillAction, McpAction, McpFormState, InputDialogMode, SettingsDialogProps, skill_agent_names,
         ApiProviderAction, ApiProviderFormState},
     api_provider::{ApiProviderConfig, ApiFormat, ThinkingLevel},
     sys::{self as system_info, CpuSamples, SystemInfo},
@@ -55,7 +55,9 @@ pub struct ZenixApp {
     sysinfo_cpu_sample: CpuSamples,
     show_settings: bool,
     active_settings_tab: usize,
+    active_extension_subtab: ExtensionSubTab,
     agent_statuses: Vec<crate::agent::AgentCliInfo>,
+    selected_agent: Option<usize>,
     mcp_zenix_servers: Vec<crate::mcp::ZenixMcpServer>,
     mcp_per_agent: Vec<(String, Vec<crate::mcp::McpServerEntry>)>,
     skills: std::collections::HashMap<String, crate::skills::SkillInfo>,
@@ -69,12 +71,31 @@ pub struct ZenixApp {
     api_provider_form: Option<ApiProviderFormState>,
     sysinfo_polling: bool,
     terminal_cell_width: Pixels,
+    mcp_test_results: std::collections::HashMap<String, String>,
+    api_test_results: std::collections::HashMap<String, String>,
+    agent_search: String,
+    agent_search_input: Option<gpui::Entity<gpui_component::input::InputState>>,
+    agent_installed_only: bool,
+    mcp_search: String,
+    mcp_search_input: Option<gpui::Entity<gpui_component::input::InputState>>,
+    api_search: String,
+    api_search_input: Option<gpui::Entity<gpui_component::input::InputState>>,
+    skill_search_input: Option<gpui::Entity<gpui_component::input::InputState>>,
+    active_skills_subtab: crate::ui::settings::SkillsSubTab,
+    skill_search: String,
+    terminal_cursor_blink: bool,
+    terminal_cursor_style: String,
+    terminal_opacity: f32,
+    terminal_scrollback: u32,
     terminal_line_height: Pixels,
     terminal_ascent: Pixels,
     terminal_descent: Pixels,
     last_mouse_cell: Option<(usize, usize)>,
     last_selection_cell: Option<(usize, usize)>,
     ime_state: Option<ImeState>,
+    toast: Option<ToastMessage>,
+    context_menu: Option<ContextMenuState>,
+    pending_confirm: Option<crate::ui::settings::PendingConfirm>,
 }
 type FontSelect = SelectState<SearchableVec<String>>;
 
@@ -109,9 +130,27 @@ impl ZenixApp {
             sysinfo_cpu_sample: CpuSamples::default(),
             show_settings: false,
             active_settings_tab: 0,
+            active_extension_subtab: ExtensionSubTab::Api,
             agent_statuses: Vec::new(),
+            selected_agent: None,
             mcp_zenix_servers: Vec::new(),
             mcp_per_agent: Vec::new(),
+            mcp_test_results: std::collections::HashMap::new(),
+            api_test_results: std::collections::HashMap::new(),
+            agent_search: String::new(),
+            agent_search_input: None,
+            agent_installed_only: false,
+            active_skills_subtab: crate::ui::settings::SkillsSubTab::Installed,
+            skill_search: String::new(),
+            mcp_search: String::new(),
+            mcp_search_input: None,
+            api_search: String::new(),
+            api_search_input: None,
+            skill_search_input: None,
+            terminal_cursor_blink: false,
+            terminal_cursor_style: "block".into(),
+            terminal_opacity: 1.0,
+            terminal_scrollback: 1000,
             skills: std::collections::HashMap::new(),
             mcp_form: None,
             mcp_available_agents: crate::mcp::claude_format_agent_names(),
@@ -128,6 +167,9 @@ impl ZenixApp {
             terminal_descent: px(14.0 * 0.2),
             last_mouse_cell: None, last_selection_cell: None,
             ime_state: None,
+            toast: None,
+            context_menu: None,
+            pending_confirm: None,
         }
     }
 
@@ -518,6 +560,21 @@ impl ZenixApp {
         self.mcp_per_agent = crate::mcp::scan_per_agent_mcp();
         cx.notify();
     }
+
+    fn create_agent_search_input(w: &mut Window, cx: &mut gpui::Context<Self>) -> gpui::Entity<gpui_component::input::InputState> {
+        let input = cx.new(|cx| {
+            gpui_component::input::InputState::new(w, cx)
+                .placeholder("Search agents...")
+        });
+        cx.subscribe(&input, |this: &mut ZenixApp, input_state, event: &gpui_component::input::InputEvent, cx| {
+            if let gpui_component::input::InputEvent::Change = event {
+                let val = input_state.read(cx).value().to_string();
+                this.agent_search = val;
+                cx.notify();
+            }
+        }).detach();
+        input
+    }
 }
 
 impl Render for ZenixApp {
@@ -784,6 +841,10 @@ impl Render for ZenixApp {
                                 this.skills = crate::skills::scan_all_skills();
                                 cx.notify();
                             }
+                            SkillAction::SetSubTab(sub) => {
+                                this.active_skills_subtab = sub;
+                                cx.notify();
+                            }
                             SkillAction::Link { skill_name } => {
                                 // Link to all supported agents
                                 for agent in &skill_agent_names() {
@@ -867,8 +928,7 @@ impl Render for ZenixApp {
                                 }
                             }
                             SkillAction::Remove { skill_name } => {
-                                let _ = crate::skills::remove_zenix_skill(&skill_name);
-                                this.skills = crate::skills::scan_all_skills();
+                                this.pending_confirm = Some(PendingConfirm::RemoveSkill(skill_name));
                                 cx.notify();
                             }
                         }
@@ -1047,8 +1107,8 @@ impl Render for ZenixApp {
                                 cx.notify();
                             }
                             McpAction::RemoveZenix { name } => {
-                                let _ = crate::mcp::remove_zenix_mcp_server(&name);
-                                this.refresh_mcp_data(cx);
+                                this.pending_confirm = Some(PendingConfirm::RemoveMcp(name));
+                                cx.notify();
                             }
                             McpAction::ToggleZenixAgent { server_name, agent } => {
                                 let _ = crate::mcp::toggle_zenix_mcp_agent(&server_name, &agent);
@@ -1062,30 +1122,27 @@ impl Render for ZenixApp {
                                 let _ = crate::mcp::toggle_mcp_server_for_agent(&name, &agent);
                                 this.refresh_mcp_data(cx);
                             }
+                            McpAction::TestServer { name } => {
+                                let server = this.mcp_zenix_servers.iter().find(|s| s.name == name).cloned();
+                                if let Some(srv) = server {
+                                    let result = match crate::mcp::test_mcp_server(&srv) {
+                                        Ok(msg) => format!("OK: {msg}"),
+                                        Err(e) => format!("ERR: {e}"),
+                                    };
+                                    this.mcp_test_results.insert(name.clone(), result);
+                                } else {
+                                    this.mcp_test_results.insert(name.clone(), "ERR: Server not found".into());
+                                }
+                                let toast_msg = this.mcp_test_results.get(&name).cloned().unwrap_or_default();
+                                let toast_type = if toast_msg.starts_with("OK:") { "success" } else { "error" };
+                                this.toast = Some(ToastMessage { text: toast_msg, msg_type: toast_type.into() });
+                                cx.notify();
+                            }
                         }
                     });
                 }
             });
 
-            let on_cli_action: ActionCb<CliAction> = Box::new({
-                let entity = entity.clone();
-                move |action: CliAction, _w: &mut Window, app: &mut gpui::App| {
-                    entity.update(app, |this: &mut ZenixApp, cx| {
-                        match action {
-                            CliAction::Install { name } => {
-                                let _ = crate::agent::hooks::install_hook(&name);
-                                this.agent_statuses = crate::agent::detect_all_agents();
-                                cx.notify();
-                            }
-                            CliAction::Update { name } => {
-                                let _ = crate::agent::hooks::install_hook(&name);
-                                this.agent_statuses = crate::agent::detect_all_agents();
-                                cx.notify();
-                            }
-                        }
-                    });
-                }
-            });
 
             let on_api_action: ActionCb<ApiProviderAction> = Box::new({
                 let entity = entity.clone();
@@ -1186,6 +1243,26 @@ impl Render for ZenixApp {
                                 }
                                 cx.notify();
                             }
+                            ApiProviderAction::ApplyPreset { preset } => {
+                                if let Some(form) = &mut this.api_provider_form {
+                                    if let Some(name_input) = &form.name {
+                                        name_input.update(cx, |state, cx| {
+                                            state.set_value(preset.name.to_string(), w, cx);
+                                        });
+                                    }
+                                    if let Some(url_input) = &form.base_url {
+                                        url_input.update(cx, |state, cx| {
+                                            state.set_value(preset.base_url.to_string(), w, cx);
+                                        });
+                                    }
+                                    if let Some(suffix_input) = &form.url_suffix {
+                                        suffix_input.update(cx, |state, cx| {
+                                            state.set_value(preset.suffix, w, cx);
+                                        });
+                                    }
+                                }
+                                cx.notify();
+                            }
                             ApiProviderAction::Edit { name } => {
                                 if let Some(cfg) = this.api_providers.iter().find(|p| p.name == name).cloned() {
                                     let name_input = cx.new(|cx| {
@@ -1223,18 +1300,14 @@ impl Render for ZenixApp {
                                 cx.notify();
                             }
                             ApiProviderAction::Remove { name } => {
-                                let _ = crate::api_provider::remove(&name);
-                                this.api_providers = crate::api_provider::load_all();
+                                this.pending_confirm = Some(PendingConfirm::RemoveApi(name));
                                 cx.notify();
                             }
                             ApiProviderAction::FetchModels { name } => {
-                                let cfg = this.api_providers.iter().find(|p| p.name == name).cloned();
-                                if let Some(cfg) = cfg {
-                                    // Run fetch in background
+                                if let Some(cfg) = this.api_providers.iter().find(|p| p.name == name).cloned() {
                                     let models = std::thread::spawn(move || {
                                         crate::api_provider::fetch_models(&cfg)
                                     }).join().unwrap_or_else(|_| Err("thread panic".into()));
-
                                     match models {
                                         Ok(list) => {
                                             if let Some(form) = &mut this.api_provider_form {
@@ -1264,6 +1337,22 @@ impl Render for ZenixApp {
                                 }
                                 cx.notify();
                             }
+                            ApiProviderAction::TestConnection { name } => {
+                                let cfg = this.api_providers.iter().find(|p| p.name == name).cloned();
+                                if let Some(config) = cfg {
+                                    let result = match crate::api_provider::test_connection(&config) {
+                                        Ok(msg) => format!("OK: {msg}"),
+                                        Err(e) => format!("ERR: {e}"),
+                                    };
+                                    this.api_test_results.insert(name.clone(), result);
+                                } else {
+                                    this.api_test_results.insert(name.clone(), "ERR: Provider not found".into());
+                                }
+                                let toast_msg = this.api_test_results.get(&name).cloned().unwrap_or_default();
+                                let toast_type = if toast_msg.starts_with("OK:") { "success" } else { "error" };
+                                this.toast = Some(ToastMessage { text: toast_msg, msg_type: toast_type.into() });
+                                cx.notify();
+                            }
                         }
                     });
                 }
@@ -1271,14 +1360,30 @@ impl Render for ZenixApp {
 
             let api_ref = &self.api_providers;
             let api_form_ref = self.api_provider_form.as_ref();
+
+            if self.agent_search_input.is_none() {
+                let input_state = Self::create_agent_search_input(window, cx);
+                self.agent_search_input = Some(input_state);
+            }
             let font_select_ref = self.font_select.as_ref();
 
             div().size_full()
                 .child(main_ui)
                 .child(
-                    super::ui::settings_dialog(
-                        tab, on_tab_change,
-                        {
+                    super::ui::settings_dialog(SettingsDialogProps {
+                        active_tab: tab,
+                        on_tab_change,
+                        on_extension_tab_change: Box::new({
+                            let entity = entity.clone();
+                            move |sub: ExtensionSubTab, _w: &mut Window, app: &mut gpui::App| {
+                                entity.update(app, |this: &mut ZenixApp, cx| {
+                                    this.active_extension_subtab = sub;
+                                    cx.notify();
+                                });
+                            }
+                        }),
+                        active_extension_subtab: self.active_extension_subtab,
+                        on_close: {
                             let entity = entity.clone();
                             Box::new(move |_w: &mut Window, app: &mut gpui::App| {
                                 entity.update(app, |this: &mut ZenixApp, cx| {
@@ -1286,16 +1391,139 @@ impl Render for ZenixApp {
                                 });
                             })
                         },
-                        fs, &cur_theme, tbs, font_down, font_up,
-                        &locale, on_locale_change,
-                        agents_ref, mcp_ref, mcp_per_agent_ref, mcp_form_ref, mcp_agents_ref,
-                        skills_ref,
-                        self.dialog_input.as_ref(), &self.dialog_input_mode,
-                        on_skill_action, on_mcp_action, on_cli_action,
-                        api_ref, api_form_ref, on_api_action,
-                        font_select_ref,
-                        f32::from(w), f32::from(h),
-                    )
+                        font_size: fs,
+                        current_theme_name: &cur_theme,
+                        theme_buttons: tbs,
+                        font_select: font_select_ref,
+                        on_font_down: font_down,
+                        on_font_up: font_up,
+                        locale: &locale,
+                        on_locale_change,
+                        agents: agents_ref,
+                        selected_agent: self.selected_agent,
+                        on_agent_select: Box::new({
+                            let entity = entity.clone();
+                            move |idx: Option<usize>, _w: &mut Window, app: &mut gpui::App| {
+                                entity.update(app, |this: &mut ZenixApp, cx| {
+                                    this.selected_agent = idx;
+                                    cx.notify();
+                                });
+                            }
+                        }),
+                        on_agent_refresh: Box::new({
+                            let entity = entity.clone();
+                            move |_v: (), _w: &mut Window, app: &mut gpui::App| {
+                                entity.update(app, |this: &mut ZenixApp, cx| {
+                                    this.agent_statuses = crate::agent::detect_all_agents();
+                                    cx.notify();
+                                });
+                            }
+                        }),
+                        mcp_servers: mcp_ref,
+                        mcp_test_results: &self.mcp_test_results,
+                        api_test_results: &self.api_test_results,
+                        agent_search: &self.agent_search,
+                        agent_search_input: self.agent_search_input.as_ref(),
+                        on_agent_toggle_installed: Box::new({
+                            let entity = entity.clone();
+                            move |_val: bool, _w: &mut Window, app: &mut gpui::App| {
+                                entity.update(app, |this: &mut ZenixApp, cx| {
+                                    this.agent_installed_only = !this.agent_installed_only;
+                                    cx.notify();
+                                });
+                            }
+                        }),
+                        agent_installed_only: self.agent_installed_only,
+                        active_skills_subtab: self.active_skills_subtab,
+                        skill_search: &self.skill_search,
+                        mcp_search: &self.mcp_search,
+                        mcp_search_input: self.mcp_search_input.as_ref(),
+                        api_search: &self.api_search,
+                        api_search_input: self.api_search_input.as_ref(),
+                        skill_search_input: self.skill_search_input.as_ref(),
+                        terminal_cursor_blink: self.terminal_cursor_blink,
+                        terminal_cursor_style: &self.terminal_cursor_style,
+                        terminal_opacity: self.terminal_opacity,
+                        terminal_scrollback: self.terminal_scrollback,
+                        on_terminal_action: Box::new({
+                            let entity = entity.clone();
+                            move |action: crate::ui::settings::TerminalAction, _w: &mut Window, app: &mut gpui::App| {
+                                entity.update(app, |this: &mut ZenixApp, cx| {
+                                    match action {
+                                        crate::ui::settings::TerminalAction::SetCursorStyle(s) => {
+                                            this.terminal_cursor_style = s;
+                                        }
+                                        crate::ui::settings::TerminalAction::ToggleCursorBlink => {
+                                            this.terminal_cursor_blink = !this.terminal_cursor_blink;
+                                        }
+                                        crate::ui::settings::TerminalAction::SetOpacity(op) => {
+                                            this.terminal_opacity = op;
+                                        }
+                                        crate::ui::settings::TerminalAction::SetScrollback(sb) => {
+                                            this.terminal_scrollback = sb;
+                                        }
+                                    }
+                                    cx.notify();
+                                });
+                            }
+                        }),
+                        mcp_per_agent: mcp_per_agent_ref,
+                        mcp_form: mcp_form_ref,
+                        mcp_available_agents: mcp_agents_ref,
+                        skills: skills_ref,
+                        skill_dialog_input: self.dialog_input.as_ref(),
+                        skill_dialog_mode: &self.dialog_input_mode,
+                        on_skill_action,
+                        on_mcp_action,
+                        api_providers: api_ref,
+                        api_form: api_form_ref,
+                        on_api_action,
+                        toast: self.toast.as_ref(),
+                        context_menu: self.context_menu.as_ref(),
+                        on_context_menu_dismiss: Box::new({
+                            let entity = entity.clone();
+                            move |_: (), _w: &mut Window, app: &mut gpui::App| {
+                                entity.update(app, |this: &mut ZenixApp, cx| {
+                                    this.context_menu = None;
+                                    cx.notify();
+                                });
+                            }
+                        }),
+                        pending_confirm: self.pending_confirm.as_ref(),
+                        on_confirm_action: Box::new({
+                            let entity = entity.clone();
+                            move |confirmed: bool, _w: &mut Window, app: &mut gpui::App| {
+                                entity.update(app, |this: &mut ZenixApp, cx| {
+                                    if confirmed {
+                                        if let Some(pc) = this.pending_confirm.take() {
+                                            match pc {
+                                                PendingConfirm::RemoveMcp(name) => {
+                                                    let _ = crate::mcp::remove_zenix_mcp_server(&name);
+                                                    this.refresh_mcp_data(cx);
+                                                    this.toast = Some(ToastMessage { text: format!("Removed {name}"), msg_type: "success".into() });
+                                                }
+                                                PendingConfirm::RemoveSkill(name) => {
+                                                    let _ = crate::skills::remove_zenix_skill(&name);
+                                                    this.skills = crate::skills::scan_all_skills();
+                                                    this.toast = Some(ToastMessage { text: format!("Removed {name}"), msg_type: "success".into() });
+                                                }
+                                                PendingConfirm::RemoveApi(name) => {
+                                                    let _ = crate::api_provider::remove(&name);
+                                                    this.api_providers = crate::api_provider::load_all();
+                                                    this.toast = Some(ToastMessage { text: format!("Removed {name}"), msg_type: "success".into() });
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        this.pending_confirm = None;
+                                    }
+                                    cx.notify();
+                                });
+                            }
+                        }),
+                        win_w: f32::from(w),
+                        win_h: f32::from(h),
+                    })
                 )
                 .into_any_element()
         } else {

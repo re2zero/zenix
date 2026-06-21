@@ -2,7 +2,7 @@
 //!
 //! A `Provider` describes an AI agent tool (Claude Code, Codex, Cursor, etc.)
 //! and its capabilities: where its config files live, whether it supports
-//! MCP servers, skills directories, and herdr integration hooks.
+//! MCP servers and skills directories.
 //!
 //! `ProviderRegistry` is the central registry. Use `ProviderRegistry::builtin()`
 //! to get the built-in list, then query by capability.
@@ -28,13 +28,6 @@ pub struct Provider {
     /// Skills directory name relative to config_dir (e.g. "skills").
     /// `None` means this provider doesn't support skill directories.
     pub skills_dir: Option<&'static str>,
-    /// Hook directory name relative to config_dir (e.g. "hooks").
-    /// `None` means this provider doesn't support herdr hooks.
-    pub hook_dir: Option<&'static str>,
-    /// Hook filename within the hook directory.
-    pub hook_filename: Option<&'static str>,
-    /// Expected version in the hook file (HERDR_INTEGRATION_VERSION).
-    pub expected_hook_version: Option<u32>,
 }
 
 impl Provider {
@@ -50,18 +43,6 @@ impl Provider {
         Some(dir.join(self.skills_dir?))
     }
 
-    /// Resolve the full hook directory path for this provider.
-    pub fn hook_dir_path(&self) -> Option<PathBuf> {
-        let dir = (self.config_dir)()?;
-        Some(dir.join(self.hook_dir?))
-    }
-
-    /// Resolve the full hook file path for this provider.
-    pub fn hook_path(&self) -> Option<PathBuf> {
-        let dir = self.hook_dir_path()?;
-        Some(dir.join(self.hook_filename?))
-    }
-
     /// Whether this provider uses the Claude-format JSON MCP config.
     pub fn supports_mcp(&self) -> bool {
         self.mcp_config_file.is_some()
@@ -70,11 +51,6 @@ impl Provider {
     /// Whether this provider supports skill directories.
     pub fn supports_skills(&self) -> bool {
         self.skills_dir.is_some()
-    }
-
-    /// Whether this provider supports herdr integration hooks.
-    pub fn supports_hooks(&self) -> bool {
-        self.hook_dir.is_some() && self.hook_filename.is_some()
     }
 }
 
@@ -131,7 +107,6 @@ impl ProviderRegistry {
         names.sort();
         names
     }
-
 }
 
 #[cfg(test)]
@@ -151,7 +126,6 @@ mod tests {
         assert_eq!(claude.display_name, "Claude Code");
         assert!(claude.supports_mcp());
         assert!(claude.supports_skills());
-        assert!(claude.supports_hooks());
     }
 
     #[test]

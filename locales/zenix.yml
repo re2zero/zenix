@@ -49,8 +49,8 @@ settings:
       en: "Terminal"
       zh-CN: "终端"
     agent_cli:
-      en: "Agent CLI"
-      zh-CN: "Agent CLI"
+      en: "Agent"
+      zh-CN: "智能体"
     mcp:
       en: "MCP"
       zh-CN: "MCP"
@@ -60,6 +60,9 @@ settings:
     api:
       en: "API"
       zh-CN: "API"
+    extensions:
+      en: "Extensions"
+      zh-CN: "扩展"
   general:
     language:
       en: "Language"
@@ -102,6 +105,185 @@ settings:
     cursor_block:
       en: "Block"
       zh-CN: "方块"
+    cursor_bar:
+      en: "Bar"
+      zh-CN: "竖线"
+    cursor_underline:
+      en: "Underline"
+      zh-CN: "下划线"
+    cursor_blink:
+      en: "Cursor blink"
+      zh-CN: "光标闪烁"
+    scrollback:
+      en: "Scrollback"
+      zh-CN: "回滚行数"
+    lines:
+      en: "lines"
+      zh-CN: "行"
+    blink_on:
+      en: "on"
+      zh-CN: "开"
+    blink_off:
+      en: "off"
+      zh-CN: "关"
+  agent_cli:
+    no_agent_selected:
+      en: "Select an agent to view details"
+      zh-CN: "选择一个 agent 查看详情"
+    binary_path:
+      en: "Binary"
+      zh-CN: "路径"
+    search_hint:
+      en: "Search agents..."
+      zh-CN: "搜索 agent..."
+    installed_only:
+      en: "Installed only"
+      zh-CN: "仅已安装"
+    search_placeholder:
+      en: "Search..."
+      zh-CN: "搜索..."
+    refresh:
+      en: "Refresh"
+      zh-CN: "刷新"
+    add_mcp_extensions:
+      en: "+ Add MCP → Extensions"
+      zh-CN: "+ 添加 MCP → 扩展"
+  no_api_providers:
+    en: "No API provider bound"
+    zh-CN: "未绑定 API 提供商"
+  mcp:
+    title:
+      en: "MCP Servers"
+      zh-CN: "MCP 服务器"
+    no_zenix_servers:
+      en: "No zenix-managed servers"
+      zh-CN: "没有 Zenix 管理的服务器"
+    search:
+      en: "Search servers..."
+      zh-CN: "搜索服务器..."
+    form:
+      name:
+        en: "Name"
+        zh-CN: "名称"
+      type:
+        en: "Type"
+        zh-CN: "类型"
+      command:
+        en: "Command"
+        zh-CN: "命令"
+      args:
+        en: "Args"
+        zh-CN: "参数"
+      env:
+        en: "Env"
+        zh-CN: "环境变量"
+      title_add:
+        en: "Add MCP Server"
+        zh-CN: "添加 MCP 服务器"
+      title_edit:
+        en: "Edit MCP Server"
+        zh-CN: "编辑 MCP 服务器"
+  api:
+    title:
+      en: "API Providers"
+      zh-CN: "API 提供商"
+    search:
+      en: "Search providers..."
+      zh-CN: "搜索提供商..."
+    no_providers:
+      en: "No API providers configured"
+      zh-CN: "未配置 API 提供商"
+    form:
+      name:
+        en: "Name"
+        zh-CN: "名称"
+      format:
+        en: "Format"
+        zh-CN: "格式"
+      preset:
+        en: "Preset"
+        zh-CN: "预设"
+      suffix:
+        en: "Suffix"
+        zh-CN: "后缀"
+      custom:
+        en: "Custom"
+        zh-CN: "自定义"
+      base_url:
+        en: "Base URL"
+        zh-CN: "基础 URL"
+      api_key:
+        en: "API Key"
+        zh-CN: "API 密钥"
+      think:
+        en: "Think"
+        zh-CN: "推理"
+      model:
+        en: "Model"
+        zh-CN: "模型"
+      title_add:
+        en: "Add API Provider"
+        zh-CN: "添加 API 提供商"
+      title_edit:
+        en: "Edit API Provider"
+        zh-CN: "编辑 API 提供商"
+      model_fetch_hint:
+        en: "Model: (fetch to populate)"
+        zh-CN: "模型：(点击获取以加载)"
+      models_available:
+        en: "{count} models available — select one below:"
+        zh-CN: "有 {count} 个模型可用 — 请从下方选择："
+  confirm:
+    delete_mcp:
+      en: 'Delete MCP server {name}?'
+      zh-CN: '删除 MCP 服务器 {name}？'
+    delete_skill:
+      en: 'Uninstall skill {name}?'
+      zh-CN: '卸载技能 {name}？'
+    delete_api:
+      en: 'Remove API provider {name}?'
+      zh-CN: '移除 API 提供商 {name}？'
+
+general:
+  "yes":
+    en: "Yes"
+    zh-CN: "是"
+  "no":
+    en: "No"
+    zh-CN: "否"
+  cancel:
+    en: "Cancel"
+    zh-CN: "取消"
+  edit:
+    en: "Edit"
+    zh-CN: "编辑"
+  test:
+    en: "Test"
+    zh-CN: "测试"
+  models:
+    en: "Models"
+    zh-CN: "模型"
+  remove:
+    en: "Remove"
+    zh-CN: "移除"
+  add:
+    en: "Add"
+    zh-CN: "添加"
+  update:
+    en: "Update"
+    zh-CN: "更新"
+  refresh:
+    en: "Refresh"
+    zh-CN: "刷新"
+  ok:
+    en: "OK"
+    zh-CN: "成功"
+  fail:
+    en: "Fail"
+    zh-CN: "失败"
+  search:
+    en: "Search..."
+    zh-CN: "搜索..."
 
 system:
   title:
@@ -248,3 +430,24 @@ skills:
   install_fail:
     en: "Install failed: %{err}"
     zh-CN: "安装失败: %{err}"
+  installed:
+    en: "Installed"
+    zh-CN: "已安装"
+  market:
+    en: "Market"
+    zh-CN: "市场"
+  no_installed:
+    en: "No skills installed"
+    zh-CN: "未安装技能"
+  market_description:
+    en: "Browse and install skills from community sources."
+    zh-CN: "浏览并安装社区来源的技能。"
+  search:
+    en: "Search skills..."
+    zh-CN: "搜索技能..."
+  dialog_git_url:
+    en: "Git URL"
+    zh-CN: "Git URL"
+  dialog_local_path:
+    en: "Local Path"
+    zh-CN: "本地路径"
