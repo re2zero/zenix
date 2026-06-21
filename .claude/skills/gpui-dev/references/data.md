@@ -2,6 +2,8 @@
 
 Reference for data display components (Table, List, Tree, VirtualList, DescriptionList, Settings) and chart/plot components in gpui-component.
 
+**Contents:** [IndexPath](#indexpath) · [Table](#table) · [List](#list) · [Tree](#tree) · [VirtualList](#virtuallist) · [DescriptionList](#descriptionlist) · [Settings](#settings) · [Charts](#charts) · [Plot Toolkit](#plot-toolkit)
+
 ---
 
 ## IndexPath

@@ -2,6 +2,8 @@
 
 > **Module path:** `crate::tab`, `crate::sidebar`, `crate::dock`, `crate::resizable`, `crate::scroll`
 
+**Contents:** [Tabs](#tabs) · [Sidebar](#sidebar) · [TitleBar](#titlebar) · [Breadcrumb & Pagination](#breadcrumb--pagination) · [Accordion & Collapsible](#accordion--collapsible) · [GroupBox](#groupbox) · [Resizable Panels](#resizable-panels) · [Scroll Components](#scroll-components) · [FocusTrap](#focustrap) · [Separator & StatusBar](#separator--statusbar) · [Dock System](#dock-system) · [Usage Patterns](#usage-patterns--best-practices)
+
 ---
 
 ## Tabs

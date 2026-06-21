@@ -2,6 +2,8 @@
 
 Comprehensive reference for gpui-component input, selection, and form components.
 
+**Contents:** [InputState](#inputstate) · [Input (Element)](#input-element) · [NumberInput](#numberinput) · [OtpInput](#otpinput) · [Select](#select) · [Combobox](#combobox) · [Checkbox](#checkbox) · [Switch](#switch) · [Radio](#radio) · [Slider](#slider) · [Toggle](#toggle) · [Rating](#rating) · [Stepper](#stepper) · [DatePicker](#datepicker) · [Form](#form)
+
 ---
 
 ## InputState

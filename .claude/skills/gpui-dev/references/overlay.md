@@ -2,6 +2,8 @@
 
 Overlay components render **above** the main window content. They require a `Root` view as the window root and explicit layer-render calls from your app's `Render`.
 
+**Contents:** [Root is Mandatory](#root-is-mandatory) · [WindowExt Trait](#windowext-trait) · [Dialog](#dialog) · [AlertDialog](#alertdialog) · [Sheet](#sheet) · [Notification](#notification) · [Popover](#popover) · [Menus](#menus)
+
 ## Root is Mandatory
 
 `Root` manages the lifecycle and stacking of sheets, dialogs, and notifications. Your top-level `Render` MUST include:

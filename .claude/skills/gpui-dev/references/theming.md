@@ -2,6 +2,8 @@
 
 The gpui-component library provides a comprehensive theming system based on a global `Theme` struct, a shadcn-inspired color palette, and a registry for loading custom themes from JSON files.
 
+**Contents:** [ActiveTheme Trait](#activetheme-trait) · [Theme Struct](#theme-struct) · [ThemeColor Struct](#themecolor-struct--full-field-reference) · [Colorize Trait](#colorize-trait) · [ThemeMode](#thememode) · [ThemeRegistry](#themeregistry) · [Custom Themes JSON](#creating-custom-themes--json-schema) · [Font Configuration](#font-configuration) · [i18n](#i18n)
+
 ---
 
 ## ActiveTheme Trait

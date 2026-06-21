@@ -4,6 +4,8 @@ This reference covers everything needed to bootstrap a GPUI application that use
 `gpui-component`: Cargo dependency setup, `init()` call, the `Root` view, asset
 integration, platform specifics, font/locale configuration, and common pitfalls.
 
+**Contents:** [Cargo.toml Setup](#1-cargotoml-setup) · [gpui_component::init](#2-gpui_componentinitcx--what-it-initializes) · [The Root Component](#3-the-root-component) · [Assets Integration](#4-gpui-component-assets-integration) · [Platform-Specific Notes](#5-platform-specific-notes) · [WindowOptions](#6-windowoptions-configuration) · [Font Setup](#7-font-setup) · [Locale Setup (i18n)](#8-locale-setup-i18n) · [Common Mistakes](#9-common-initialization-mistakes) · [Minimal Working Example](#10-minimal-working-example)
+
 ---
 
 ## 1. Cargo.toml Setup
