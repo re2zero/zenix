@@ -442,6 +442,31 @@ pub fn test_mcp_server(server: &ZenixMcpServer) -> Result<String, String> {
     }
 }
 
+/// Test connectivity of a per-agent MCP server entry (stdio only).
+pub fn test_agent_mcp_server(entry: &McpServerEntry) -> Result<String, String> {
+    let mut child = std::process::Command::new(&entry.command)
+        .args(&entry.args)
+        .envs(&entry.env)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map_err(|e| format!("Failed to spawn: {e}"))?;
+    std::thread::sleep(std::time::Duration::from_secs(1));
+    match child.try_wait() {
+        Ok(Some(status)) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            Err(format!("Failed to start: exited with {status}"))
+        }
+        Ok(None) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            Ok("OK: server started and running".into())
+        }
+        Err(e) => Err(format!("Wait failed: {e}")),
+    }
+}
+
 pub fn sync_zenix_server_to_agent(server: &ZenixMcpServer, agent_name: &str, enable: bool) -> Result<(), String> {
     let config_path = claude_format_configs().into_iter()
         .find(|(name, _)| name == agent_name)

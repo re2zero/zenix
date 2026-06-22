@@ -130,9 +130,6 @@ fn main() {
         load_embedded_themes(cx);
         load_embedded_fonts(cx);
 
-        // Override gpui_component's default font family with embedded font.
-        let theme = Theme::global_mut(cx);
-        theme.font_family = "Lilex".into();
 
         open_main_window(cx);
     });

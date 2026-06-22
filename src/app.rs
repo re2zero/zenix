@@ -1157,7 +1157,17 @@ impl Render for ZenixApp {
                             }
                             McpAction::SetFormType { mcp_type } => {
                                 if let Some(form) = &mut this.mcp_form {
-                                    form.mcp_type = mcp_type;
+                                    form.mcp_type = mcp_type.clone();
+                                    // Create URL input when switching to SSE
+                                    if mcp_type == "sse" && form.url.is_none() {
+                                        form.url = Some(cx.new(|cx| {
+                                            gpui_component::input::InputState::new(w, cx).placeholder("http://localhost:3000/sse")
+                                        }));
+                                    }
+                                    // Clear URL input when switching to stdio
+                                    if mcp_type == "stdio" {
+                                        form.url = None;
+                                    }
                                 }
                                 cx.notify();
                             }
@@ -1187,13 +1197,22 @@ impl Render for ZenixApp {
                                         );
                                         st
                                     });
+                                    let url_input = if s.mcp_type == crate::mcp::McpType::Sse {
+                                        Some(cx.new(|cx| {
+                                            let mut st = gpui_component::input::InputState::new(w, cx).placeholder("http://localhost:3000/sse");
+                                            st.set_value(&s.command, w, cx);
+                                            st
+                                        }))
+                                    } else {
+                                        None
+                                    };
                                     let form = McpFormState {
                                         editing_name: Some(s.name.clone()),
                                         name: Some(name_input),
                                         command: Some(command_input),
                                         args: Some(args_input),
                                         env: Some(env_input),
-                                        url: None,
+                                        url: url_input,
                                         mcp_type: match s.mcp_type {
                                             crate::mcp::McpType::Sse => "sse".into(),
                                             crate::mcp::McpType::Stdio => "stdio".into(),
@@ -1233,6 +1252,24 @@ impl Render for ZenixApp {
                                 let toast_msg = this.mcp_test_results.get(&name).cloned().unwrap_or_default();
                                 let toast_type = if toast_msg.starts_with("OK:") { "success" } else { "error" };
                                 this.toast = Some(ToastMessage { text: toast_msg, msg_type: toast_type.into() });
+                                cx.notify();
+                            }
+                            McpAction::TestAgentServer { name, agent } => {
+                                let entry = this.mcp_per_agent.iter()
+                                    .find(|(a, _)| a == &agent)
+                                    .and_then(|(_, entries)| entries.iter().find(|e| e.name == name))
+                                    .cloned();
+                                let result = match entry {
+                                    Some(e) => match crate::mcp::test_agent_mcp_server(&e) {
+                                        Ok(msg) => format!("OK: {msg}"),
+                                        Err(e) => format!("ERR: {e}"),
+                                    },
+                                    None => "ERR: Server entry not found".into(),
+                                };
+                                let key = format!("{name}@{agent}");
+                                this.mcp_test_results.insert(key, result.clone());
+                                let toast_type = if result.starts_with("OK:") { "success" } else { "error" };
+                                this.toast = Some(ToastMessage { text: result, msg_type: toast_type.into() });
                                 cx.notify();
                             }
                         }
@@ -1656,6 +1693,7 @@ impl Render for ZenixApp {
                                 });
                             }
                         }),
+                        font_family: self.config.font_family(),
                         win_w: f32::from(w),
                         win_h: f32::from(h),
                     })

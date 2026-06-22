@@ -51,6 +51,7 @@ pub enum McpAction {
     RemoveFromAgent { name: String, agent: String },
     ToggleForAgent { name: String, agent: String },
     TestServer { name: String },
+    TestAgentServer { name: String, agent: String },
 }
 
 #[derive(Clone)]
@@ -221,6 +222,7 @@ pub struct SettingsDialogProps<'a> {
     pub on_context_menu_dismiss: ActionCb<()>,
     pub pending_confirm: Option<&'a PendingConfirm>,
     pub on_confirm_action: ActionCb<bool>,
+    pub font_family: &'a str,
     pub win_h: f32,
 }
 
@@ -281,6 +283,7 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
         on_context_menu_dismiss,
         pending_confirm,
         on_confirm_action,
+        font_family,
         win_w,
         win_h,
     } = props;
@@ -342,6 +345,7 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
                 .bg(gpui::rgba(0x1e1e2eff))
                 .border_1().border_color(gpui::rgba(0x45475aff))
                 .rounded_lg().shadow_lg()
+                .font_family(font_family)
                 .flex().flex_col()
                 .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 // Header with close button
@@ -1125,14 +1129,22 @@ fn mcp_inline_edit_card(
                         oma(McpAction::SetFormType { mcp_type: "sse".into() }, w, a);
                     }
                 })))
-        .child(h_flex().gap(px(8.)).items_center()
-            .child(txt(px(12.)).w(px(60.)).child(t("settings.mcp.form.command")))
-            .child(form.command.as_ref().map(|e| Input::new(e).into_any_element())
-                .unwrap_or_else(|| txt(px(12.)).text_color(gpui::rgba(0x888888FF)).child("_").into_any_element())))
-        .child(h_flex().gap(px(8.)).items_center()
-            .child(txt(px(12.)).w(px(60.)).child(t("settings.mcp.form.args")))
-            .child(form.args.as_ref().map(|e| Input::new(e).into_any_element())
-                .unwrap_or_else(|| txt(px(12.)).text_color(gpui::rgba(0x888888FF)).child("_").into_any_element())))
+        .when(!is_sse, |el| {
+            el.child(h_flex().gap(px(8.)).items_center()
+                .child(txt(px(12.)).w(px(60.)).child(t("settings.mcp.form.command")))
+                .child(form.command.as_ref().map(|e| Input::new(e).into_any_element())
+                    .unwrap_or_else(|| txt(px(12.)).text_color(gpui::rgba(0x888888FF)).child("_").into_any_element())))
+                .child(h_flex().gap(px(8.)).items_center()
+                    .child(txt(px(12.)).w(px(60.)).child(t("settings.mcp.form.args")))
+                    .child(form.args.as_ref().map(|e| Input::new(e).into_any_element())
+                        .unwrap_or_else(|| txt(px(12.)).text_color(gpui::rgba(0x888888FF)).child("_").into_any_element())))
+        })
+        .when(is_sse, |el| {
+            el.child(h_flex().gap(px(8.)).items_center()
+                .child(txt(px(12.)).w(px(60.)).child("URL"))
+                .child(form.url.as_ref().map(|e| Input::new(e).into_any_element())
+                    .unwrap_or_else(|| txt(px(12.)).text_color(gpui::rgba(0x888888FF)).child("_").into_any_element())))
+        })
         .child(h_flex().gap(px(8.)).items_start()
             .child(txt(px(12.)).w(px(60.)).child(t("settings.mcp.form.env")))
             .child(form.env.as_ref().map(|e| Input::new(e).into_any_element())
@@ -1219,7 +1231,7 @@ fn mcp_agent_entry_with_test(
     let name = entry.name.clone();
     let cmd = format!("{} {}", entry.command, entry.args.join(" "));
     let disabled = entry.disabled;
-    let test_result = mcp_test_results.get(&name);
+    let test_result = mcp_test_results.get(&format!("{name}@{agent}"));
 
     let toggle_cb = {
         let oma = on_mcp_action.clone();
@@ -1240,8 +1252,9 @@ fn mcp_agent_entry_with_test(
     let test_cb = {
         let oma = on_mcp_action.clone();
         let test_name = name.clone();
+        let test_agent = agent.to_string();
         move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
-            oma(McpAction::TestServer { name: test_name.clone() }, w, a);
+            oma(McpAction::TestAgentServer { name: test_name.clone(), agent: test_agent.clone() }, w, a);
         }
     };
 
