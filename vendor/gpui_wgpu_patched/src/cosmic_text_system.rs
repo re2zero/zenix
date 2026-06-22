@@ -231,42 +231,77 @@ impl CosmicTextSystemState {
         features: &FontFeatures,
         fallbacks: Option<&FontFallbacks>,
     ) -> Result<SmallVec<[FontId; 4]>> {
+        // Parse comma-separated font stack (e.g. "思源黑体, Lilex")
+        let font_stack: Vec<&str> = name.split(',').map(|s| s.trim()).collect();
+        let primary_name = font_stack.first().copied().unwrap_or(name);
+        let stack_fallbacks: Vec<&str> = font_stack[1..].to_vec();
+
         // recurse with `fallbacks = None` so a fallback family cannot pull in
         // another chain. missing fallback families are dropped so a typo in
         // settings still lets the primary family load.
-        let user_fallback_chain: Arc<[(FontId, SharedString)]> = match fallbacks {
-            Some(fallbacks) if !fallbacks.fallback_list().is_empty() => {
-                let mut chain: Vec<(FontId, SharedString)> = Vec::new();
-                for fallback_name in fallbacks.fallback_list() {
-                    let fb_key = FontKey::new(
-                        SharedString::from(fallback_name.clone()),
-                        features.clone(),
-                        None,
-                    );
-                    let fb_ids = if let Some(cached) = self.font_ids_by_family_cache.get(&fb_key) {
-                        cached.clone()
-                    } else {
-                        let loaded = self.load_family(fallback_name, features, None)?;
-                        self.font_ids_by_family_cache
-                            .insert(fb_key.clone(), loaded.clone());
-                        loaded
-                    };
-                    let Some(&fb_id) = fb_ids.first() else {
-                        continue;
-                    };
-                    let db_id = self.loaded_fonts[fb_id.0].font.id();
-                    if let Some(face) = self.font_system.db().face(db_id)
-                        && let Some(family) = face.families.first()
-                    {
-                        chain.push((fb_id, SharedString::from(family.0.clone())));
+        let user_fallback_chain: Arc<[(FontId, SharedString)]> = {
+            let mut chain: Vec<(FontId, SharedString)> = Vec::new();
+
+            // First, process explicit fallbacks from FontFallbacks param
+            if let Some(fallbacks) = fallbacks {
+                if !fallbacks.fallback_list().is_empty() {
+                    for fallback_name in fallbacks.fallback_list() {
+                        let fb_key = FontKey::new(
+                            SharedString::from(fallback_name.clone()),
+                            features.clone(),
+                            None,
+                        );
+                        let fb_ids = if let Some(cached) = self.font_ids_by_family_cache.get(&fb_key) {
+                            cached.clone()
+                        } else {
+                            let loaded = self.load_family(fallback_name, features, None)?;
+                            self.font_ids_by_family_cache
+                                .insert(fb_key.clone(), loaded.clone());
+                            loaded
+                        };
+                        let Some(&fb_id) = fb_ids.first() else {
+                            continue;
+                        };
+                        let db_id = self.loaded_fonts[fb_id.0].font.id();
+                        if let Some(face) = self.font_system.db().face(db_id)
+                            && let Some(family) = face.families.first()
+                        {
+                            chain.push((fb_id, SharedString::from(family.0.clone())));
+                        }
                     }
                 }
-                Arc::from(chain)
             }
-            _ => Arc::from(Vec::new()),
+
+            // Then, process comma-separated fallbacks from font stack
+            for fallback_name in stack_fallbacks {
+                let fb_key = FontKey::new(
+                    SharedString::from(fallback_name),
+                    features.clone(),
+                    None,
+                );
+                let fb_ids = if let Some(cached) = self.font_ids_by_family_cache.get(&fb_key) {
+                    cached.clone()
+                } else {
+                    let loaded = self.load_family(fallback_name, features, None)?;
+                    self.font_ids_by_family_cache
+                        .insert(fb_key.clone(), loaded.clone());
+                    loaded
+                };
+                let Some(&fb_id) = fb_ids.first() else {
+                    continue;
+                };
+                let db_id = self.loaded_fonts[fb_id.0].font.id();
+                if let Some(face) = self.font_system.db().face(db_id)
+                    && let Some(family) = face.families.first()
+                {
+                    chain.push((fb_id, SharedString::from(family.0.clone())));
+                }
+            }
+
+            Arc::from(chain)
         };
 
-        let name = gpui::font_name_with_fallbacks(name, &self.system_font_fallback);
+        let name = gpui::font_name_with_fallbacks(primary_name, &self.system_font_fallback);
 
         let families = self
             .font_system
