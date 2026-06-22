@@ -13,6 +13,8 @@ pub struct AgentCliInfo {
     pub display_name: &'static str,
     /// Binary names to check on PATH (first match wins).
     pub binary_names: &'static [&'static str],
+    /// Install command for this agent.
+    pub install_command: &'static str,
     /// Resolved binary path if found on PATH.
     pub binary_path: Option<PathBuf>,
     /// Whether the agent CLI binary was found on PATH.
@@ -43,6 +45,7 @@ pub fn detect_all_agents() -> Vec<AgentCliInfo> {
             name: prov.name,
             display_name: prov.display_name,
             binary_names: prov.binary_names,
+            install_command: prov.install_command,
             binary_path: binary_path.clone(),
             detected: binary_path.is_some(),
         }

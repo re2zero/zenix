@@ -20,6 +20,8 @@ pub struct Provider {
     pub display_name: &'static str,
     /// Binary names to check on PATH (first match wins).
     pub binary_names: &'static [&'static str],
+    /// Install command for this provider.
+    pub install_command: &'static str,
     /// Function that returns the config directory (if it exists).
     pub config_dir: fn() -> Option<PathBuf>,
     /// MCP config filename relative to config_dir (e.g. "config.json").
