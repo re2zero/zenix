@@ -83,6 +83,9 @@ pub struct ZenixApp {
     skill_search_input: Option<gpui::Entity<gpui_component::input::InputState>>,
     active_skills_subtab: crate::ui::settings::SkillsSubTab,
     skill_search: String,
+    market_skills: Vec<crate::skills::ApiSkill>,
+    market_loading: bool,
+    market_error: Option<String>,
     terminal_cursor_blink: bool,
     terminal_cursor_style: String,
     terminal_opacity: f32,
@@ -115,6 +118,10 @@ impl ZenixApp {
         let focus_handle = cx.focus_handle();
         let (events_tx, events_rx) = mpsc::channel();
         let font_size = config.terminal_font_size();
+        let cursor_blink = config.terminal_cursor_blink();
+        let cursor_style = config.terminal_cursor_style().to_string();
+        let opacity = config.terminal_opacity();
+        let scrollback = config.terminal_scrollback();
         Self {
             focus_handle, backend: None, tab: None,
             status: t("status.initializing"),
@@ -142,15 +149,18 @@ impl ZenixApp {
             agent_installed_only: false,
             active_skills_subtab: crate::ui::settings::SkillsSubTab::Installed,
             skill_search: String::new(),
+            market_skills: Vec::new(),
+            market_loading: false,
+            market_error: None,
             mcp_search: String::new(),
             mcp_search_input: None,
             api_search: String::new(),
             api_search_input: None,
             skill_search_input: None,
-            terminal_cursor_blink: false,
-            terminal_cursor_style: "block".into(),
-            terminal_opacity: 1.0,
-            terminal_scrollback: 1000,
+            terminal_cursor_blink: cursor_blink,
+            terminal_cursor_style: cursor_style,
+            terminal_opacity: opacity,
+            terminal_scrollback: scrollback,
             skills: std::collections::HashMap::new(),
             mcp_form: None,
             mcp_available_agents: crate::mcp::claude_format_agent_names(),
@@ -575,6 +585,21 @@ impl ZenixApp {
         }).detach();
         input
     }
+
+    fn create_skill_search_input(w: &mut Window, cx: &mut gpui::Context<Self>) -> gpui::Entity<gpui_component::input::InputState> {
+        let input = cx.new(|cx| {
+            gpui_component::input::InputState::new(w, cx)
+                .placeholder("Search skills...")
+        });
+        cx.subscribe(&input, |this: &mut ZenixApp, input_state, event: &gpui_component::input::InputEvent, cx| {
+            if let gpui_component::input::InputEvent::Change = event {
+                let val = input_state.read(cx).value().to_string();
+                this.skill_search = val;
+                cx.notify();
+            }
+        }).detach();
+        input
+    }
 }
 
 impl Render for ZenixApp {
@@ -815,6 +840,8 @@ impl Render for ZenixApp {
                 move |idx: usize, _w: &mut Window, app: &mut gpui::App| {
                     entity.update(app, |this: &mut ZenixApp, cx| {
                         this.active_settings_tab = idx;
+                        this.config.set_active_settings_tab(idx);
+                        let _ = this.config.save();
                         cx.notify();
                     });
                 }
@@ -931,6 +958,64 @@ impl Render for ZenixApp {
                                 this.pending_confirm = Some(PendingConfirm::RemoveSkill(skill_name));
                                 cx.notify();
                             }
+                            SkillAction::FetchMarket => {
+                                this.market_loading = true;
+                                this.market_error = None;
+                                cx.notify();
+                                let entity = entity.clone();
+                                cx.spawn(async move |_, cx| {
+                                    let result = std::thread::spawn(|| crate::skills::fetch_leaderboard()).join();
+                                    entity.update(cx, |this, cx| {
+                                        this.market_loading = false;
+                                        match result {
+                                            Ok(Ok(skills)) => {
+                                                this.market_skills = skills;
+                                            }
+                                            Ok(Err(e)) => {
+                                                this.market_error = Some(e);
+                                            }
+                                            Err(_) => {
+                                                this.market_error = Some("thread panic".into());
+                                            }
+                                        }
+                                        cx.notify();
+                                    });
+                                }).detach();
+                            }
+                            SkillAction::InstallApi { skill_id } => {
+                                let entity = entity.clone();
+                                cx.spawn(async move |_, cx| {
+                                    let result = std::thread::spawn(move || {
+                                        let install_result = crate::skills::install_from_api(&skill_id);
+                                        (install_result, crate::skills::scan_all_skills())
+                                    }).join();
+                                    entity.update(cx, |this, cx| {
+                                        match result {
+                                            Ok((Ok(name), skills)) => {
+                                                this.skills = skills;
+                                                this.toast = Some(ToastMessage {
+                                                    text: format!("Installed: {name}"),
+                                                    msg_type: "success".into(),
+                                                });
+                                            }
+                                            Ok((Err(e), skills)) => {
+                                                this.skills = skills;
+                                                this.toast = Some(ToastMessage {
+                                                    text: format!("Install failed: {e}"),
+                                                    msg_type: "error".into(),
+                                                });
+                                            }
+                                            Err(_) => {
+                                                this.toast = Some(ToastMessage {
+                                                    text: "Install thread panicked".into(),
+                                                    msg_type: "error".into(),
+                                                });
+                                            }
+                                        }
+                                        cx.notify();
+                                    });
+                                }).detach();
+                            }
                         }
                     });
                 }
@@ -960,6 +1045,7 @@ impl Render for ZenixApp {
                                     command: Some(command_input),
                                     args: Some(args_input),
                                     env: Some(env_input),
+                                    url: None,
                                     mcp_type: "stdio".to_string(),
                                 };
                                 this.mcp_form = Some(form);
@@ -984,7 +1070,21 @@ impl Render for ZenixApp {
                                     let env_val = form.env.as_ref()
                                         .map(|e| e.read(cx).value().to_string())
                                         .unwrap_or_default();
-                                    if !name_val.trim().is_empty() && !cmd_val.trim().is_empty() {
+                                    let url_val = form.url.as_ref()
+                                        .map(|e| e.read(cx).value().to_string())
+                                        .unwrap_or_default();
+                                    let mcp_type = if form.mcp_type == "sse" {
+                                        crate::mcp::McpType::Sse
+                                    } else {
+                                        crate::mcp::McpType::Stdio
+                                    };
+                                    // For SSE, use URL as command; for stdio, use command field
+                                    let effective_cmd = if mcp_type == crate::mcp::McpType::Sse {
+                                        url_val.trim().to_string()
+                                    } else {
+                                        cmd_val.trim().to_string()
+                                    };
+                                    if !name_val.trim().is_empty() && !effective_cmd.is_empty() {
                                         let args: Vec<String> = if args_val.trim().is_empty() {
                                             Vec::new()
                                         } else {
@@ -1002,16 +1102,10 @@ impl Render for ZenixApp {
                                                 })
                                                 .collect()
                                         };
-                                        let mcp_type = if form.mcp_type == "sse" {
-                                            crate::mcp::McpType::Sse
-                                        } else {
-                                            crate::mcp::McpType::Stdio
-                                        };
                                         let (server, old_enabled) = if let Some(old_name) = &form.editing_name {
                                             let old = this.mcp_zenix_servers.iter().find(|s| s.name == *old_name);
                                             let old_agents = old.map(|s| s.enabled_agents.clone()).unwrap_or_default();
                                             let _ = crate::mcp::remove_zenix_mcp_server(old_name);
-                                            // If name changed, remove old entry from CLI configs
                                             if old_name != name_val.trim() {
                                                 for agent in &old_agents {
                                                     let _ = crate::mcp::sync_zenix_server_to_agent(
@@ -1031,7 +1125,7 @@ impl Render for ZenixApp {
                                             (crate::mcp::ZenixMcpServer {
                                                 name: name_val.trim().to_string(),
                                                 mcp_type,
-                                                command: cmd_val.trim().to_string(),
+                                                command: effective_cmd,
                                                 args,
                                                 env,
                                                 enabled_agents: old_agents,
@@ -1040,16 +1134,18 @@ impl Render for ZenixApp {
                                             (crate::mcp::ZenixMcpServer {
                                                 name: name_val.trim().to_string(),
                                                 mcp_type,
-                                                command: cmd_val.trim().to_string(),
+                                                command: effective_cmd,
                                                 args,
                                                 env,
                                                 enabled_agents: vec![],
                                             }, false)
                                         };
                                         if let Err(e) = crate::mcp::add_zenix_mcp_server(&server) {
-                                            tracing::warn!("add MCP server failed: {e}");
+                                            this.toast = Some(ToastMessage {
+                                                text: format!("Failed to add MCP server: {e}"),
+                                                msg_type: "error".into(),
+                                            });
                                         }
-                                        // Re-sync to CLI configs if editing
                                         if old_enabled {
                                             for agent in &server.enabled_agents {
                                                 let _ = crate::mcp::sync_zenix_server_to_agent(&server, agent, true);
@@ -1097,6 +1193,7 @@ impl Render for ZenixApp {
                                         command: Some(command_input),
                                         args: Some(args_input),
                                         env: Some(env_input),
+                                        url: None,
                                         mcp_type: match s.mcp_type {
                                             crate::mcp::McpType::Sse => "sse".into(),
                                             crate::mcp::McpType::Stdio => "stdio".into(),
@@ -1172,6 +1269,7 @@ impl Render for ZenixApp {
                                     thinking_level: ThinkingLevel::default(),
                                     available_models: vec![],
                                     selected_model: String::new(),
+                                    model_search: String::new(),
                                 });
                                 cx.notify();
                             }
@@ -1190,40 +1288,53 @@ impl Render for ZenixApp {
                                         .map(|e| e.read(cx).value().to_string()).unwrap_or_default();
                                     let suffix_val = form.url_suffix.as_ref()
                                         .map(|e| e.read(cx).value().to_string()).unwrap_or_default();
-                                    if !name_val.trim().is_empty() {
-                                        let existing_agents = if form.editing_name.is_some() {
-                                            this.api_providers.iter()
-                                                .find(|p| p.name == form.editing_name.as_deref().unwrap_or(""))
-                                                .map(|p| p.enabled_agents.clone())
-                                                .unwrap_or_default()
-                                        } else {
-                                            vec![]
-                                        };
-                                        let cfg = ApiProviderConfig {
-                                            name: name_val.trim().to_string(),
-                                            format: form.format,
-                                            base_url: base_val.trim().to_string(),
-                                            api_key: key_val.trim().to_string(),
-                                            model: form.selected_model,
-                                            thinking_level: form.thinking_level,
-                                            url_suffix: suffix_val.trim().to_string(),
-                                            enabled_agents: existing_agents,
-                                        };
-                                        let _ = crate::api_provider::upsert(&cfg);
-                                        this.api_providers = crate::api_provider::load_all();
-                                    }
-                                    cx.notify();
-                                }
-                            }
-                            ApiProviderAction::SetFormat { format } => {
-                                if let Some(form) = &mut this.api_provider_form {
-                                    form.format = format;
-                                    // Reset suffix to default for new format
-                                    if let Some(suffix_input) = &form.url_suffix {
-                                        suffix_input.update(cx, |state, cx| {
-                                            state.set_value(format.default_suffix(), w, cx);
+                                    if name_val.trim().is_empty() {
+                                        this.toast = Some(ToastMessage {
+                                            text: "Provider name is required".into(),
+                                            msg_type: "error".into(),
                                         });
+                                        this.api_provider_form = Some(form);
+                                        cx.notify();
+                                        return;
                                     }
+                                    if !base_val.trim().starts_with("http://") && !base_val.trim().starts_with("https://") {
+                                        this.toast = Some(ToastMessage {
+                                            text: "Base URL must start with http:// or https://".into(),
+                                            msg_type: "error".into(),
+                                        });
+                                        this.api_provider_form = Some(form);
+                                        cx.notify();
+                                        return;
+                                    }
+                                    if key_val.trim().is_empty() {
+                                        this.toast = Some(ToastMessage {
+                                            text: "API key is required".into(),
+                                            msg_type: "error".into(),
+                                        });
+                                        this.api_provider_form = Some(form);
+                                        cx.notify();
+                                        return;
+                                    }
+                                    let existing_agents = if form.editing_name.is_some() {
+                                        this.api_providers.iter()
+                                            .find(|p| p.name == form.editing_name.as_deref().unwrap_or(""))
+                                            .map(|p| p.enabled_agents.clone())
+                                            .unwrap_or_default()
+                                    } else {
+                                        vec![]
+                                    };
+                                    let cfg = ApiProviderConfig {
+                                        name: name_val.trim().to_string(),
+                                        format: form.format,
+                                        base_url: base_val.trim().to_string(),
+                                        api_key: key_val.trim().to_string(),
+                                        model: form.selected_model,
+                                        thinking_level: form.thinking_level,
+                                        url_suffix: suffix_val.trim().to_string(),
+                                        enabled_agents: existing_agents,
+                                    };
+                                    let _ = crate::api_provider::upsert(&cfg);
+                                    this.api_providers = crate::api_provider::load_all();
                                 }
                                 cx.notify();
                             }
@@ -1238,6 +1349,17 @@ impl Render for ZenixApp {
                                     if let Some(suffix_input) = &form.url_suffix {
                                         suffix_input.update(cx, |state, cx| {
                                             state.set_value(&suffix, w, cx);
+                                        });
+                                    }
+                                }
+                                cx.notify();
+                            }
+                            ApiProviderAction::SetFormat { format } => {
+                                if let Some(form) = &mut this.api_provider_form {
+                                    form.format = format;
+                                    if let Some(suffix_input) = &form.url_suffix {
+                                        suffix_input.update(cx, |state, cx| {
+                                            state.set_value(format.default_suffix(), w, cx);
                                         });
                                     }
                                 }
@@ -1295,6 +1417,7 @@ impl Render for ZenixApp {
                                         thinking_level: cfg.thinking_level,
                                         available_models: vec![],
                                         selected_model: cfg.model.clone(),
+                                        model_search: String::new(),
                                     });
                                 }
                                 cx.notify();
@@ -1364,6 +1487,10 @@ impl Render for ZenixApp {
             if self.agent_search_input.is_none() {
                 let input_state = Self::create_agent_search_input(window, cx);
                 self.agent_search_input = Some(input_state);
+            }
+            if self.skill_search_input.is_none() {
+                let input_state = Self::create_skill_search_input(window, cx);
+                self.skill_search_input = Some(input_state);
             }
             let font_select_ref = self.font_select.as_ref();
 
@@ -1441,6 +1568,9 @@ impl Render for ZenixApp {
                         api_search: &self.api_search,
                         api_search_input: self.api_search_input.as_ref(),
                         skill_search_input: self.skill_search_input.as_ref(),
+                        market_skills: &self.market_skills,
+                        market_loading: self.market_loading,
+                        market_error: self.market_error.as_deref(),
                         terminal_cursor_blink: self.terminal_cursor_blink,
                         terminal_cursor_style: &self.terminal_cursor_style,
                         terminal_opacity: self.terminal_opacity,
@@ -1451,18 +1581,23 @@ impl Render for ZenixApp {
                                 entity.update(app, |this: &mut ZenixApp, cx| {
                                     match action {
                                         crate::ui::settings::TerminalAction::SetCursorStyle(s) => {
-                                            this.terminal_cursor_style = s;
+                                            this.terminal_cursor_style = s.clone();
+                                            this.config.set_terminal_cursor_style(s);
                                         }
                                         crate::ui::settings::TerminalAction::ToggleCursorBlink => {
                                             this.terminal_cursor_blink = !this.terminal_cursor_blink;
+                                            this.config.set_terminal_cursor_blink(this.terminal_cursor_blink);
                                         }
                                         crate::ui::settings::TerminalAction::SetOpacity(op) => {
                                             this.terminal_opacity = op;
+                                            this.config.set_terminal_opacity(op);
                                         }
                                         crate::ui::settings::TerminalAction::SetScrollback(sb) => {
                                             this.terminal_scrollback = sb;
+                                            this.config.set_terminal_scrollback(sb);
                                         }
                                     }
+                                    let _ = this.config.save();
                                     cx.notify();
                                 });
                             }

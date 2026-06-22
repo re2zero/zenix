@@ -63,6 +63,15 @@ settings:
     extensions:
       en: "Extensions"
       zh-CN: "扩展"
+  about:
+    en: "About"
+    zh-CN: "关于"
+  config_path:
+    en: "Config: {path}"
+    zh-CN: "配置路径: {path}"
+  mcp_templates:
+    en: "Templates:"
+    zh-CN: "模板:"
   general:
     language:
       en: "Language"
@@ -391,9 +400,6 @@ skills:
   refresh:
     en: "Refresh"
     zh-CN: "刷新"
-  zenix_skills:
-    en: "Zenix Skills"
-    zh-CN: "Zenix Skills"
   per_agent:
     en: "Per-Agent Skills"
     zh-CN: "各代理 Skills"
@@ -451,3 +457,12 @@ skills:
   dialog_local_path:
     en: "Local Path"
     zh-CN: "本地路径"
+  market_loading:
+    en: "Loading market..."
+    zh-CN: "正在加载市场..."
+  market_empty:
+    en: "No market data loaded"
+    zh-CN: "未加载市场数据"
+  fetch_market:
+    en: "Fetch Market"
+    zh-CN: "获取市场"

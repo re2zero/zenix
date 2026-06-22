@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use gpui::{
-    div, px, relative, AnyElement, ClickEvent, Entity, InteractiveElement as _, IntoElement,
+    div, px, AnyElement, ClickEvent, Entity, InteractiveElement as _, IntoElement,
     ParentElement, StatefulInteractiveElement as _, Styled, Window, prelude::FluentBuilder as _,
 };
 use gpui_component::{
@@ -34,6 +34,9 @@ pub enum SkillAction {
     InstallGit { url: String },
     InstallLocal { path: String },
     Remove { skill_name: String },
+    // Market (skills.sh API)
+    FetchMarket,
+    InstallApi { skill_id: String },
 }
 
 #[derive(Clone)]
@@ -104,6 +107,7 @@ pub struct McpFormState {
     pub command: Option<Entity<gpui_component::input::InputState>>,
     pub args: Option<Entity<gpui_component::input::InputState>>,
     pub env: Option<Entity<gpui_component::input::InputState>>,
+    pub url: Option<Entity<gpui_component::input::InputState>>,
     pub mcp_type: String,
 }
 
@@ -117,6 +121,7 @@ pub struct ApiProviderFormState {
     pub thinking_level: ThinkingLevel,
     pub available_models: Vec<String>,
     pub selected_model: String,
+    pub model_search: String,
 }
 
 /// Sub-tab for the Extensions tab.
@@ -202,6 +207,9 @@ pub struct SettingsDialogProps<'a> {
     pub api_search: &'a str,
     pub api_search_input: Option<&'a Entity<gpui_component::input::InputState>>,
     pub skill_search_input: Option<&'a Entity<gpui_component::input::InputState>>,
+    pub market_skills: &'a Vec<crate::skills::ApiSkill>,
+    pub market_loading: bool,
+    pub market_error: Option<&'a str>,
     pub terminal_cursor_blink: bool,
     pub terminal_cursor_style: &'a str,
     pub terminal_opacity: f32,
@@ -263,6 +271,9 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
         api_search,
         api_search_input,
         skill_search_input,
+        market_skills,
+        market_loading,
+        market_error,
         on_terminal_action,
         terminal_scrollback,
         toast,
@@ -309,7 +320,6 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
         .on_mouse_down(gpui::MouseButton::Right, {
             let ocmd = ocmd.clone();
             move |_: &gpui::MouseDownEvent, w: &mut Window, a: &mut gpui::App| {
-                // Only dismiss if context menu is open — check not needed here, callback handles it
                 ocmd((), w, a);
             }
         })
@@ -334,42 +344,65 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
                 .rounded_lg().shadow_lg()
                 .flex().flex_col()
                 .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                // Header
+                // Header with close button
                 .child(
                     h_flex().flex_none().justify_between().items_center()
                         .px(px(16.)).py(px(8.))
+                        .border_b_1().border_color(gpui::rgba(0x45475a33))
                         .child(txt(px(14.)).font_weight(gpui::FontWeight::BOLD).child(t("settings.title")))
-                        .child(Button::new("close-settings").ghost().label("\u{2715}").on_click({
-                            let oc = oc.clone();
-                            move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
-                                oc(w, a);
-                            }
-                        }))
-                )
-                // Body: left tabs + right content
-                .child(
-                    h_flex().flex_grow(1.0).min_h_0().overflow_hidden().gap(px(12.))
-                        .child(tab_panel(&otc, active_tab_c, &tab_labels))
                         .child(
-                            div().flex_grow(1.0).h_full().overflow_y_scrollbar().p(px(20.))
-                                .child(tab_content(active_tab, font_size, current_theme_name, theme_buttons,
-                                    on_font_down, on_font_up, locale, on_locale_change,
-                                    agents, selected_agent, &oas,
-                                    mcp_zenix_servers, mcp_per_agent, mcp_form,
-                                    mcp_available_agents, skills, skill_dialog_input, skill_dialog_mode,
-                                    &osa, &oma,
-                                    api_providers, api_provider_form, &oaa,
-                                    font_select,
-                                    active_extension_subtab, &oet,
-                                    mcp_test_results, api_test_results,
-                                    agent_search, &oat, &otc, agent_search_input, &oati, agent_installed_only,
-                                    active_skills_subtab, skill_search, skill_search_input,
-                                    mcp_search, mcp_search_input,
-                                    api_search, api_search_input,
-                                    terminal_cursor_blink, terminal_cursor_style,
-                                    terminal_opacity, terminal_scrollback,
-                                    &ota))
+                            div().id("close-btn").w(px(28.)).h(px(28.)).rounded_md()
+                                .flex().items_center().justify_center()
+                                .cursor_pointer()
+                                .hover(|d| d.bg(gpui::rgba(0xFFFFFF14)))
+                                .child(txt(px(14.)).text_color(gpui::rgba(0x888888FF)).child("\u{2715}"))
+                                .on_click({
+                                    let oc = oc.clone();
+                                    move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                                        oc(w, a);
+                                    }
+                                })
                         )
+                )
+                // Left panel: tabs
+                .child(
+                    h_flex().flex_none().h_full()
+                    .child(
+                        v_flex().flex_none().w(px(TAB_PANEL_W)).h_full().py_2()
+                        .children((0..tab_labels.len()).map(|i| {
+                            let label = tab_labels[i].clone();
+                            let otc = otc.clone();
+                            let is_active = active_tab_c == i;
+                            Button::new(format!("tab-{i}"))
+                                .compact()
+                                .label(label)
+                                .when(is_active, |b| b.primary())
+                                .when(!is_active, |b| b.ghost())
+                                .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| otc(i, w, a))
+                                .into_any_element()
+                        }))
+                    )
+                    // Body: content area
+                    .child(
+                        div().flex_grow(1.0).min_h_0().overflow_y_scrollbar().p(px(20.))
+                        .child(tab_content(active_tab, font_size, current_theme_name, theme_buttons,
+                            on_font_down, on_font_up, locale, on_locale_change,
+                            agents, selected_agent, &oas,
+                            mcp_zenix_servers, mcp_per_agent, mcp_form,
+                            mcp_available_agents, skills, skill_dialog_input, skill_dialog_mode,
+                            &osa, &oma,
+                            api_providers, api_provider_form, &oaa,
+                            font_select,
+                            active_extension_subtab, &oet,
+                            mcp_test_results, api_test_results,
+                            agent_search, &oat, &otc, agent_search_input, &oati, agent_installed_only,
+                            active_skills_subtab, skill_search, skill_search_input,
+                            mcp_search, mcp_search_input,
+                            api_search, api_search_input,
+                            terminal_cursor_blink, terminal_cursor_style,
+                            terminal_opacity, terminal_scrollback,
+                            &ota, market_skills, market_loading, market_error))
+                    )
                 )
         )
         // Toast overlay
@@ -436,19 +469,6 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
             )
         })
 }
-fn tab_panel(otc: &SharedActionCb<usize>, active: usize, labels: &[String]) -> impl IntoElement {
-    v_flex().flex_none().w(px(TAB_PANEL_W)).h_full().py_2()
-        .children((0..labels.len()).map(|i| {
-            let label = labels[i].clone();
-            let otc = otc.clone();
-            let sel = active == i;
-            let variant = if sel { "primary" } else { "ghost" };
-            let el = Button::new(format!("tab-{i}")).compact().label(label);
-            if variant == "primary" { el.primary() } else { el.ghost() }
-                .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| otc(i, w, a))
-                .into_any_element()
-        }))
-}
 fn tab_content(
     active_tab: usize, font_size: f32, current_theme_name: &str,
     theme_buttons: Vec<AnyElement>, on_font_down: ThemeCallback, on_font_up: ThemeCallback,
@@ -491,6 +511,9 @@ fn tab_content(
     terminal_opacity: f32,
     terminal_scrollback: u32,
     on_terminal_action: &SharedActionCb<TerminalAction>,
+    market_skills: &[crate::skills::ApiSkill],
+    market_loading: bool,
+    market_error: Option<&str>,
 ) -> AnyElement {
     match active_tab {
         0 => tab_general(locale, on_locale_change).into_any_element(),
@@ -509,20 +532,23 @@ fn tab_content(
             skill_dialog_mode, on_skill_action,
             mcp_search, mcp_search_input,
             api_search, api_search_input,
-            api_providers, api_form, mcp_test_results, on_api_action, api_test_results, active_skills_subtab).into_any_element(),
+            api_providers, api_form, mcp_test_results, on_api_action, api_test_results,
+            active_skills_subtab, market_skills, market_loading, market_error).into_any_element(),
     }
 }
-
-// ── General ─────────────────────────────────────────────────────────
-
 fn tab_general(locale: &str, on_locale_change: ActionCb<String>) -> impl IntoElement {
     let loc = locale.to_string();
     let cb = Rc::new(on_locale_change);
-    v_flex().gap(px(12.))
+    let config_dir = crate::platform::zenix_config_dir();
+    v_flex().gap(px(16.))
         .child(setting_group_header(t("settings.general.language")))
         .child(h_flex().gap(px(4.))
             .child(locale_btn("en", "English", &loc, cb.clone()))
             .child(locale_btn("zh-CN", "\u{4e2d}\u{6587}", &loc, cb)))
+        .child(setting_group_header(t("settings.about")))
+        .child(txt(px(12.)).child(format!("zenix v{}", env!("CARGO_PKG_VERSION"))))
+        .child(txt(px(11.)).text_color(gpui::rgba(0x888888FF))
+            .child(t("settings.config_path").replace("{path}", &config_dir.display().to_string())))
 }
 
 fn locale_btn(code: &str, label: &str, current: &str, on_change: SharedActionCb<String>) -> impl IntoElement {
@@ -804,6 +830,15 @@ fn agent_detail_panel(
                     .child(format!("{}: {}", t("settings.agent_cli.binary_path"), path.display())))
             })
         )
+        .when(!agent.detected, |el| {
+            el.child(v_flex().gap(px(4.)).py(px(8.)).px(px(10.))
+                .border_1().border_color(gpui::rgba(0x44AAFFFF)).rounded_md()
+                .child(txt(px(12.)).child(t("agent.install")))
+                .child(div().px(px(8.)).py(px(4.))
+                    .bg(gpui::rgba(0x00000044)).rounded_sm()
+                    .child(txt(px(11.)).font_family("monospace").child(agent.install_command.to_string())))
+            )
+        })
         .child(v_flex().gap(px(8.))
             .child(txt(px(13.)).font_weight(gpui::FontWeight::BOLD).child(t("settings.api.title")))
             .child(if agent_providers.is_empty() {
@@ -883,6 +918,9 @@ fn tab_extensions(
     on_api_action: &SharedActionCb<ApiProviderAction>,
     api_test_results: &HashMap<String, String>,
     active_skills_subtab: SkillsSubTab,
+    market_skills: &[crate::skills::ApiSkill],
+    market_loading: bool,
+    market_error: Option<&str>,
 ) -> impl IntoElement {
     let otc = on_sub_tab_change.clone();
     let labels: Vec<(String, ExtensionSubTab)> = vec![
@@ -892,23 +930,21 @@ fn tab_extensions(
     ];
     v_flex().gap(px(12.))
         .child(
-            gpui_component::tab::TabBar::new("ext-sub-tabs")
-                .segmented()
-                .selected_index(labels.iter().position(|(_, s)| *s == active_sub).unwrap_or(0))
-                .on_click({
+            zed_tab_bar("ext-sub", labels.iter().map(|(l, _)| l.clone()).collect(),
+                labels.iter().position(|(_, s)| *s == active_sub).unwrap_or(0),
+                {
                     let labels = labels.clone();
                     move |idx, w, a| {
-                        if let Some((_, sub)) = labels.get(*idx) {
+                        if let Some((_, sub)) = labels.get(idx) {
                             otc(*sub, w, a);
                         }
                     }
                 })
-                .children(labels.iter().map(|(l, _)| gpui_component::tab::Tab::new().label(l.to_string())))
         )
         .child(match active_sub {
             ExtensionSubTab::Api => tab_api_content(api_providers, api_form, mcp_available_agents, on_api_action, api_test_results, api_search, api_search_input).into_any_element(),
             ExtensionSubTab::Mcp => tab_mcp_content(mcp_servers, mcp_per_agent, mcp_form, mcp_available_agents, on_mcp_action, mcp_test_results, mcp_search, mcp_search_input).into_any_element(),
-            ExtensionSubTab::Skills => tab_skills_content(skills, skill_dialog_input, skill_dialog_mode, on_skill_action, active_skills_subtab, skill_search, skill_search_input).into_any_element(),
+            ExtensionSubTab::Skills => tab_skills_content(skills, skill_dialog_input, skill_dialog_mode, on_skill_action, active_skills_subtab, skill_search, skill_search_input, market_skills, market_loading, market_error).into_any_element(),
         })
 }
 fn tab_mcp_content(
@@ -939,18 +975,14 @@ fn tab_mcp_content(
     v_flex().gap(px(12.))
         .child(h_flex().gap(px(8.)).items_center().justify_between()
             .child(setting_group_header(t("settings.mcp.title")))
-            .child(h_flex().gap(px(4.)).items_center()
-                .child(txt(px(16.)).text_color(gpui::rgba(0x888888FF)).child("\u{1F50D}"))
-                .child(mcp_search_input.map(|e| Input::new(e).flex_grow(1.0).into_any_element())
-                    .unwrap_or_else(|| txt(px(11.)).text_color(gpui::rgba(0x888888FF)).child(t("settings.mcp.search")).into_any_element()))
-                .child(txt(px(10.)).text_color(gpui::rgba(0x666666FF)).child(format!("{} servers", filtered_servers.len())))
-                .child(Button::new("add-mcp").ghost().label(t("mcp.add_server")).on_click(add_cb))))
+            .child(Button::new("add-mcp").ghost().label(t("mcp.add_server")).on_click(add_cb)))
+        .child(zed_search_bar(&t("settings.mcp.search"), mcp_search_input))
         .when_some(form_el, |el, form| el.child(form))
         .child(if filtered_servers.is_empty() && mcp_form.is_none() {
             txt(px(12.)).text_color(gpui::rgba(0x888888FF)).child(t("settings.mcp.no_zenix_servers")).into_any_element()
         } else {
-            h_flex().flex_wrap().gap(px(10.)).children(filtered_servers.iter().map(|s| {
-                div().w(relative(0.48)).child(mcp_card(s, available_agents, on_mcp_action, mcp_form, mcp_test_results))
+            v_flex().gap(px(8.)).children(filtered_servers.iter().map(|s| {
+                mcp_card(s, available_agents, on_mcp_action, mcp_form, mcp_test_results)
             })).into_any_element()
         })
 }
@@ -984,7 +1016,7 @@ fn mcp_card(
     // If this server is being edited inline, render form fields
     if is_editing {
         let form = mcp_form.unwrap();
-        return mcp_inline_edit_card(s, form, on_mcp_action).into_any_element();
+        return mcp_inline_edit_card(form, on_mcp_action).into_any_element();
     }
 
     let remove_cb = {
@@ -1009,13 +1041,12 @@ fn mcp_card(
         }
     };
 
-    v_flex().gap(px(6.)).py(px(8.)).px(px(10.))
-        .border_1().border_color(gpui::rgba(0x45475a44)).rounded_md()
+    zed_card()
         .child(h_flex().gap(px(8.)).items_center().justify_between()
             .child(h_flex().gap(px(8.)).items_center()
-                .child(txt(px(13.)).font_weight(gpui::FontWeight::MEDIUM).child(name.clone()))
-                .child(txt(px(10.)).text_color(type_color).child(type_label.to_string()))
-                .child(txt(px(11.)).text_color(sc).child(status)))
+                .child(txt(px(14.)).font_weight(gpui::FontWeight::MEDIUM).child(name.clone()))
+                .child(zed_badge(type_label.to_string(), type_color))
+                .child(zed_badge(status, sc)))
             .child(h_flex().gap(px(4.))
                 .child(Button::new(format!("edit-zenix-mcp-{name}")).ghost().compact().label(t("general.edit")).on_click(edit_cb))
                 .child(Button::new(format!("test-zenix-mcp-{name}")).ghost().compact().label(t("general.test")).on_click(test_cb))
@@ -1029,17 +1060,23 @@ fn mcp_card(
         .when(!env_text.is_empty(), |el| {
             el.child(txt(px(10.)).text_color(gpui::rgba(0x888888FF)).child(env_text))
         })
-        .child(h_flex().gap(px(8.)).flex_wrap().children(available_agents.iter().map(|agent| {
+        .child(h_flex().gap(px(6.)).flex_wrap().children(available_agents.iter().map(|agent| {
             let checked = s.enabled_agents.contains(agent);
             let srv = name.clone();
             let agent_name = agent.clone();
             let oma = on_mcp_action.clone();
-            div().id(format!("mcp-cb-{srv}-{agent_name}")).cursor_pointer().py(px(4.)).px(px(8.))
-                .rounded_md().hover(|d| d.bg(gpui::rgba(0xFFFFFF08)))
-                .child(txt(px(12.)).child(format!(
-                    "{} {agent}",
-                    if checked { "\u{2611}" } else { "\u{2610}" }
-                )))
+            div().id(format!("mcp-cb-{srv}-{agent_name}")).cursor_pointer()
+                .px(px(8.)).py(px(3.))
+                .rounded(px(4.))
+                .when(checked, |d| d.bg(gpui::rgba(0x3B82F622)).border_1().border_color(gpui::rgba(0x3B82F644)))
+                .when(!checked, |d| d.bg(gpui::rgba(0x00000022)).border_1().border_color(gpui::rgba(0x45475a44)))
+                .hover(|d| d.bg(gpui::rgba(0xFFFFFF08)))
+                .child(txt(px(11.))
+                    .text_color(if checked { gpui::rgba(0x60A5FAFF) } else { gpui::rgba(0x888888FF) })
+                    .child(format!(
+                        "{} {agent}",
+                        if checked { "✓" } else { "○" }
+                    )))
                 .on_click(move |_: &ClickEvent, w: &mut Window, app: &mut gpui::App| {
                     oma(McpAction::ToggleZenixAgent {
                         server_name: srv.clone(),
@@ -1051,7 +1088,6 @@ fn mcp_card(
 }
 
 fn mcp_inline_edit_card(
-    _s: &crate::mcp::ZenixMcpServer,
     form: &McpFormState,
     on_mcp_action: &SharedActionCb<McpAction>,
 ) -> impl IntoElement {
@@ -1148,14 +1184,22 @@ fn mcp_add_form(
                         oma(McpAction::SetFormType { mcp_type: "sse".into() }, w, a);
                     }
                 })))
-        .child(h_flex().gap(px(8.)).items_center()
-            .child(txt(px(12.)).w(px(60.)).child(t("settings.mcp.form.command")))
-            .child(form.command.as_ref().map(|e| Input::new(e).into_any_element())
-                .unwrap_or_else(|| txt(px(12.)).text_color(gpui::rgba(0x888888FF)).child("_").into_any_element())))
-        .child(h_flex().gap(px(8.)).items_center()
-            .child(txt(px(12.)).w(px(60.)).child(t("settings.mcp.form.args")))
-            .child(form.args.as_ref().map(|e| Input::new(e).into_any_element())
-                .unwrap_or_else(|| txt(px(12.)).text_color(gpui::rgba(0x888888FF)).child("_").into_any_element())))
+        .when(is_stdio, |el| {
+            el.child(h_flex().gap(px(8.)).items_center()
+                .child(txt(px(12.)).w(px(60.)).child(t("settings.mcp.form.command")))
+                .child(form.command.as_ref().map(|e| Input::new(e).into_any_element())
+                    .unwrap_or_else(|| txt(px(12.)).text_color(gpui::rgba(0x888888FF)).child("_").into_any_element())))
+                .child(h_flex().gap(px(8.)).items_center()
+                    .child(txt(px(12.)).w(px(60.)).child(t("settings.mcp.form.args")))
+                    .child(form.args.as_ref().map(|e| Input::new(e).into_any_element())
+                        .unwrap_or_else(|| txt(px(12.)).text_color(gpui::rgba(0x888888FF)).child("_").into_any_element())))
+        })
+        .when(!is_stdio, |el| {
+            el.child(h_flex().gap(px(8.)).items_center()
+                .child(txt(px(12.)).w(px(60.)).child("URL"))
+                .child(form.url.as_ref().map(|e| Input::new(e).into_any_element())
+                    .unwrap_or_else(|| txt(px(12.)).text_color(gpui::rgba(0x888888FF)).child("_").into_any_element())))
+        })
         .child(h_flex().gap(px(8.)).items_start()
             .child(txt(px(12.)).w(px(60.)).child(t("settings.mcp.form.env")))
             .child(form.env.as_ref().map(|e| Input::new(e).into_any_element())
@@ -1236,23 +1280,17 @@ fn tab_skills_content(
     active_subtab: SkillsSubTab,
     skill_search: &str,
     skill_search_input: Option<&Entity<gpui_component::input::InputState>>,
+    market_skills: &[crate::skills::ApiSkill],
+    market_loading: bool,
+    market_error: Option<&str>,
 ) -> impl IntoElement {
     let zenix_skills = crate::skills::zenix_skills();
-    let mut sorted: Vec<_> = zenix_skills.iter().collect();
-    sorted.sort_by(|a, b| a.name.cmp(&b.name));
+    let installed_names: std::collections::HashSet<String> = zenix_skills.iter().map(|s| s.name.clone()).collect();
 
     let refresh_cb = {
         let osa = on_skill_action.clone();
         move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| { osa(SkillAction::Refresh, w, a); }
     };
-
-    let filtered: Vec<&crate::skills::SkillInfo> = sorted.iter()
-        .filter(|s| {
-            skill_search.is_empty()
-                || s.name.to_lowercase().contains(&skill_search.to_lowercase())
-        })
-        .copied()
-        .collect();
 
     let labels: Vec<(String, SkillsSubTab)> = vec![
         (t("skills.installed"), SkillsSubTab::Installed),
@@ -1261,35 +1299,31 @@ fn tab_skills_content(
 
     let otc = on_skill_action.clone();
 
-    v_flex().gap(px(16.))
+    v_flex().gap(px(12.))
         .child(h_flex().gap(px(8.)).items_center().justify_between()
-            .child(h_flex().gap(px(4.))
-                .child(setting_group_header(t("skills.zenix_skills")))
-                .child(
-                    gpui_component::tab::TabBar::new("skills-sub-tabs")
-                        .segmented()
-                        .selected_index(labels.iter().position(|(_, s)| *s == active_subtab).unwrap_or(0))
-                        .on_click({
-                            let labels = labels.clone();
-                            let otc = otc.clone();
-                            move |idx, w, a| {
-                                if let Some((_, sub)) = labels.get(*idx) {
-                                    otc(SkillAction::SetSubTab(*sub), w, a);
-                                }
+            .child(
+                zed_tab_bar("skills-sub", labels.iter().map(|(l, _)| l.clone()).collect(),
+                    if active_subtab == SkillsSubTab::Installed { 0 } else { 1 },
+                    {
+                        let labels = labels.clone();
+                        let otc = otc.clone();
+                        move |idx, w, a| {
+                            if let Some((_, sub)) = labels.get(idx) {
+                                otc(SkillAction::SetSubTab(*sub), w, a);
                             }
-                        })
-                        .children(labels.iter().map(|(l, _)| gpui_component::tab::Tab::new().label(l.to_string())))
-                )
+                        }
+                    })
             )
             .child(Button::new("refresh-s").ghost().label(t("general.refresh")).on_click(refresh_cb)))
-        .child(h_flex().gap(px(4.)).items_center()
-            .child(txt(px(16.)).text_color(gpui::rgba(0x888888FF)).child("\u{1F50D}"))
-            .child(skill_search_input.map(|e| Input::new(e).flex_grow(1.0).into_any_element())
-                .unwrap_or_else(|| txt(px(11.)).text_color(gpui::rgba(0x888888FF)).child(t("skills.search")).into_any_element()))
-            .child(txt(px(10.)).text_color(gpui::rgba(0x666666FF)).child(format!("{} items", filtered.len())))
-        )
+        .child(zed_search_bar(&t("skills.search"), skill_search_input))
         .child(match active_subtab {
             SkillsSubTab::Installed => {
+                let filtered: Vec<&crate::skills::SkillInfo> = zenix_skills.iter()
+                    .filter(|s| {
+                        skill_search.is_empty()
+                            || s.name.to_lowercase().contains(&skill_search.to_lowercase())
+                    })
+                    .collect();
                 if filtered.is_empty() {
                     txt(px(12.)).text_color(gpui::rgba(0x888888FF)).child(t("skills.no_installed")).into_any_element()
                 } else {
@@ -1299,12 +1333,49 @@ fn tab_skills_content(
                 }
             }
             SkillsSubTab::Market => {
-                v_flex().gap(px(12.))
-                    .child(txt(px(12.)).text_color(gpui::rgba(0x888888FF)).child(t("skills.market_description")))
-                    .child(
-                        h_flex().gap(px(8.)).flex_wrap()
-                            .children(filtered.iter().map(|s| zenix_skill_card(s, on_skill_action)))
-                    )
+                let fetch_cb = {
+                    let osa = on_skill_action.clone();
+                    move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                        osa(SkillAction::FetchMarket, w, a);
+                    }
+                };
+
+                let market_content = if market_loading {
+                    txt(px(12.)).text_color(gpui::rgba(0x888888FF)).child(t("skills.market_loading")).into_any_element()
+                } else if let Some(err) = market_error {
+                    txt(px(12.)).text_color(gpui::rgba(0xFF4444FF)).child(err.to_string()).into_any_element()
+                } else if market_skills.is_empty() {
+                    v_flex().gap(px(8.))
+                        .child(txt(px(12.)).text_color(gpui::rgba(0x888888FF)).child(t("skills.market_empty")))
+                        .child(Button::new("fetch-market").ghost().label(t("skills.fetch_market")).on_click(fetch_cb.clone()))
+                        .into_any_element()
+                } else {
+                    let filtered: Vec<&crate::skills::ApiSkill> = market_skills.iter()
+                        .filter(|s| {
+                            skill_search.is_empty()
+                                || s.name.to_lowercase().contains(&skill_search.to_lowercase())
+                                || s.slug.to_lowercase().contains(&skill_search.to_lowercase())
+                                || s.source.to_lowercase().contains(&skill_search.to_lowercase())
+                        })
+                        .collect();
+                    let count = filtered.len();
+                    v_flex().gap(px(12.))
+                        .child(h_flex().gap(px(8.)).items_center().justify_between()
+                            .child(txt(px(10.)).text_color(gpui::rgba(0x666666FF)).child(format!("{} items", count)))
+                            .child(Button::new("refresh-market").ghost().compact().label(t("general.refresh")).on_click(fetch_cb)))
+                        .child(if filtered.is_empty() {
+                            txt(px(12.)).text_color(gpui::rgba(0x888888FF)).child(t("skills.no_skills")).into_any_element()
+                        } else {
+                            h_flex().gap(px(8.)).flex_wrap()
+                                .children(filtered.iter().map(|s| {
+                                    api_skill_card(s, &installed_names, on_skill_action)
+                                }))
+                                .into_any_element()
+                        })
+                        .into_any_element()
+                };
+                v_flex().gap(px(8.))
+                    .child(market_content)
                     .child(add_skill_card(on_skill_action))
                     .into_any_element()
             }
@@ -1345,19 +1416,56 @@ fn zenix_skill_card(
             osa(SkillAction::Remove { skill_name: remove_name.clone() }, w, a);
         }
     };
-    h_flex().gap(px(8.)).py(px(6.)).px(px(8.))
-        .w(px(200.))
-        .border_1().border_color(gpui::rgba(0x45475a44)).rounded_md()
+    zed_card()
         .child(
             div().flex_1().min_w_0()
-                .child(txt(px(12.)).font_weight(gpui::FontWeight::MEDIUM).child(name))
+                .child(h_flex().gap(px(8.)).items_center()
+                    .child(txt(px(13.)).font_weight(gpui::FontWeight::MEDIUM).child(name))
+                    .child(zed_badge("link", gpui::rgba(0x44DD88FF))))
+        )
+        .child(h_flex().gap(px(4.)).justify_end()
+            .child(Button::new(btn_id_link).ghost().compact().label(t("skills.link")).on_click(link_cb))
+            .child(Button::new(btn_id_rm).ghost().compact().label(t("skills.remove")).on_click(remove_cb)))
+}
+
+
+fn api_skill_card(
+    s: &crate::skills::ApiSkill,
+    installed_names: &std::collections::HashSet<String>,
+    on_skill_action: &SharedActionCb<SkillAction>,
+) -> impl IntoElement {
+    let is_installed = installed_names.contains(&s.slug);
+    let skill_id = s.id.clone();
+    let install_cb = {
+        let osa = on_skill_action.clone();
+        move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+            osa(SkillAction::InstallApi { skill_id: skill_id.clone() }, w, a);
+        }
+    };
+    let action = if is_installed {
+        txt(px(10.)).text_color(gpui::rgba(0x00DD44FF)).child(t("skills.installed")).into_any_element()
+    } else {
+        Button::new(format!("install-api-{}", s.slug))
+            .ghost().compact().label(t("agent.install")).on_click(install_cb)
+            .into_any_element()
+    };
+    let installs_str = if s.installs > 1000 {
+        format!("{:.1}k", s.installs as f64 / 1000.0)
+    } else {
+        s.installs.to_string()
+    };
+    zed_card()
+        .child(
+            div().flex_1().min_w_0()
+                .child(txt(px(13.)).font_weight(gpui::FontWeight::MEDIUM).child(s.name.clone()))
+                .child(h_flex().gap(px(4.)).items_center()
+                    .child(zed_badge(s.source_type.clone(), gpui::rgba(0x8888AAFF)))
+                    .child(txt(px(10.)).text_color(gpui::rgba(0x888888FF)).child(format!("⬇ {}", installs_str))))
+                .child(txt(px(10.)).text_color(gpui::rgba(0x888888FF)).child(s.source.clone()))
         )
         .child(
             v_flex().gap(px(2.)).items_center()
-                .child(txt(px(10.)).text_color(gpui::rgba(0x44DD88FF)).child("link"))
-                .child(h_flex().gap(px(2.))
-                    .child(Button::new(btn_id_link).ghost().compact().label(t("skills.link")).on_click(link_cb))
-                    .child(Button::new(btn_id_rm).ghost().compact().label(t("skills.remove")).on_click(remove_cb)))
+                .child(action)
         )
 }
 
@@ -1638,14 +1746,22 @@ fn api_provider_form(
             )))
         .child(if !form.available_models.is_empty() {
             let selected = form.selected_model.clone();
+            let search_query = form.model_search.to_lowercase();
+            let filtered_models: Vec<&String> = form.available_models.iter()
+                .filter(|m| search_query.is_empty() || m.to_lowercase().contains(&search_query))
+                .collect();
             v_flex().gap(px(4.))
                 .child(txt(px(12.)).child(t("settings.api.form.model")))
                 .child(txt(px(11.)).text_color(gpui::rgba(0x44DD88FF))
                     .child(t("settings.api.form.models_available").replace("{count}", &form.available_models.len().to_string())))
+                .child(h_flex().gap(px(4.)).items_center()
+                    .child(txt(px(16.)).text_color(gpui::rgba(0x888888FF)).child("\u{1F50D}"))
+                    .child(txt(px(11.)).text_color(gpui::rgba(0x888888FF)).child(t("general.search")))
+                )
                 .child(h_flex().gap(px(4.)).flex_wrap().children(
-                    form.available_models.iter().take(10).map(|m| {
-                        let m_clone = m.clone();
-                        let sel = *m == selected;
+                    filtered_models.iter().map(|m| {
+                        let m_clone: String = (*m).clone();
+                        let sel = m_clone == selected;
                         let on = on_action.clone();
                         Button::new(format!("model-{}", m_clone))
                             .when(sel, |b| b.primary())
@@ -1696,6 +1812,67 @@ fn form_field(
 
 // ── Helpers ──────────────────────────────────────────────────────────
 
+// ── Zed-style UI Helpers ─────────────────────────────────────────────
+
+/// Zed-style search bar: rounded input with search icon inside
+fn zed_search_bar(
+    placeholder: &str,
+    input: Option<&Entity<gpui_component::input::InputState>>,
+) -> impl IntoElement {
+    let ph = placeholder.to_string();
+    h_flex().gap(px(0.)).items_center()
+        .min_h(px(32.)).px(px(10.))
+        .bg(gpui::rgba(0x00000033))
+        .border_1().border_color(gpui::rgba(0x45475a44))
+        .rounded(px(8.))
+        .child(txt(px(14.)).text_color(gpui::rgba(0x888888FF)).child("🔍"))
+        .child(input.map(|e| Input::new(e).flex_grow(1.0).py(px(0.)).px(px(4.)).into_any_element())
+            .unwrap_or_else(|| txt(px(12.)).text_color(gpui::rgba(0x666666FF)).child(ph).into_any_element()))
+}
+
+/// Zed-style text tab bar: text labels with highlighted selected tab
+fn zed_tab_bar(
+    name: &'static str,
+    labels: Vec<String>,
+    selected: usize,
+    on_click: impl Fn(usize, &mut Window, &mut gpui::App) + Clone + 'static,
+) -> impl IntoElement {
+    h_flex().gap(px(0.)).items_center()
+        .children(labels.iter().enumerate().map(|(idx, label)| {
+            let is_selected = idx == selected;
+            let label = label.clone();
+            let oc = on_click.clone();
+            div().id(format!("{name}-tab-{idx}"))
+                .px(px(12.)).py(px(6.))
+                .rounded(px(6.))
+                .cursor_pointer()
+                .when(is_selected, |d| d.bg(gpui::rgba(0x3B82F622)))
+                .child(txt(px(13.))
+                    .text_color(if is_selected { gpui::rgba(0x60A5FAFF) } else { gpui::rgba(0x888888FF) })
+                    .font_weight(if is_selected { gpui::FontWeight::MEDIUM } else { gpui::FontWeight::NORMAL })
+                    .child(label))
+                .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                    oc(idx, w, a);
+                })
+        }))
+}
+
+/// Zed-style badge: small rounded label for type/category
+fn zed_badge(text: impl Into<String>, color: gpui::Rgba) -> impl IntoElement {
+    h_flex().gap(px(4.)).items_center()
+        .px(px(6.)).py(px(2.))
+        .rounded(px(4.))
+        .bg(gpui::rgba(0x00000033))
+        .border_1().border_color(gpui::rgba(0x45475a44))
+        .child(txt(px(10.)).text_color(color).child(text.into()))
+}
+
+/// Zed-style card: rounded container with border
+fn zed_card() -> gpui::Div {
+    v_flex().gap(px(8.)).py(px(12.)).px(px(14.))
+        .border_1().border_color(gpui::rgba(0x45475a44))
+        .rounded(px(8.))
+}
 fn setting_group_header(title: impl Into<String>) -> impl IntoElement {
     div().text_size(px(15.)).font_weight(gpui::FontWeight::BOLD).mb(px(4.)).child(title.into())
 }
@@ -1708,4 +1885,6 @@ fn setting_row(label: impl Into<String>, ctrl: impl IntoElement) -> impl IntoEle
     h_flex().gap(px(12.)).items_center().child(setting_label(label)).child(ctrl)
 }
 
-fn txt(size: gpui::Pixels) -> gpui::Div { div().text_size(size) }
+fn txt(size: gpui::Pixels) -> gpui::Div {
+    div().text_size(size)
+}
