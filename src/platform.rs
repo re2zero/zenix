@@ -71,6 +71,10 @@ pub fn default_shell() -> &'static str {
     {
         "bash"
     }
+    #[cfg(target_os = "freebsd")]
+    {
+        "tcsh"
+    }
 }
 
 pub fn herdr_binary_name() -> &'static str {
@@ -105,6 +109,10 @@ pub fn seed_herdr() -> PathBuf {
         PathBuf::from("/usr/share/zenix/herdr")
     }
     #[cfg(target_os = "macos")]
+    {
+        PathBuf::from("/usr/local/share/zenix/herdr")
+    }
+    #[cfg(target_os = "freebsd")]
     {
         PathBuf::from("/usr/local/share/zenix/herdr")
     }

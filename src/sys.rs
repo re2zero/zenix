@@ -73,6 +73,10 @@ fn is_virtual_nic(name: &str) -> bool {
     || n.starts_with("loopback pseudo-interface")
     || n.starts_with("docker")
     || n.starts_with("veth")
+    || n.starts_with("vethernet")
+    || n.starts_with("hyper-v")
+    || n.starts_with("vmware")
+    || n.starts_with("virtualbox")
 }
 
 fn format_uptime(seconds: u64) -> String {

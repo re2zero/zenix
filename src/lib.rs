@@ -19,6 +19,7 @@ pub mod config;
 pub mod sys;
 pub mod terminal;
 pub mod ui;
+pub mod single_instance;
 
 // Re-export core types for plugin/sub-app convenience
 pub use app::ZenixApp;

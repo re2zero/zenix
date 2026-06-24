@@ -286,7 +286,11 @@ pub fn spawn_command_in_pty(
         cmd.env("PATH", joined);
     }
     let home = crate::platform::home_dir();
+    #[cfg(unix)]
     cmd.env("HOME", &home);
+    #[cfg(windows)]
+    cmd.env("USERPROFILE", &home);
+    #[cfg(unix)]
     if let Ok(shell) = std::env::var("SHELL") { cmd.env("SHELL", &shell); }
     cmd.env("TERM", "xterm-256color");
     cmd.env("TERM_PROGRAM", "zenix");

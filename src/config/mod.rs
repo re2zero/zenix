@@ -196,6 +196,7 @@ impl ConfigStore {
 
 /// Detect the system UI font at runtime via fc-match.
 /// Falls back to "Noto Sans CJK SC, Lilex" if detection fails.
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
 fn detect_system_font() -> String {
     if let Ok(output) = std::process::Command::new("fc-match")
         .args(["-s", ":lang=zh"])
@@ -218,6 +219,12 @@ fn detect_system_font() -> String {
             }
         }
     }
+    "Noto Sans CJK SC, Lilex".into()
+}
+
+/// Fallback font for platforms without fc-match.
+#[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+fn detect_system_font() -> String {
     "Noto Sans CJK SC, Lilex".into()
 }
 

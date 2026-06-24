@@ -99,6 +99,7 @@ pub struct ZenixApp {
     toast: Option<ToastMessage>,
     context_menu: Option<ContextMenuState>,
     pending_confirm: Option<crate::ui::settings::PendingConfirm>,
+    single_instance_rx: Option<std::sync::mpsc::Receiver<crate::single_instance::Signal>>,
 }
 type FontSelect = SelectState<SearchableVec<String>>;
 
@@ -114,7 +115,7 @@ fn write_to_pty(backend: &Option<BackendTx>, tab: &mut Option<TerminalTab>, byte
 }
 
 impl ZenixApp {
-    pub fn new(_window: &mut Window, cx: &mut Context<Self>, config: ConfigStore) -> Self {
+    pub fn new(_window: &mut Window, cx: &mut Context<Self>, config: ConfigStore, single_instance_rx: Option<std::sync::mpsc::Receiver<crate::single_instance::Signal>>) -> Self {
         let focus_handle = cx.focus_handle();
         let (events_tx, events_rx) = mpsc::channel();
         let font_size = config.terminal_font_size();
@@ -180,6 +181,7 @@ impl ZenixApp {
             toast: None,
             context_menu: None,
             pending_confirm: None,
+            single_instance_rx,
         }
     }
 
@@ -190,6 +192,31 @@ impl ZenixApp {
                 if this.update(cx, |this, cx| {
                     if this.drain_pty() { cx.notify(); }
                 }).is_err() { break; }
+            }
+        }).detach();
+    }
+    fn start_signal_polling(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let rx = self.single_instance_rx.take();
+        let Some(rx) = rx else { return };
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_millis(100)).await;
+                while let Ok(signal) = rx.try_recv() {
+                    match signal {
+                        crate::single_instance::Signal::Focus => {
+                            if let Some(this) = this.upgrade() {
+                                this.update(cx, |_, cx| {
+                                    if let Some(handle) = cx.active_window() {
+                                        cx.update_window(handle, |_, window, _| {
+                                            window.activate_window();
+                                        }).ok();
+                                    }
+                                });
+                            }
+                        }
+                    }
+                }
+                if this.upgrade().is_none() { break; }
             }
         }).detach();
     }
@@ -606,10 +633,10 @@ impl Render for ZenixApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.connected && !self.connect_attempted {
             self.start_event_pump(cx);
+            self.start_signal_polling(window, cx);
             self.connect_herdr(cx);
         }
         if self.connect_ready {
-            self.connect_ready = false;
             if let Some(binary) = herdr::find_herdr_binary().map(|p| p.to_string_lossy().to_string()) {
                 self.spawn_pty(&binary, &["client"], cx);
             }

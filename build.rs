@@ -5,12 +5,12 @@
 
 use std::{env, fs, path::PathBuf};
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
 use std::process::Command;
 
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
     let herdr_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("herdr");
     let profile = env::var("PROFILE").unwrap();
 
@@ -30,7 +30,7 @@ fn main() {
     }
 
     if profile == "release" {
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
         {
             build_herdr(&herdr_dir, name, &dest);
             let seed = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("res").join(name);
@@ -38,7 +38,7 @@ fn main() {
             fs::copy(&dest, &seed).expect("failed to copy herdr seed to res/");
             eprintln!("herdr seed → {}", seed.display());
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(windows)]
         {
             if let Some(sys) = find_system_herdr() {
                 let _ = fs::create_dir_all(dest.parent().unwrap());
@@ -55,14 +55,14 @@ fn main() {
             fs::copy(&sys, &dest).expect("failed to copy system herdr");
             eprintln!("copied system herdr from {}", sys.display());
         } else if env::var("HERDR_BUILD").is_ok() {
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
             {
                 build_herdr(&herdr_dir, name, &dest);
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(windows)]
             {
                 eprintln!(
-                    "NOTE: HERDR_BUILD is Linux-only. Install herdr to PATH on this platform."
+                    "NOTE: HERDR_BUILD is not supported on Windows. Install herdr to PATH."
                 );
             }
         } else {
@@ -77,7 +77,7 @@ fn main() {
     emit(&dest);
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
 fn build_herdr(herdr_dir: &std::path::Path, name: &str, dest: &std::path::Path) {
     eprintln!("building herdr from submodule...");
     let status = Command::new("cargo")
@@ -111,10 +111,18 @@ fn emit(dest: &std::path::Path) {
 fn find_system_herdr() -> Option<PathBuf> {
     let home = home_dir();
     let name = if cfg!(target_os = "windows") { "herdr.exe" } else { "herdr" };
-    let candidates = [
+
+    #[cfg(unix)]
+    let candidates: Vec<PathBuf> = vec![
         home.join(".local/bin").join(name),
         home.join(".cargo/bin").join(name),
     ];
+
+    #[cfg(windows)]
+    let candidates: Vec<PathBuf> = vec![
+        home.join(".cargo/bin").join(name),
+    ];
+
     for c in candidates {
         if c.is_file() { return Some(c); }
     }
@@ -134,5 +142,12 @@ fn home_dir() -> PathBuf {
     if let Ok(profile) = env::var("USERPROFILE") {
         return PathBuf::from(profile);
     }
-    PathBuf::from("/")
+    #[cfg(windows)]
+    {
+        PathBuf::from("C:\\")
+    }
+    #[cfg(not(windows))]
+    {
+        PathBuf::from("/")
+    }
 }

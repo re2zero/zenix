@@ -8,4 +8,5 @@ Terminal=false
 Type=Application
 Categories=Development;TerminalEmulator;
 Keywords=terminal;herdr;ai;coding;
+SingleMainWindow=true
 StartupWMClass=zenix

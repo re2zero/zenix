@@ -2,6 +2,7 @@
 rust_i18n::i18n!("locales");
 
 mod app;
+mod single_instance;
 mod client;
 mod config;
 mod agent;
@@ -72,7 +73,7 @@ fn load_embedded_fonts(cx: &mut App) {
     }
 }
 
-fn open_main_window(cx: &mut App) {
+fn open_main_window(cx: &mut App, single_instance_rx: std::sync::mpsc::Receiver<single_instance::Signal>) {
     let config = config::ConfigStore::load().unwrap_or_default();
 
     // Apply saved locale, falling back to LANG env var
@@ -105,6 +106,7 @@ fn open_main_window(cx: &mut App) {
         window_bounds: bounds.map(gpui::WindowBounds::Windowed),
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         icon: APP_ICON.as_ref().cloned(),
+        app_id: Some("zenix".into()),
         ..gpui::WindowOptions::default()
     };
 
@@ -127,7 +129,7 @@ fn open_main_window(cx: &mut App) {
         let theme = Theme::global_mut(cx);
         theme.font_family = font_family.into();
 
-        let view = cx.new(|cx| ZenixApp::new(window, cx, config));
+        let view = cx.new(|cx| ZenixApp::new(window, cx, config, Some(single_instance_rx)));
         cx.new(|cx| Root::new(view, window, cx))
     })
     .expect("failed to open window");
@@ -140,6 +142,18 @@ fn main() {
         )
         .init();
 
+    // Ensure config dir exists for socket
+    std::fs::create_dir_all(crate::platform::zenix_config_dir()).ok();
+
+    // Acquire single-instance lock
+    let single_instance_rx = match single_instance::try_acquire() {
+        Ok(rx) => rx,
+        Err(e) => {
+            eprintln!("zenix: {}", e);
+            std::process::exit(1);
+        }
+    };
+
     let app = gpui_platform::application()
         .with_assets(Assets)
         .with_quit_mode(gpui::QuitMode::LastWindowClosed);
@@ -149,7 +163,9 @@ fn main() {
         load_embedded_themes(cx);
         load_embedded_fonts(cx);
 
-
-        open_main_window(cx);
+        open_main_window(cx, single_instance_rx);
     });
+
+    // Release lock on exit
+    single_instance::release();
 }
