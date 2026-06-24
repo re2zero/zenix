@@ -15,11 +15,28 @@ mod sys;
 mod terminal;
 mod ui;
 
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use std::sync::{Arc, LazyLock};
+
 use gpui::{App, AppContext, Bounds, point, size};
 use gpui_component::{Root, Theme, ThemeRegistry};
 use gpui_component_assets::Assets;
 
 use crate::app::ZenixApp;
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+static APP_ICON: LazyLock<Option<Arc<image::RgbaImage>>> = LazyLock::new(|| {
+    const BYTES: &[u8] = include_bytes!("../res/zenix.png");
+    image::ImageReader::new(std::io::Cursor::new(BYTES))
+        .with_guessed_format()
+        .ok()
+        .and_then(|r| r.decode().ok())
+        .map(|img| Arc::new(img.into()))
+        .or_else(|| {
+            tracing::warn!("failed to load app icon");
+            None
+        })
+});
 
 const EMBEDDED_THEME_JSONS: &[&str] = &[
     include_str!("../assets/themes/matrix.json"),
@@ -86,6 +103,8 @@ fn open_main_window(cx: &mut App) {
 
     let options = gpui::WindowOptions {
         window_bounds: bounds.map(gpui::WindowBounds::Windowed),
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        icon: APP_ICON.as_ref().cloned(),
         ..gpui::WindowOptions::default()
     };
 
