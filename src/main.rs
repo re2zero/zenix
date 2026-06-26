@@ -1,17 +1,17 @@
 #![windows_subsystem = "windows"]
 rust_i18n::i18n!("locales");
 
+mod agent;
+mod api_provider;
 mod app;
-mod single_instance;
 mod client;
 mod config;
-mod agent;
+mod i18n;
 mod mcp;
 mod platform;
 mod provider;
-mod api_provider;
+mod single_instance;
 mod skills;
-mod i18n;
 mod sys;
 mod terminal;
 mod ui;
@@ -73,7 +73,10 @@ fn load_embedded_fonts(cx: &mut App) {
     }
 }
 
-fn open_main_window(cx: &mut App, single_instance_rx: std::sync::mpsc::Receiver<single_instance::Signal>) {
+fn open_main_window(
+    cx: &mut App,
+    single_instance_rx: std::sync::mpsc::Receiver<single_instance::Signal>,
+) {
     let config = config::ConfigStore::load().unwrap_or_default();
 
     // Apply saved locale, falling back to LANG env var
@@ -90,17 +93,14 @@ fn open_main_window(cx: &mut App, single_instance_rx: std::sync::mpsc::Receiver<
             .unwrap_or_else(|| "en".to_string())
     };
     crate::i18n::set_locale(&locale);
-    let bounds = cx
-        .displays()
-        .first()
-        .map(|display| {
-            let db = display.bounds();
-            let width = db.size.width * 0.8;
-            let height = db.size.height * 0.9;
-            let x = db.origin.x + (db.size.width - width) / 2.0;
-            let y = db.origin.y + (db.size.height - height) / 2.0;
-            Bounds::new(point(x, y), size(width, height))
-        });
+    let bounds = cx.displays().first().map(|display| {
+        let db = display.bounds();
+        let width = db.size.width * 0.8;
+        let height = db.size.height * 0.9;
+        let x = db.origin.x + (db.size.width - width) / 2.0;
+        let y = db.origin.y + (db.size.height - height) / 2.0;
+        Bounds::new(point(x, y), size(width, height))
+    });
 
     let options = gpui::WindowOptions {
         window_bounds: bounds.map(gpui::WindowBounds::Windowed),

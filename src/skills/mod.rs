@@ -9,9 +9,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use serde::{Deserialize, Serialize};
 use crate::platform;
 use crate::provider::ProviderRegistry;
+use serde::{Deserialize, Serialize};
 
 /// Information about a skill installed across agents.
 #[derive(Debug, Clone)]
@@ -28,7 +28,8 @@ pub struct SkillInfo {
 /// Returns Vec<(agent_name, skills_dir)> for agents that support skill directories.
 fn agent_skills_dirs() -> Vec<(String, PathBuf)> {
     let registry = ProviderRegistry::builtin();
-    registry.skills_supporting()
+    registry
+        .skills_supporting()
         .into_iter()
         .filter_map(|prov| {
             let dir = prov.skills_path()?;
@@ -44,17 +45,27 @@ pub fn scan_all_skills() -> HashMap<String, SkillInfo> {
     let mut map: HashMap<String, SkillInfo> = HashMap::new();
 
     for (agent, dir) in agent_skills_dirs() {
-        if !dir.exists() { continue; }
+        if !dir.exists() {
+            continue;
+        }
         let entries = match std::fs::read_dir(&dir) {
             Ok(e) => e,
             Err(_) => continue,
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            if !path.is_dir() { continue; }
+            if !path.is_dir() {
+                continue;
+            }
             // Check if contains SKILL.md
-            if !path.join("SKILL.md").exists() { continue; }
-            let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+            if !path.join("SKILL.md").exists() {
+                continue;
+            }
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
 
             let is_symlink = std::fs::symlink_metadata(&path)
                 .map(|m| m.file_type().is_symlink())
@@ -74,7 +85,11 @@ pub fn scan_all_skills() -> HashMap<String, SkillInfo> {
                     } else {
                         (vec![agent.clone()], vec![])
                     };
-                    SkillInfo { name, source_agents: sources, linked_agents: linked }
+                    SkillInfo {
+                        name,
+                        source_agents: sources,
+                        linked_agents: linked,
+                    }
                 });
         }
     }
@@ -117,19 +132,21 @@ fn source_dir_for(agent: &str, skill_name: &str) -> Option<PathBuf> {
 /// Create a symlink from source skill directory to target agent's skills dir.
 pub fn link_skill(skill_name: &str, target_agent: &str) -> Result<(), String> {
     let skills = scan_all_skills();
-    let info = skills.get(skill_name).ok_or_else(|| format!("skill '{skill_name}' not found"))?;
+    let info = skills
+        .get(skill_name)
+        .ok_or_else(|| format!("skill '{skill_name}' not found"))?;
 
-    let (source_agent, source_dir) = best_source(info)
-        .ok_or_else(|| format!("no source agent found for '{skill_name}'"))?;
+    let (source_agent, source_dir) =
+        best_source(info).ok_or_else(|| format!("no source agent found for '{skill_name}'"))?;
 
-    let target_dir = agent_skills_dirs().into_iter()
+    let target_dir = agent_skills_dirs()
+        .into_iter()
         .find(|(a, _)| a == target_agent)
         .map(|(_, d)| d)
         .ok_or_else(|| format!("target agent '{target_agent}' not supported"))?;
 
     if !target_dir.exists() {
-        std::fs::create_dir_all(&target_dir)
-            .map_err(|e| format!("create target dir: {e}"))?;
+        std::fs::create_dir_all(&target_dir).map_err(|e| format!("create target dir: {e}"))?;
     }
 
     let link_path = target_dir.join(skill_name);
@@ -142,9 +159,43 @@ pub fn link_skill(skill_name: &str, target_agent: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Remove a symlink from target agent's skills dir. NEVER deletes real directories.
+/// Create a symlink from source skill directory to one target agent's skills dir.
+pub fn link_skill_to_agent(skill_name: &str, target_agent: &str) -> Result<(), String> {
+    let skills = scan_all_skills();
+    let info = skills
+        .get(skill_name)
+        .ok_or_else(|| format!("skill '{skill_name}' not found"))?;
+    if info.source_agents.contains(&target_agent.to_string()) {
+        return Ok(());
+    }
+
+    let (source_agent, source_dir) =
+        best_source(info).ok_or_else(|| format!("no source agent found for '{skill_name}'"))?;
+
+    let target_dir = agent_skills_dirs()
+        .into_iter()
+        .find(|(a, _)| a == target_agent)
+        .map(|(_, d)| d)
+        .ok_or_else(|| format!("target agent '{target_agent}' not supported"))?;
+
+    if !target_dir.exists() {
+        std::fs::create_dir_all(&target_dir).map_err(|e| format!("create target dir: {e}"))?;
+    }
+
+    let link_path = target_dir.join(skill_name);
+    if link_path.exists() {
+        return Err(format!("'{skill_name}' already exists in {target_agent}"));
+    }
+
+    platform::symlink_dir(&source_dir, &link_path)
+        .map_err(|e| format!("symlink from {source_agent} to {target_agent}: {e}"))?;
+    Ok(())
+}
+
+/// Remove a symlink from one target agent's skills dir. NEVER deletes real directories.
 pub fn unlink_skill(skill_name: &str, target_agent: &str) -> Result<(), String> {
-    let target_dir = agent_skills_dirs().into_iter()
+    let target_dir = agent_skills_dirs()
+        .into_iter()
         .find(|(a, _)| a == target_agent)
         .map(|(_, d)| d)
         .ok_or_else(|| format!("target agent '{target_agent}' not supported"))?;
@@ -154,14 +205,53 @@ pub fn unlink_skill(skill_name: &str, target_agent: &str) -> Result<(), String> 
         return Err(format!("'{skill_name}' not found in {target_agent}"));
     }
 
-    let metadata = std::fs::symlink_metadata(&link_path)
-        .map_err(|e| format!("stat: {e}"))?;
+    let metadata = std::fs::symlink_metadata(&link_path).map_err(|e| format!("stat: {e}"))?;
 
     if metadata.file_type().is_symlink() {
-        std::fs::remove_file(&link_path)
-            .map_err(|e| format!("unlink: {e}"))
+        std::fs::remove_file(&link_path).map_err(|e| format!("unlink: {e}"))
     } else {
-        Err(format!("'{skill_name}' in {target_agent} is a real directory, not a symlink — refusing to delete"))
+        Err(format!(
+            "'{skill_name}' in {target_agent} is a real directory, not a symlink — refusing to delete"
+        ))
+    }
+}
+
+/// Remove a symlink from one target agent's skills dir.
+pub fn unlink_skill_from_agent(skill_name: &str, target_agent: &str) -> Result<(), String> {
+    unlink_skill(skill_name, target_agent)
+}
+
+/// Move a source skill into the Zenix centralized skills directory.
+pub fn move_skill_to_zenix(skill_name: &str) -> Result<(), String> {
+    let skills = scan_all_skills();
+    let info = skills
+        .get(skill_name)
+        .ok_or_else(|| format!("skill '{skill_name}' not found"))?;
+    if info.source_agents.iter().any(|a| a == "zenix") {
+        return Ok(());
+    }
+
+    let (source_agent, source_dir) =
+        best_source(info).ok_or_else(|| format!("no source agent found for '{skill_name}'"))?;
+    let dest = zenix_skills_dir().join(skill_name);
+    if dest.exists() {
+        return Err(format!(
+            "skill '{skill_name}' already exists in zenix skills"
+        ));
+    }
+
+    copy_dir_recursive(&source_dir, &dest).map_err(|e| format!("copy to zenix: {e}"))?;
+    remove_dir_or_symlink(&source_dir)
+        .map_err(|e| format!("remove source from {source_agent}: {e}"))?;
+    Ok(())
+}
+
+fn remove_dir_or_symlink(path: &std::path::Path) -> Result<(), String> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|e| format!("stat: {e}"))?;
+    if metadata.file_type().is_symlink() {
+        std::fs::remove_file(path).map_err(|e| format!("remove symlink: {e}"))
+    } else {
+        std::fs::remove_dir_all(path).map_err(|e| format!("remove dir: {e}"))
     }
 }
 
@@ -173,16 +263,23 @@ pub fn zenix_skills_dir() -> PathBuf {
 /// List skills in the zenix centralized directory.
 pub fn zenix_skills() -> Vec<SkillInfo> {
     let dir = zenix_skills_dir();
-    if !dir.exists() { return vec![]; }
+    if !dir.exists() {
+        return vec![];
+    }
     let entries = match std::fs::read_dir(&dir) {
         Ok(e) => e,
         Err(_) => return vec![],
     };
-    entries.flatten()
+    entries
+        .flatten()
         .filter(|e| e.path().is_dir() && e.path().join("SKILL.md").exists())
         .map(|e| {
             let name = e.file_name().to_string_lossy().to_string();
-            SkillInfo { name, source_agents: vec!["zenix".into()], linked_agents: vec![] }
+            SkillInfo {
+                name,
+                source_agents: vec!["zenix".into()],
+                linked_agents: vec![],
+            }
         })
         .collect()
 }
@@ -194,9 +291,11 @@ pub fn install_from_git(url: &str) -> Result<String, String> {
     std::fs::create_dir_all(&dir).map_err(|e| format!("create skills dir: {e}"))?;
 
     // Derive skill name from URL: last path segment without .git suffix
-    let name = url.trim_end_matches('/')
+    let name = url
+        .trim_end_matches('/')
         .trim_end_matches(".git")
-        .rsplit('/').next()
+        .rsplit('/')
+        .next()
         .unwrap_or("unknown")
         .to_string();
 
@@ -241,7 +340,8 @@ pub fn install_from_local(local_path: &str) -> Result<String, String> {
     let dir = zenix_skills_dir();
     std::fs::create_dir_all(&dir).map_err(|e| format!("create skills dir: {e}"))?;
 
-    let name = src.file_name()
+    let name = src
+        .file_name()
         .ok_or_else(|| String::from("cannot derive skill name from path"))?
         .to_string_lossy()
         .to_string();
@@ -251,8 +351,7 @@ pub fn install_from_local(local_path: &str) -> Result<String, String> {
         return Err(format!("skill '{name}' already exists"));
     }
 
-    copy_dir_recursive(&src, &dest)
-        .map_err(|e| format!("copy: {e}"))?;
+    copy_dir_recursive(&src, &dest).map_err(|e| format!("copy: {e}"))?;
 
     Ok(name)
 }
@@ -299,8 +398,7 @@ pub fn load_community_skills() -> Vec<CommunitySkill> {
     if !path.exists() {
         return Vec::new();
     }
-    let content = std::fs::read_to_string(&path)
-        .unwrap_or_default();
+    let content = std::fs::read_to_string(&path).unwrap_or_default();
     serde_json::from_str(&content).unwrap_or_default()
 }
 // ── skills.sh API client ─────────────────────────────────────────────
@@ -467,8 +565,7 @@ pub fn install_from_api(skill_id: &str) -> Result<String, String> {
     for file in &files {
         let file_path = dest.join(&file.path);
         if let Some(parent) = file_path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("create parent dir: {e}"))?;
+            std::fs::create_dir_all(parent).map_err(|e| format!("create parent dir: {e}"))?;
         }
         std::fs::write(&file_path, &file.contents)
             .map_err(|e| format!("write file {}: {e}", file.path))?;

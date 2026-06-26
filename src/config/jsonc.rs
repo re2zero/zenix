@@ -98,8 +98,8 @@ pub fn parse_jsonc(raw: &str) -> Result<serde_json::Value, String> {
 /// An empty/nonexistent file returns `serde_json::Value::Null`.
 pub fn read_jsonc_file(path: &Path) -> Result<serde_json::Value, String> {
     let mut content = String::new();
-    let mut file = std::fs::File::open(path)
-        .map_err(|e| format!("open {}: {e}", path.display()))?;
+    let mut file =
+        std::fs::File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
     file.read_to_string(&mut content)
         .map_err(|e| format!("read {}: {e}", path.display()))?;
     if content.trim().is_empty() {
@@ -121,8 +121,8 @@ pub fn parse_json_or_jsonc(raw: &str) -> Result<serde_json::Value, String> {
 /// Read a file that may be JSON or JSONC.
 pub fn read_json_file(path: &Path) -> Result<serde_json::Value, String> {
     let mut content = String::new();
-    let mut file = std::fs::File::open(path)
-        .map_err(|e| format!("open {}: {e}", path.display()))?;
+    let mut file =
+        std::fs::File::open(path).map_err(|e| format!("open {}: {e}", path.display()))?;
     file.read_to_string(&mut content)
         .map_err(|e| format!("read {}: {e}", path.display()))?;
     if content.trim().is_empty() {

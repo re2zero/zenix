@@ -157,7 +157,80 @@ settings:
     add_mcp_extensions:
       en: "+ Add MCP → Extensions"
       zh-CN: "+ 添加 MCP → 扩展"
+    copy:
+      en: "Copy"
+      zh-CN: "复制"
+    context_menu:
+      en: "Agent context menu"
+      zh-CN: "Agent 上下文菜单"
+    agent_name:
+      en: "Agent"
+      zh-CN: "Agent"
+    install_command:
+      en: "Install command"
+      zh-CN: "安装命令"
   no_api_providers:
+    en: "No API provider bound"
+    zh-CN: "未绑定 API 提供商"
+  mcp:
+    title:
+      en: "MCP Servers"
+      zh-CN: "MCP 服务器"
+    no_zenix_servers:
+      en: "No zenix-managed servers"
+      zh-CN: "没有 Zenix 管理的服务器"
+    search:
+      en: "Search servers..."
+      zh-CN: "搜索服务器..."
+    form:
+      name:
+        en: "Name"
+        zh-CN: "名称"
+      type:
+        en: "Type"
+        zh-CN: "类型"
+      command:
+        en: "Command"
+        zh-CN: "命令"
+      args:
+        en: "Args"
+        zh-CN: "参数"
+      env:
+        en: "Env"
+        zh-CN: "环境变量"
+      title_add:
+        en: "Add MCP Server"
+        zh-CN: "添加 MCP 服务器"
+      title_edit:
+        en: "Edit MCP Server"
+        zh-CN: "编辑 MCP 服务器"
+      title_agent_add:
+        en: "Add MCP Server to {agent}"
+        zh-CN: "向 {agent} 添加 MCP 服务器"
+      title_agent_edit:
+        en: "Edit MCP Server for {agent}"
+        zh-CN: "编辑 {agent} 的 MCP 服务器"
+      agent_label:
+        en: "Agent: {agent}"
+        zh-CN: "Agent：{agent}"
+      agent_name:
+        en: "Server name"
+        zh-CN: "服务器名称"
+      agent_type:
+        en: "Type"
+        zh-CN: "类型"
+      agent_command:
+        en: "Command"
+        zh-CN: "命令"
+      agent_args:
+        en: "Args"
+        zh-CN: "参数"
+      agent_env:
+        en: "Env"
+        zh-CN: "环境变量"
+      agent_url:
+        en: "URL"
+        zh-CN: "URL"
     en: "No API provider bound"
     zh-CN: "未绑定 API 提供商"
   mcp:

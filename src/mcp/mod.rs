@@ -11,7 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::config::scanner::ConfigMap;
 use crate::platform;
@@ -54,7 +54,8 @@ pub struct ZenixMcpServer {
 /// Returns (agent_name, mcp_config_path) for agents that use Claude-format JSON MCP configs.
 fn claude_format_configs() -> Vec<(String, PathBuf)> {
     let registry = ProviderRegistry::builtin();
-    registry.mcp_supporting()
+    registry
+        .mcp_supporting()
         .into_iter()
         .filter_map(|prov| {
             let path = prov.mcp_config_path()?;
@@ -71,7 +72,7 @@ pub fn claude_format_agent_names() -> Vec<String> {
 // ── JSON read/write (now using JSONC-aware ConfigMap) ────────────────
 
 /// Parse MCP servers from a Claude-format JSON/JSONC config.
-fn read_claude_mcp(path: &PathBuf) -> Vec<McpServerEntry> {
+fn read_claude_mcp(path: &Path) -> Vec<McpServerEntry> {
     let map = match ConfigMap::load(path) {
         Ok(m) => m,
         Err(_) => return vec![],
@@ -81,36 +82,67 @@ fn read_claude_mcp(path: &PathBuf) -> Vec<McpServerEntry> {
         _ => return vec![],
     };
 
-    servers.iter().map(|(name, cfg)| {
-        McpServerEntry {
+    servers
+        .iter()
+        .map(|(name, cfg)| McpServerEntry {
             name: name.clone(),
-            command: cfg.get("command").and_then(|v| v.as_str()).unwrap_or("").into(),
-            args: cfg.get("args").and_then(|v| v.as_array())
-                .map(|a| a.iter().filter_map(|v| v.as_str().map(|s| s.into())).collect())
+            command: cfg
+                .get("command")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .into(),
+            args: cfg
+                .get("args")
+                .and_then(|v| v.as_array())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(|s| s.into()))
+                        .collect()
+                })
                 .unwrap_or_default(),
-            env: cfg.get("env").and_then(|v| v.as_object())
-                .map(|m| m.iter().map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").into())).collect())
+            env: cfg
+                .get("env")
+                .and_then(|v| v.as_object())
+                .map(|m| {
+                    m.iter()
+                        .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").into()))
+                        .collect()
+                })
                 .unwrap_or_default(),
-            disabled: cfg.get("disabled").and_then(|v| v.as_bool()).unwrap_or(false),
-        }
-    }).collect()
+            disabled: cfg
+                .get("disabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false),
+        })
+        .collect()
 }
 
 /// Write MCP servers to a Claude-format JSON config, preserving all other fields.
 /// Backs up the original file before writing.
-fn write_claude_mcp(path: &PathBuf, servers: &[McpServerEntry]) -> Result<(), String> {
+fn write_claude_mcp(path: &Path, servers: &[McpServerEntry]) -> Result<(), String> {
     let mut map = ConfigMap::load(path)?;
 
     // Build servers object
     let mut servers_map = serde_json::Map::new();
     for s in servers {
         let mut entry = serde_json::Map::new();
-        entry.insert("command".into(), serde_json::Value::String(s.command.clone()));
+        entry.insert(
+            "command".into(),
+            serde_json::Value::String(s.command.clone()),
+        );
         if !s.args.is_empty() {
-            entry.insert("args".into(), s.args.iter().map(|a| serde_json::Value::String(a.clone())).collect());
+            entry.insert(
+                "args".into(),
+                s.args
+                    .iter()
+                    .map(|a| serde_json::Value::String(a.clone()))
+                    .collect(),
+            );
         }
         if !s.env.is_empty() {
-            let env_map: serde_json::Map<String, serde_json::Value> = s.env.iter()
+            let env_map: serde_json::Map<String, serde_json::Value> = s
+                .env
+                .iter()
                 .map(|(k, v)| (k.clone(), serde_json::Value::String(v.clone())))
                 .collect();
             entry.insert("env".into(), serde_json::Value::Object(env_map));
@@ -129,7 +161,8 @@ fn write_claude_mcp(path: &PathBuf, servers: &[McpServerEntry]) -> Result<(), St
 /// Scan all agents and return discovered MCP servers.
 /// Returns Vec<(agent_name, Vec<McpServerEntry>)>.
 pub fn scan_all_mcp_servers() -> Vec<(String, Vec<McpServerEntry>)> {
-    claude_format_configs().into_iter()
+    claude_format_configs()
+        .into_iter()
         .filter_map(|(name, path)| {
             if path.exists() {
                 let servers = read_claude_mcp(&path);
@@ -145,6 +178,87 @@ pub fn scan_all_mcp_servers() -> Vec<(String, Vec<McpServerEntry>)> {
         .collect()
 }
 
+/// Read a per-agent MCP config, creating an empty config when it does not exist.
+pub fn read_agent_mcp_config(agent_name: &str) -> Result<Vec<McpServerEntry>, String> {
+    let (_, path) = claude_format_configs()
+        .into_iter()
+        .find(|(name, _)| name == agent_name)
+        .ok_or_else(|| format!("Unknown agent: {agent_name}"))?;
+    if !path.exists() {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create config directory: {e}"))?;
+        }
+        let map = ConfigMap::load(&path)?;
+        map.save()?;
+    }
+    Ok(read_claude_mcp(&path))
+}
+
+/// Add or update a per-agent MCP server.
+pub fn add_agent_mcp_server(agent_name: &str, server: McpServerEntry) -> Result<(), String> {
+    let mut servers = read_agent_mcp_config(agent_name)?;
+    let index = servers.iter().position(|s| s.name == server.name);
+    if let Some(index) = index {
+        servers[index] = server;
+    } else {
+        servers.push(server);
+    }
+    let (_, path) = claude_format_configs()
+        .into_iter()
+        .find(|(name, _)| name == agent_name)
+        .ok_or_else(|| format!("Unknown agent: {agent_name}"))?;
+    write_claude_mcp(&path, &servers)
+}
+
+/// Edit a per-agent MCP server.
+pub fn edit_agent_mcp_server(
+    agent_name: &str,
+    server_name: &str,
+    server: McpServerEntry,
+) -> Result<(), String> {
+    let (_, path) = claude_format_configs()
+        .into_iter()
+        .find(|(name, _)| name == agent_name)
+        .ok_or_else(|| format!("Unknown agent: {agent_name}"))?;
+    let mut servers = read_claude_mcp(&path);
+    if let Some(index) = servers.iter().position(|s| s.name == server_name) {
+        servers[index] = server;
+        write_claude_mcp(&path, &servers)
+    } else {
+        Err(format!("MCP server not found: {server_name}"))
+    }
+}
+
+/// Remove a per-agent MCP server.
+pub fn remove_agent_mcp_server(agent_name: &str, server_name: &str) -> Result<(), String> {
+    let (_, path) = claude_format_configs()
+        .into_iter()
+        .find(|(name, _)| name == agent_name)
+        .ok_or_else(|| format!("Unknown agent: {agent_name}"))?;
+    let mut servers = read_claude_mcp(&path);
+    servers.retain(|s| s.name != server_name);
+    write_claude_mcp(&path, &servers)
+}
+
+/// Toggle a per-agent MCP server disabled flag.
+pub fn toggle_agent_mcp_server(
+    agent_name: &str,
+    server_name: &str,
+    disabled: bool,
+) -> Result<(), String> {
+    let (_, path) = claude_format_configs()
+        .into_iter()
+        .find(|(name, _)| name == agent_name)
+        .ok_or_else(|| format!("Unknown agent: {agent_name}"))?;
+    let mut servers = read_claude_mcp(&path);
+    if let Some(server) = servers.iter_mut().find(|s| s.name == server_name) {
+        server.disabled = disabled;
+        write_claude_mcp(&path, &servers)
+    } else {
+        Err(format!("MCP server not found: {server_name}"))
+    }
+}
 /// Deduplicate servers by name+command across agents.
 /// Returns a unified list with agent badges.
 pub fn deduplicated_servers(raw: &[(String, Vec<McpServerEntry>)]) -> Vec<UnifiedServer> {
@@ -155,12 +269,20 @@ pub fn deduplicated_servers(raw: &[(String, Vec<McpServerEntry>)]) -> Vec<Unifie
             let key = format!("{}|{}", s.name, s.command);
             map.entry(key)
                 .and_modify(|e| {
-                    if !e.agents.contains(agent) { e.agents.push(agent.clone()); }
-                    if s.disabled { e.disabled_agents.push(agent.clone()); }
+                    if !e.agents.contains(agent) {
+                        e.agents.push(agent.clone());
+                    }
+                    if s.disabled {
+                        e.disabled_agents.push(agent.clone());
+                    }
                 })
                 .or_insert_with(|| {
                     let agents = vec![agent.clone()];
-                    let disabled_agents = if s.disabled { vec![agent.clone()] } else { vec![] };
+                    let disabled_agents = if s.disabled {
+                        vec![agent.clone()]
+                    } else {
+                        vec![]
+                    };
                     UnifiedServer {
                         name: s.name.clone(),
                         command: s.command.clone(),
@@ -190,10 +312,7 @@ pub struct UnifiedServer {
 }
 
 /// Write an MCP server to selected agents' configs.
-pub fn save_mcp_server(
-    server: &UnifiedServer,
-    target_agents: &[String],
-) -> Result<(), String> {
+pub fn save_mcp_server(server: &UnifiedServer, target_agents: &[String]) -> Result<(), String> {
     let entry = McpServerEntry {
         name: server.name.clone(),
         command: server.command.clone(),
@@ -219,7 +338,9 @@ pub fn save_mcp_server(
 /// Remove an MCP server from all agents.
 pub fn remove_mcp_server(name: &str) -> Result<(), String> {
     for (_agent, path) in claude_format_configs() {
-        if !path.exists() { continue; }
+        if !path.exists() {
+            continue;
+        }
         let mut current = read_claude_mcp(&path);
         let before = current.len();
         current.retain(|s| s.name != name);
@@ -232,16 +353,16 @@ pub fn remove_mcp_server(name: &str) -> Result<(), String> {
 
 /// Return only the agent names that use Claude-format configs.
 pub fn claude_format_config_names() -> Vec<String> {
-    claude_format_configs().into_iter().map(|(name, _)| name).collect()
+    claude_format_configs()
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect()
 }
 
 /// Toggle a server's `disabled` field for a specific agent.
-pub fn toggle_mcp_agent(
-    server_name: &str,
-    agent_name: &str,
-    enabled: bool,
-) -> Result<(), String> {
-    let (path, config) = claude_format_configs().into_iter()
+pub fn toggle_mcp_agent(server_name: &str, agent_name: &str, enabled: bool) -> Result<(), String> {
+    let (path, config) = claude_format_configs()
+        .into_iter()
         .find_map(|(name, path)| {
             if name == agent_name && path.exists() {
                 let servers = read_claude_mcp(&path);
@@ -253,7 +374,8 @@ pub fn toggle_mcp_agent(
         .ok_or_else(|| format!("agent '{agent_name}' not found or config missing"))?;
 
     let mut servers = config;
-    let server = servers.iter_mut()
+    let server = servers
+        .iter_mut()
         .find(|s| s.name == server_name)
         .ok_or_else(|| format!("server '{server_name}' not found in agent '{agent_name}'"))?;
     server.disabled = !enabled;
@@ -262,11 +384,9 @@ pub fn toggle_mcp_agent(
 }
 
 /// Remove an MCP server from a specific agent's config.
-pub fn remove_mcp_server_from_agent(
-    server_name: &str,
-    agent_name: &str,
-) -> Result<(), String> {
-    let (path, config) = claude_format_configs().into_iter()
+pub fn remove_mcp_server_from_agent(server_name: &str, agent_name: &str) -> Result<(), String> {
+    let (path, config) = claude_format_configs()
+        .into_iter()
         .find_map(|(name, path)| {
             if name == agent_name && path.exists() {
                 let servers = read_claude_mcp(&path);
@@ -278,20 +398,23 @@ pub fn remove_mcp_server_from_agent(
         .ok_or_else(|| format!("agent '{agent_name}' not found or config missing"))?;
 
     let before = config.len();
-    let servers: Vec<_> = config.into_iter().filter(|s| s.name != server_name).collect();
+    let servers: Vec<_> = config
+        .into_iter()
+        .filter(|s| s.name != server_name)
+        .collect();
     if servers.len() == before {
-        return Err(format!("server '{server_name}' not found in agent '{agent_name}'"));
+        return Err(format!(
+            "server '{server_name}' not found in agent '{agent_name}'"
+        ));
     }
 
     write_claude_mcp(&path, &servers)
 }
 
 /// Toggle a server's `disabled` state (flip) for a specific agent.
-pub fn toggle_mcp_server_for_agent(
-    server_name: &str,
-    agent_name: &str,
-) -> Result<(), String> {
-    let (path, config) = claude_format_configs().into_iter()
+pub fn toggle_mcp_server_for_agent(server_name: &str, agent_name: &str) -> Result<(), String> {
+    let (path, config) = claude_format_configs()
+        .into_iter()
         .find_map(|(name, path)| {
             if name == agent_name && path.exists() {
                 let servers = read_claude_mcp(&path);
@@ -303,7 +426,8 @@ pub fn toggle_mcp_server_for_agent(
         .ok_or_else(|| format!("agent '{agent_name}' not found or config missing"))?;
 
     let mut servers = config;
-    let server = servers.iter_mut()
+    let server = servers
+        .iter_mut()
         .find(|s| s.name == server_name)
         .ok_or_else(|| format!("server '{server_name}' not found in agent '{agent_name}'"))?;
     server.disabled = !server.disabled;
@@ -313,11 +437,16 @@ pub fn toggle_mcp_server_for_agent(
 
 /// Scan MCP servers per agent, returning only agents with non-empty server lists.
 pub fn scan_per_agent_mcp() -> Vec<(String, Vec<McpServerEntry>)> {
-    claude_format_configs().into_iter()
+    claude_format_configs()
+        .into_iter()
         .filter_map(|(name, path)| {
-            if !path.exists() { return None; }
+            if !path.exists() {
+                return None;
+            }
             let servers = read_claude_mcp(&path);
-            if servers.is_empty() { return None; }
+            if servers.is_empty() {
+                return None;
+            }
             Some((name, servers))
         })
         .collect()
@@ -325,10 +454,13 @@ pub fn scan_per_agent_mcp() -> Vec<(String, Vec<McpServerEntry>)> {
 
 /// Read the raw JSON content of a specific agent's MCP config file.
 pub fn read_agent_mcp_json(agent_name: &str) -> Option<String> {
-    let path = claude_format_configs().into_iter()
-        .find_map(|(name, p)| {
-            if name == agent_name && p.exists() { Some(p) } else { None }
-        })?;
+    let path = claude_format_configs().into_iter().find_map(|(name, p)| {
+        if name == agent_name && p.exists() {
+            Some(p)
+        } else {
+            None
+        }
+    })?;
     std::fs::read_to_string(&path).ok()
 }
 
@@ -340,12 +472,15 @@ fn zenix_mcp_path() -> PathBuf {
 
 pub fn load_zenix_mcp_servers() -> Vec<ZenixMcpServer> {
     let path = zenix_mcp_path();
-    if !path.exists() { return vec![]; }
+    if !path.exists() {
+        return vec![];
+    }
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
         Err(_) => return vec![],
     };
-    content.lines()
+    content
+        .lines()
         .filter(|line| !line.trim().is_empty())
         .filter_map(|line| serde_json::from_str(line).ok())
         .collect()
@@ -356,12 +491,20 @@ fn save_zenix_mcp_servers(servers: &[ZenixMcpServer]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("create dir: {e}"))?;
     }
-    let ndjson: String = servers.iter()
+    let ndjson: String = servers
+        .iter()
         .map(|s| serde_json::to_string(s).unwrap_or_default())
         .collect::<Vec<_>>()
         .join("\n");
-    std::fs::write(&path, if ndjson.is_empty() { "".into() } else { format!("{ndjson}\n") })
-        .map_err(|e| format!("write: {e}"))
+    std::fs::write(
+        &path,
+        if ndjson.is_empty() {
+            "".into()
+        } else {
+            format!("{ndjson}\n")
+        },
+    )
+    .map_err(|e| format!("write: {e}"))
 }
 
 pub fn add_zenix_mcp_server(server: &ZenixMcpServer) -> Result<(), String> {
@@ -383,7 +526,9 @@ pub fn remove_zenix_mcp_server(name: &str) -> Result<(), String> {
 
 pub fn toggle_zenix_mcp_agent(server_name: &str, agent_name: &str) -> Result<(), String> {
     let mut servers = load_zenix_mcp_servers();
-    let idx = servers.iter().position(|s| s.name == server_name)
+    let idx = servers
+        .iter()
+        .position(|s| s.name == server_name)
         .ok_or_else(|| format!("server '{server_name}' not found"))?;
     let is_enabled = servers[idx].enabled_agents.iter().any(|a| a == agent_name);
     if is_enabled {
@@ -467,8 +612,13 @@ pub fn test_agent_mcp_server(entry: &McpServerEntry) -> Result<String, String> {
     }
 }
 
-pub fn sync_zenix_server_to_agent(server: &ZenixMcpServer, agent_name: &str, enable: bool) -> Result<(), String> {
-    let config_path = claude_format_configs().into_iter()
+pub fn sync_zenix_server_to_agent(
+    server: &ZenixMcpServer,
+    agent_name: &str,
+    enable: bool,
+) -> Result<(), String> {
+    let config_path = claude_format_configs()
+        .into_iter()
         .find(|(name, _)| name == agent_name)
         .map(|(_, p)| p)
         .ok_or_else(|| format!("unknown agent: {agent_name}"))?;

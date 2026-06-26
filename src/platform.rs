@@ -25,11 +25,7 @@ pub fn env_or_home(var: &str, fallback_suffix: &str) -> Option<PathBuf> {
         }
     }
     let p = home_dir().join(fallback_suffix.trim_start_matches("~/"));
-    if p.exists() {
-        Some(p)
-    } else {
-        None
-    }
+    if p.exists() { Some(p) } else { None }
 }
 
 /// Cross-platform config directory.
@@ -38,11 +34,21 @@ pub fn config_dir() -> PathBuf {
     dirs::config_dir().unwrap_or_else(|| home_dir().join(".config"))
 }
 
-pub fn zenix_config_dir() -> PathBuf { config_dir().join("zenix") }
-pub fn opencode_config_dir() -> PathBuf { config_dir().join("opencode") }
-pub fn omp_config_dir() -> PathBuf { config_dir().join("omp") }
-pub fn kilo_config_dir() -> PathBuf { config_dir().join("kilo") }
-pub fn hermes_config_dir() -> PathBuf { config_dir().join("hermes") }
+pub fn zenix_config_dir() -> PathBuf {
+    config_dir().join("zenix")
+}
+pub fn opencode_config_dir() -> PathBuf {
+    config_dir().join("opencode")
+}
+pub fn omp_config_dir() -> PathBuf {
+    config_dir().join("omp")
+}
+pub fn kilo_config_dir() -> PathBuf {
+    config_dir().join("kilo")
+}
+pub fn hermes_config_dir() -> PathBuf {
+    config_dir().join("hermes")
+}
 
 /// Local bin directory for user-installed binaries.
 pub fn local_bin_dir() -> PathBuf {

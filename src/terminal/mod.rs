@@ -11,15 +11,11 @@ use alacritty_terminal::{
     grid::{Dimensions, Scroll},
     index::{Column, Point, Side},
     selection::{Selection, SelectionType},
-    term::{
-        cell::Cell,
-        viewport_to_point,
-        Config, Term, TermMode,
-    },
+    term::{Config, Term, TermMode, cell::Cell, viewport_to_point},
     vte::ansi::{CursorShape, Processor},
 };
 use anyhow::Context as _;
-use portable_pty::{native_pty_system, CommandBuilder, PtySize};
+use portable_pty::{CommandBuilder, PtySize, native_pty_system};
 
 mod element;
 mod encoding;
@@ -108,14 +104,23 @@ struct TerminalSize {
 
 impl TerminalSize {
     fn new(cols: u16, rows: u16) -> Self {
-        Self { cols: cols.max(1) as usize, rows: rows.max(1) as usize }
+        Self {
+            cols: cols.max(1) as usize,
+            rows: rows.max(1) as usize,
+        }
     }
 }
 
 impl Dimensions for TerminalSize {
-    fn total_lines(&self) -> usize { self.rows }
-    fn screen_lines(&self) -> usize { self.rows }
-    fn columns(&self) -> usize { self.cols }
+    fn total_lines(&self) -> usize {
+        self.rows
+    }
+    fn screen_lines(&self) -> usize {
+        self.rows
+    }
+    fn columns(&self) -> usize {
+        self.cols
+    }
 }
 
 struct HerdrListener {
@@ -144,22 +149,38 @@ impl EventListener for HerdrListener {
 
 // ── TerminalTab ──────────────────────────────────────────────────────
 
-fn new_term(cols: u16, rows: u16, tab_id: String, events: Sender<BackendEvent>) -> Term<HerdrListener> {
+fn new_term(
+    cols: u16,
+    rows: u16,
+    tab_id: String,
+    events: Sender<BackendEvent>,
+) -> Term<HerdrListener> {
     Term::new(
-        Config { scrolling_history: 2000, ..Config::default() },
+        Config {
+            scrolling_history: 2000,
+            ..Config::default()
+        },
         &TerminalSize::new(cols, rows),
         HerdrListener { tab_id, events },
     )
 }
 #[allow(dead_code)]
 impl TerminalTab {
-    pub fn new_local(id: String, title: String, backend: BackendTx, events: Sender<BackendEvent>) -> Self {
+    pub fn new_local(
+        id: String,
+        title: String,
+        backend: BackendTx,
+        events: Sender<BackendEvent>,
+    ) -> Self {
         let tab_id = id.clone();
         Self {
-            id, title, connected: true,
+            id,
+            title,
+            connected: true,
             processor: Processor::new(),
             term: new_term(100, 30, tab_id, events),
-            cols: 100, rows: 30,
+            cols: 100,
+            rows: 30,
             status: "starting".into(),
             backend,
         }
@@ -182,7 +203,9 @@ impl TerminalTab {
             return None;
         }
         let row = content.cursor.point.line.0;
-        if row < 0 || row >= self.rows as i32 { return None; }
+        if row < 0 || row >= self.rows as i32 {
+            return None;
+        }
         Some(CursorState {
             row: row as usize,
             col: content.cursor.point.column.0,
@@ -199,10 +222,18 @@ impl TerminalTab {
         for indexed in content.display_iter {
             let line = indexed.point.line.0;
             let row = line + display_offset;
-            if row < 0 || row >= rows as i32 { continue; }
+            if row < 0 || row >= rows as i32 {
+                continue;
+            }
             let col = indexed.point.column.0 as i32;
-            if col >= cols as i32 { continue; }
-            cells.push(RenderCell { row, col, cell: indexed.cell.clone() });
+            if col >= cols as i32 {
+                continue;
+            }
+            cells.push(RenderCell {
+                row,
+                col,
+                cell: indexed.cell.clone(),
+            });
         }
         RenderSnapshot {
             cells,
@@ -215,7 +246,9 @@ impl TerminalTab {
     }
 
     pub fn scroll_history(&mut self, delta: i32) {
-        if delta != 0 { self.term.scroll_display(Scroll::Delta(delta)); }
+        if delta != 0 {
+            self.term.scroll_display(Scroll::Delta(delta));
+        }
     }
 
     pub fn scroll_to_bottom(&mut self) {
@@ -223,7 +256,9 @@ impl TerminalTab {
     }
 
     pub fn has_selection(&self) -> bool {
-        self.term.selection_to_string().is_some_and(|t| !t.is_empty())
+        self.term
+            .selection_to_string()
+            .is_some_and(|t| !t.is_empty())
     }
 
     pub fn selection_text(&self) -> Option<String> {
@@ -231,13 +266,21 @@ impl TerminalTab {
     }
 
     pub fn begin_selection(&mut self, row: usize, col: usize, side: Side, stype: SelectionType) {
-        let point = viewport_to_point(self.term.grid().display_offset(), Point::new(row, Column(col)));
+        let point = viewport_to_point(
+            self.term.grid().display_offset(),
+            Point::new(row, Column(col)),
+        );
         self.term.selection = Some(Selection::new(stype, point, side));
     }
 
     pub fn update_selection(&mut self, row: usize, col: usize, side: Side) {
-        let point = viewport_to_point(self.term.grid().display_offset(), Point::new(row, Column(col)));
-        if let Some(sel) = &mut self.term.selection { sel.update(point, side); }
+        let point = viewport_to_point(
+            self.term.grid().display_offset(),
+            Point::new(row, Column(col)),
+        );
+        if let Some(sel) = &mut self.term.selection {
+            sel.update(point, side);
+        }
     }
 
     pub fn clear_selection(&mut self) {
@@ -268,15 +311,27 @@ impl TerminalTab {
 }
 
 pub fn spawn_command_in_pty(
-    tab_id: String, program: &str, args: &[&str], cols: u16, rows: u16, events: Sender<BackendEvent>,
+    tab_id: String,
+    program: &str,
+    args: &[&str],
+    cols: u16,
+    rows: u16,
+    events: Sender<BackendEvent>,
 ) -> anyhow::Result<BackendTx> {
     let pty_system = native_pty_system();
     let pair = pty_system
-        .openpty(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 })
+        .openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
         .context("open PTY")?;
 
     let mut cmd = CommandBuilder::new(program);
-    for arg in args { cmd.arg(arg); }
+    for arg in args {
+        cmd.arg(arg);
+    }
     // Prepend ~/.local/bin so the bundled/bootstrapped herdr CLI takes precedence.
     let user_bin = crate::platform::local_bin_dir();
     let path = std::env::var_os("PATH").unwrap_or_default();
@@ -291,7 +346,9 @@ pub fn spawn_command_in_pty(
     #[cfg(windows)]
     cmd.env("USERPROFILE", &home);
     #[cfg(unix)]
-    if let Ok(shell) = std::env::var("SHELL") { cmd.env("SHELL", &shell); }
+    if let Ok(shell) = std::env::var("SHELL") {
+        cmd.env("SHELL", &shell);
+    }
     cmd.env("TERM", "xterm-256color");
     cmd.env("TERM_PROGRAM", "zenix");
 
@@ -309,11 +366,25 @@ pub fn spawn_command_in_pty(
         loop {
             match reader.read(&mut buf) {
                 Ok(0) => break,
-                Ok(n) => { let _ = read_events.send(BackendEvent::Output { tab_id: read_id.clone(), bytes: buf[..n].to_vec() }); }
-                Err(err) => { let _ = read_events.send(BackendEvent::Closed { tab_id: read_id.clone(), reason: format!("read error: {err}") }); return; }
+                Ok(n) => {
+                    let _ = read_events.send(BackendEvent::Output {
+                        tab_id: read_id.clone(),
+                        bytes: buf[..n].to_vec(),
+                    });
+                }
+                Err(err) => {
+                    let _ = read_events.send(BackendEvent::Closed {
+                        tab_id: read_id.clone(),
+                        reason: format!("read error: {err}"),
+                    });
+                    return;
+                }
             }
         }
-        let _ = read_events.send(BackendEvent::Closed { tab_id: read_id, reason: "process exited".into() });
+        let _ = read_events.send(BackendEvent::Closed {
+            tab_id: read_id,
+            reason: "process exited".into(),
+        });
     });
 
     let write_id = tab_id.clone();
@@ -323,13 +394,21 @@ pub fn spawn_command_in_pty(
             match command {
                 BackendCommand::Input(bytes) => {
                     if let Err(err) = writer.write_all(&bytes) {
-                        let _ = write_events.send(BackendEvent::Closed { tab_id: write_id.clone(), reason: format!("write error: {err}") });
+                        let _ = write_events.send(BackendEvent::Closed {
+                            tab_id: write_id.clone(),
+                            reason: format!("write error: {err}"),
+                        });
                         break;
                     }
                     let _ = writer.flush();
                 }
                 BackendCommand::Resize { cols, rows } => {
-                    let _ = master.resize(PtySize { rows, cols, pixel_width: 0, pixel_height: 0 });
+                    let _ = master.resize(PtySize {
+                        rows,
+                        cols,
+                        pixel_width: 0,
+                        pixel_height: 0,
+                    });
                 }
                 BackendCommand::Close => break,
             }
@@ -337,6 +416,9 @@ pub fn spawn_command_in_pty(
         let _ = child.kill();
     });
 
-    let _ = events.send(BackendEvent::Status { tab_id, text: "ready".into() });
+    let _ = events.send(BackendEvent::Status {
+        tab_id,
+        text: "ready".into(),
+    });
     Ok(BackendTx::Local(cmd_tx))
 }

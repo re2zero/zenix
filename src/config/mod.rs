@@ -14,14 +14,30 @@ use std::{fs, path::PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-fn default_terminal_font_size() -> f32 { 14.0 }
-fn default_font_family() -> String { "Noto Sans CJK SC, Lilex".into() }
-fn default_dark_theme_name() -> String { "system".into() }
-fn default_locale() -> String { "en".into() }
-fn default_terminal_cursor_style() -> String { "block".into() }
-fn default_terminal_cursor_blink() -> bool { true }
-fn default_terminal_opacity() -> f32 { 1.0 }
-fn default_terminal_scrollback() -> u32 { 10000 }
+fn default_terminal_font_size() -> f32 {
+    14.0
+}
+fn default_font_family() -> String {
+    "Noto Sans CJK SC, Lilex".into()
+}
+fn default_dark_theme_name() -> String {
+    "system".into()
+}
+fn default_locale() -> String {
+    "en".into()
+}
+fn default_terminal_cursor_style() -> String {
+    "block".into()
+}
+fn default_terminal_cursor_blink() -> bool {
+    true
+}
+fn default_terminal_opacity() -> f32 {
+    1.0
+}
+fn default_terminal_scrollback() -> u32 {
+    10000
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigFile {
@@ -74,7 +90,10 @@ pub struct ConfigStore {
 
 impl Default for ConfigStore {
     fn default() -> Self {
-        Self { path: config_path(), data: ConfigFile::default() }
+        Self {
+            path: config_path(),
+            data: ConfigFile::default(),
+        }
     }
 }
 #[allow(dead_code)]
@@ -94,7 +113,6 @@ impl ConfigStore {
         }
         Ok(store)
     }
-
 
     pub fn terminal_font_size(&self) -> f32 {
         self.data.terminal_font_size
@@ -202,10 +220,7 @@ fn detect_system_font() -> String {
         .args(["-s", ":lang=zh"])
         .output()
     {
-        if let Some(line) = String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .next()
-        {
+        if let Some(line) = String::from_utf8_lossy(&output.stdout).lines().next() {
             if let Some(name) = line.split(':').nth(1) {
                 let name = name.trim();
                 if let Some(start) = name.find('"') {

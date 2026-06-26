@@ -5,17 +5,33 @@ use gpui::Keystroke;
 // ── Key encoding ─────────────────────────────────────────────────────
 
 /// Encode a keyboard keystroke into a terminal escape sequence / byte string.
-pub fn encode_key(keystroke: &Keystroke, app_cursor_mode: bool, option_as_meta: bool) -> Option<Vec<u8>> {
+pub fn encode_key(
+    keystroke: &Keystroke,
+    app_cursor_mode: bool,
+    option_as_meta: bool,
+) -> Option<Vec<u8>> {
     zed_like_to_esc_str(keystroke, app_cursor_mode, option_as_meta)
         .map(|text| text.as_bytes().to_vec())
 }
 
 #[derive(Debug, PartialEq, Eq)]
-enum TerminalModifiers { None, Alt, Ctrl, Shift, CtrlShift, Other }
+enum TerminalModifiers {
+    None,
+    Alt,
+    Ctrl,
+    Shift,
+    CtrlShift,
+    Other,
+}
 
 impl TerminalModifiers {
     fn new(ks: &Keystroke) -> Self {
-        match (ks.modifiers.alt, ks.modifiers.control, ks.modifiers.shift, ks.modifiers.platform) {
+        match (
+            ks.modifiers.alt,
+            ks.modifiers.control,
+            ks.modifiers.shift,
+            ks.modifiers.platform,
+        ) {
             (false, false, false, false) => Self::None,
             (true, false, false, false) => Self::Alt,
             (false, true, false, false) => Self::Ctrl,
@@ -24,11 +40,15 @@ impl TerminalModifiers {
             _ => Self::Other,
         }
     }
-    fn any(&self) -> bool { !matches!(self, Self::None) }
+    fn any(&self) -> bool {
+        !matches!(self, Self::None)
+    }
 }
 
 fn zed_like_to_esc_str(
-    keystroke: &Keystroke, app_cursor_mode: bool, _option_as_meta: bool,
+    keystroke: &Keystroke,
+    app_cursor_mode: bool,
+    _option_as_meta: bool,
 ) -> Option<std::borrow::Cow<'static, str>> {
     let modifiers = TerminalModifiers::new(keystroke);
     let key = keystroke.key.to_ascii_lowercase();
@@ -96,7 +116,9 @@ fn zed_like_to_esc_str(
         ("?", TerminalModifiers::Ctrl) => Some("\x7f"),
         _ => None,
     };
-    if let Some(esc) = manual { return Some(esc.into()); }
+    if let Some(esc) = manual {
+        return Some(esc.into());
+    }
 
     if modifiers.any() {
         let code = modifier_code(keystroke);
@@ -112,7 +134,9 @@ fn zed_like_to_esc_str(
             "home" => Some(format!("\x1b[1;{}H", code)),
             _ => None,
         };
-        if let Some(esc) = modified { return Some(esc.into()); }
+        if let Some(esc) = modified {
+            return Some(esc.into());
+        }
     }
 
     if let Some(text) = &keystroke.key_char {
@@ -126,9 +150,15 @@ fn zed_like_to_esc_str(
 
 fn modifier_code(keystroke: &Keystroke) -> u32 {
     let mut code = 0;
-    if keystroke.modifiers.shift { code |= 1; }
-    if keystroke.modifiers.alt { code |= 1 << 1; }
-    if keystroke.modifiers.control { code |= 1 << 2; }
+    if keystroke.modifiers.shift {
+        code |= 1;
+    }
+    if keystroke.modifiers.alt {
+        code |= 1 << 1;
+    }
+    if keystroke.modifiers.control {
+        code |= 1 << 2;
+    }
     code + 1
 }
 
@@ -136,11 +166,25 @@ fn modifier_code(keystroke: &Keystroke) -> u32 {
 
 /// Encode a mouse event into an SGR escape sequence.
 /// Returns bytes that should be sent to the PTY.
-pub fn encode_mouse_event(row: u16, col: u16, button: u8, pressed: bool, ctrl: bool, shift: bool, meta: bool) -> Vec<u8> {
+pub fn encode_mouse_event(
+    row: u16,
+    col: u16,
+    button: u8,
+    pressed: bool,
+    ctrl: bool,
+    shift: bool,
+    meta: bool,
+) -> Vec<u8> {
     let mut cb = if pressed { button } else { 3u8 };
-    if shift { cb |= 4; }
-    if meta  { cb |= 8; }
-    if ctrl  { cb |= 16; }
+    if shift {
+        cb |= 4;
+    }
+    if meta {
+        cb |= 8;
+    }
+    if ctrl {
+        cb |= 16;
+    }
 
     let motion = 32u8;
     let cb_val = if button >= 32 { cb + motion } else { cb };
@@ -153,27 +197,59 @@ pub fn encode_mouse_event(row: u16, col: u16, button: u8, pressed: bool, ctrl: b
 /// SGR cb = 32 | 3 = 35 ("motion with no button").
 pub fn encode_mouse_motion(row: u16, col: u16, ctrl: bool, shift: bool, meta: bool) -> Vec<u8> {
     let mut cb = 35u8; // motion(32) | release(3)
-    if shift { cb |= 4; }
-    if meta  { cb |= 8; }
-    if ctrl  { cb |= 16; }
+    if shift {
+        cb |= 4;
+    }
+    if meta {
+        cb |= 8;
+    }
+    if ctrl {
+        cb |= 16;
+    }
     format!("\x1b[<{};{};{}M", cb, col + 1, row + 1).into_bytes()
 }
 
 /// Encode a drag event (button held during mouse_motion_mode).
 /// SGR cb = motion(32) | button_code.
-pub fn encode_mouse_drag(row: u16, col: u16, button: u8, ctrl: bool, shift: bool, meta: bool) -> Vec<u8> {
+pub fn encode_mouse_drag(
+    row: u16,
+    col: u16,
+    button: u8,
+    ctrl: bool,
+    shift: bool,
+    meta: bool,
+) -> Vec<u8> {
     let mut cb = 32u8 | button;
-    if shift { cb |= 4; }
-    if meta  { cb |= 8; }
-    if ctrl  { cb |= 16; }
+    if shift {
+        cb |= 4;
+    }
+    if meta {
+        cb |= 8;
+    }
+    if ctrl {
+        cb |= 16;
+    }
     format!("\x1b[<{};{};{}M", cb, col + 1, row + 1).into_bytes()
 }
 
 /// Encode a scroll event.
-pub fn encode_mouse_scroll(row: u16, col: u16, up: bool, ctrl: bool, shift: bool, meta: bool) -> Vec<u8> {
+pub fn encode_mouse_scroll(
+    row: u16,
+    col: u16,
+    up: bool,
+    ctrl: bool,
+    shift: bool,
+    meta: bool,
+) -> Vec<u8> {
     let mut cb = if up { 64u8 } else { 65u8 };
-    if shift { cb |= 4; }
-    if meta  { cb |= 8; }
-    if ctrl  { cb |= 16; }
+    if shift {
+        cb |= 4;
+    }
+    if meta {
+        cb |= 8;
+    }
+    if ctrl {
+        cb |= 16;
+    }
     format!("\x1b[<{};{};{}M", cb, col + 1, row + 1).into_bytes()
 }

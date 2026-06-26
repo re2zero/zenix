@@ -52,12 +52,13 @@ pub fn ensure_herdr() -> Option<PathBuf> {
     None
 }
 /// Find the herdr binary (legacy — prefer `ensure_herdr()`).
-pub fn find_herdr_binary() -> Option<PathBuf> { ensure_herdr() }
+pub fn find_herdr_binary() -> Option<PathBuf> {
+    ensure_herdr()
+}
 
 /// Compute the herdr client socket path.
 pub fn herdr_socket_path() -> PathBuf {
-    platform::config_dir()
-        .join("herdr/herdr-client.sock")
+    platform::config_dir().join("herdr/herdr-client.sock")
 }
 
 /// Start the herdr server in the background.
@@ -99,11 +100,7 @@ pub fn is_socket_ready(path: &std::path::Path) -> bool {
 
     #[cfg(windows)]
     {
-        use interprocess::local_socket::{
-            prelude::*,
-            GenericNamespaced,
-            Stream as LocalStream,
-        };
+        use interprocess::local_socket::{GenericNamespaced, Stream as LocalStream, prelude::*};
         let name = match path
             .to_string_lossy()
             .to_string()

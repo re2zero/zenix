@@ -4,8 +4,8 @@
 //! config directory resolver, and which capabilities it supports
 //! (MCP config, skills directory).
 
-use crate::platform;
 use super::Provider;
+use crate::platform;
 
 /// Returns the complete list of built-in providers.
 pub fn all_providers() -> Vec<Provider> {

@@ -14,13 +14,20 @@ fn main() {
     let herdr_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("herdr");
     let profile = env::var("PROFILE").unwrap();
 
-    let name = if cfg!(target_os = "windows") { "herdr.exe" } else { "herdr" };
+    let name = if cfg!(target_os = "windows") {
+        "herdr.exe"
+    } else {
+        "herdr"
+    };
 
     // Destination: target/<profile>/herdr (alongside zenix binary)
     let dest = out_dir
-        .parent().unwrap()      // .../build/<crate>-<hash>/
-        .parent().unwrap()      // .../build/
-        .parent().unwrap()      // .../target/<profile>/
+        .parent()
+        .unwrap() // .../build/<crate>-<hash>/
+        .parent()
+        .unwrap() // .../build/
+        .parent()
+        .unwrap() // .../target/<profile>/
         .join(name);
 
     // Cached from prior build
@@ -33,7 +40,9 @@ fn main() {
         #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
         {
             build_herdr(&herdr_dir, name, &dest);
-            let seed = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("res").join(name);
+            let seed = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
+                .join("res")
+                .join(name);
             let _ = fs::create_dir_all(seed.parent().unwrap());
             fs::copy(&dest, &seed).expect("failed to copy herdr seed to res/");
             eprintln!("herdr seed → {}", seed.display());
@@ -61,9 +70,7 @@ fn main() {
             }
             #[cfg(windows)]
             {
-                eprintln!(
-                    "NOTE: HERDR_BUILD is not supported on Windows. Install herdr to PATH."
-                );
+                eprintln!("NOTE: HERDR_BUILD is not supported on Windows. Install herdr to PATH.");
             }
         } else {
             eprintln!(
@@ -94,7 +101,10 @@ fn build_herdr(herdr_dir: &std::path::Path, name: &str, dest: &std::path::Path) 
                 fs::copy(&src, dest).expect("failed to copy herdr binary");
                 eprintln!("herdr built → {}", dest.display());
             } else {
-                panic!("herdr build succeeded but binary missing at {}", src.display());
+                panic!(
+                    "herdr build succeeded but binary missing at {}",
+                    src.display()
+                );
             }
         }
         Ok(s) => panic!("herdr build failed: {}", s),
@@ -110,7 +120,11 @@ fn emit(dest: &std::path::Path) {
 
 fn find_system_herdr() -> Option<PathBuf> {
     let home = home_dir();
-    let name = if cfg!(target_os = "windows") { "herdr.exe" } else { "herdr" };
+    let name = if cfg!(target_os = "windows") {
+        "herdr.exe"
+    } else {
+        "herdr"
+    };
 
     #[cfg(unix)]
     let candidates: Vec<PathBuf> = vec![
@@ -119,17 +133,19 @@ fn find_system_herdr() -> Option<PathBuf> {
     ];
 
     #[cfg(windows)]
-    let candidates: Vec<PathBuf> = vec![
-        home.join(".cargo/bin").join(name),
-    ];
+    let candidates: Vec<PathBuf> = vec![home.join(".cargo/bin").join(name)];
 
     for c in candidates {
-        if c.is_file() { return Some(c); }
+        if c.is_file() {
+            return Some(c);
+        }
     }
     if let Ok(path) = env::var("PATH") {
         for dir in env::split_paths(&path) {
             let c = dir.join(name);
-            if c.is_file() { return Some(c); }
+            if c.is_file() {
+                return Some(c);
+            }
         }
     }
     None

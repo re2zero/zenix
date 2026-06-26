@@ -87,7 +87,8 @@ impl ProviderRegistry {
 
     /// MCP-supporting provider names (sorted).
     pub fn mcp_agent_names(&self) -> Vec<String> {
-        let mut names: Vec<String> = self.mcp_supporting()
+        let mut names: Vec<String> = self
+            .mcp_supporting()
             .iter()
             .map(|p| p.name.to_string())
             .collect();
@@ -97,12 +98,16 @@ impl ProviderRegistry {
 
     /// Providers that support skill directories.
     pub fn skills_supporting(&self) -> Vec<&Provider> {
-        self.providers.iter().filter(|p| p.supports_skills()).collect()
+        self.providers
+            .iter()
+            .filter(|p| p.supports_skills())
+            .collect()
     }
 
     /// Skills-supporting provider names (sorted).
     pub fn skill_agent_names(&self) -> Vec<String> {
-        let mut names: Vec<String> = self.skills_supporting()
+        let mut names: Vec<String> = self
+            .skills_supporting()
             .iter()
             .map(|p| p.name.to_string())
             .collect();

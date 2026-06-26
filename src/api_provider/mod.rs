@@ -34,7 +34,9 @@ pub enum ThinkingLevel {
 }
 
 impl Default for ThinkingLevel {
-    fn default() -> Self { ThinkingLevel::Medium }
+    fn default() -> Self {
+        ThinkingLevel::Medium
+    }
 }
 
 impl ThinkingLevel {
@@ -48,7 +50,12 @@ impl ThinkingLevel {
     }
 
     pub fn all() -> &'static [ThinkingLevel] {
-        &[ThinkingLevel::Low, ThinkingLevel::Medium, ThinkingLevel::High, ThinkingLevel::XHigh]
+        &[
+            ThinkingLevel::Low,
+            ThinkingLevel::Medium,
+            ThinkingLevel::High,
+            ThinkingLevel::XHigh,
+        ]
     }
 }
 
@@ -111,16 +118,49 @@ impl ApiFormat {
     pub fn presets(&self) -> Vec<ProviderPreset> {
         match self {
             ApiFormat::OpenAI => vec![
-                ProviderPreset { name: "OpenAI", base_url: "https://api.openai.com/v1", suffix: "/v1/chat/completions", format: ApiFormat::OpenAI },
-                ProviderPreset { name: "Groq", base_url: "https://api.groq.com/openai/v1", suffix: "/v1/chat/completions", format: ApiFormat::OpenAI },
-                ProviderPreset { name: "DeepSeek", base_url: "https://api.deepseek.com/v1", suffix: "/v1/chat/completions", format: ApiFormat::OpenAI },
-                ProviderPreset { name: "Together", base_url: "https://api.together.xyz/v1", suffix: "/v1/chat/completions", format: ApiFormat::OpenAI },
-                ProviderPreset { name: "OpenRouter", base_url: "https://openrouter.ai/api/v1", suffix: "/v1/chat/completions", format: ApiFormat::OpenAI },
-                ProviderPreset { name: "Ollama", base_url: "http://localhost:11434/v1", suffix: "/v1/chat/completions", format: ApiFormat::OpenAI },
+                ProviderPreset {
+                    name: "OpenAI",
+                    base_url: "https://api.openai.com/v1",
+                    suffix: "/v1/chat/completions",
+                    format: ApiFormat::OpenAI,
+                },
+                ProviderPreset {
+                    name: "Groq",
+                    base_url: "https://api.groq.com/openai/v1",
+                    suffix: "/v1/chat/completions",
+                    format: ApiFormat::OpenAI,
+                },
+                ProviderPreset {
+                    name: "DeepSeek",
+                    base_url: "https://api.deepseek.com/v1",
+                    suffix: "/v1/chat/completions",
+                    format: ApiFormat::OpenAI,
+                },
+                ProviderPreset {
+                    name: "Together",
+                    base_url: "https://api.together.xyz/v1",
+                    suffix: "/v1/chat/completions",
+                    format: ApiFormat::OpenAI,
+                },
+                ProviderPreset {
+                    name: "OpenRouter",
+                    base_url: "https://openrouter.ai/api/v1",
+                    suffix: "/v1/chat/completions",
+                    format: ApiFormat::OpenAI,
+                },
+                ProviderPreset {
+                    name: "Ollama",
+                    base_url: "http://localhost:11434/v1",
+                    suffix: "/v1/chat/completions",
+                    format: ApiFormat::OpenAI,
+                },
             ],
-            ApiFormat::Anthropic => vec![
-                ProviderPreset { name: "Anthropic", base_url: "https://api.anthropic.com/v1", suffix: "/v1/messages", format: ApiFormat::Anthropic },
-            ],
+            ApiFormat::Anthropic => vec![ProviderPreset {
+                name: "Anthropic",
+                base_url: "https://api.anthropic.com/v1",
+                suffix: "/v1/messages",
+                format: ApiFormat::Anthropic,
+            }],
         }
     }
 }
@@ -192,7 +232,10 @@ impl ApiProviderConfig {
 
         let mut options = serde_json::Map::new();
         options.insert("baseURL".into(), serde_json::Value::String(base_url));
-        options.insert("apiKey".into(), serde_json::Value::String(self.api_key.clone()));
+        options.insert(
+            "apiKey".into(),
+            serde_json::Value::String(self.api_key.clone()),
+        );
 
         serde_json::json!({
             "npm": "@ai-sdk/openai-compatible",
@@ -234,7 +277,10 @@ impl ApiProviderConfig {
     pub fn to_openai_env(&self) -> HashMap<String, String> {
         let mut env = HashMap::new();
         env.insert("OPENAI_API_KEY".into(), self.api_key.clone());
-        env.insert("OPENAI_BASE_URL".into(), self.base_url.trim_end_matches('/').to_string());
+        env.insert(
+            "OPENAI_BASE_URL".into(),
+            self.base_url.trim_end_matches('/').to_string(),
+        );
         env.insert("OPENAI_MODEL".into(), self.model.clone());
         env
     }
@@ -249,10 +295,12 @@ impl ApiProviderConfig {
 /// - Others: writes OpenAI-compatible env vars (best-effort)
 pub fn sync_api_to_agent(provider: &ApiProviderConfig, agent_name: &str) -> Result<(), String> {
     let registry = crate::provider::ProviderRegistry::builtin();
-    let prov = registry.find(agent_name)
+    let prov = registry
+        .find(agent_name)
         .ok_or_else(|| format!("unknown agent: {agent_name}"))?;
 
-    let config_path = prov.mcp_config_path()
+    let config_path = prov
+        .mcp_config_path()
         .or_else(|| {
             // Some agents don't have mcp_config_file but might have a config dir
             (prov.config_dir)().map(|d| d.join("config.json"))
@@ -260,15 +308,15 @@ pub fn sync_api_to_agent(provider: &ApiProviderConfig, agent_name: &str) -> Resu
         .ok_or_else(|| format!("no config path for agent: {agent_name}"))?;
 
     if let Some(parent) = config_path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("create dir: {e}"))?;
+        std::fs::create_dir_all(parent).map_err(|e| format!("create dir: {e}"))?;
     }
 
     match agent_name {
         "claude" => {
             let env = provider.to_claude_env();
             let mut map = crate::config::scanner::ConfigMap::load(&config_path)?;
-            let env_value: serde_json::Value = env.into_iter()
+            let env_value: serde_json::Value = env
+                .into_iter()
                 .map(|(k, v)| (k, serde_json::Value::String(v)))
                 .collect::<serde_json::Map<_, _>>()
                 .into();
@@ -285,7 +333,8 @@ pub fn sync_api_to_agent(provider: &ApiProviderConfig, agent_name: &str) -> Resu
             // Generic: write OpenAI env vars for agents that support env config
             let env = provider.to_openai_env();
             let mut map = crate::config::scanner::ConfigMap::load(&config_path)?;
-            let env_value: serde_json::Value = env.into_iter()
+            let env_value: serde_json::Value = env
+                .into_iter()
                 .map(|(k, v)| (k, serde_json::Value::String(v)))
                 .collect::<serde_json::Map<_, _>>()
                 .into();
@@ -298,14 +347,18 @@ pub fn sync_api_to_agent(provider: &ApiProviderConfig, agent_name: &str) -> Resu
 /// Remove a provider from a specific agent's config.
 pub fn unsync_api_from_agent(provider_name: &str, agent_name: &str) -> Result<(), String> {
     let registry = crate::provider::ProviderRegistry::builtin();
-    let prov = registry.find(agent_name)
+    let prov = registry
+        .find(agent_name)
         .ok_or_else(|| format!("unknown agent: {agent_name}"))?;
 
-    let config_path = prov.mcp_config_path()
+    let config_path = prov
+        .mcp_config_path()
         .or_else(|| (prov.config_dir)().map(|d| d.join("config.json")))
         .ok_or_else(|| format!("no config path for agent: {agent_name}"))?;
 
-    if !config_path.exists() { return Ok(()); }
+    if !config_path.exists() {
+        return Ok(());
+    }
 
     match agent_name {
         "opencode" => {
@@ -317,9 +370,17 @@ pub fn unsync_api_from_agent(provider_name: &str, agent_name: &str) -> Result<()
             // Remove from env section
             let mut map = crate::config::scanner::ConfigMap::load(&config_path)?;
             // Only remove known env keys
-            for key in &["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_MODEL",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL",
-                "OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL"] {
+            for key in &[
+                "ANTHROPIC_BASE_URL",
+                "ANTHROPIC_AUTH_TOKEN",
+                "ANTHROPIC_MODEL",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                "OPENAI_API_KEY",
+                "OPENAI_BASE_URL",
+                "OPENAI_MODEL",
+            ] {
                 map.remove(&["env", key]);
             }
             map.save()
@@ -484,7 +545,10 @@ mod tests {
             url_suffix: "/v1/chat/completions".into(),
             enabled_agents: vec![],
         };
-        assert_eq!(cfg.endpoint_url(), "https://api.openai.com/v1/chat/completions");
+        assert_eq!(
+            cfg.endpoint_url(),
+            "https://api.openai.com/v1/chat/completions"
+        );
     }
 
     #[test]
@@ -501,7 +565,10 @@ mod tests {
         };
         let prov = cfg.to_opencode_provider();
         assert_eq!(prov["npm"].as_str().unwrap(), "@ai-sdk/openai-compatible");
-        assert_eq!(prov["options"]["baseURL"].as_str().unwrap(), "https://ai.xxx.com/v1/chat/completions");
+        assert_eq!(
+            prov["options"]["baseURL"].as_str().unwrap(),
+            "https://ai.xxx.com/v1/chat/completions"
+        );
         assert_eq!(prov["models"]["glm-5"]["name"].as_str().unwrap(), "glm-5");
     }
 
