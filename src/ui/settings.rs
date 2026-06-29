@@ -23,6 +23,44 @@ use gpui_component::{
 
 use super::ThemeCallback;
 
+
+// ── Settings backdrop element with hitbox ─────────────────────────────
+
+/// Creates a settings dialog backdrop that covers the entire window,
+/// intercepts mouse events, and shows an arrow cursor.
+pub fn settings_backdrop(
+    win_w: f32,
+    win_h: f32,
+    on_close: Rc<CloseCb>,
+    dialog: AnyElement,
+) -> impl IntoElement {
+    div()
+        .absolute()
+        .top(px(0.))
+        .left(px(0.))
+        .w(px(win_w))
+        .h(px(win_h))
+        .bg(gpui::rgba(0x000000AA))
+        .cursor_default()
+        .on_mouse_down(gpui::MouseButton::Left, {
+            let oc = on_close.clone();
+            move |_: &gpui::MouseDownEvent, w: &mut Window, a: &mut gpui::App| {
+                oc(w, a);
+            }
+        })
+        .child(
+            div()
+                .absolute()
+                .top(px(0.))
+                .left(px(0.))
+                .w(px(win_w))
+                .h(px(win_h))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(dialog)
+        )
+}
 pub type ActionCb<T> = Box<dyn Fn(T, &mut Window, &mut gpui::App)>;
 pub type SharedActionCb<T> = Rc<Box<dyn Fn(T, &mut Window, &mut gpui::App)>>;
 pub type CloseCb = Box<dyn Fn(&mut Window, &mut gpui::App)>;
@@ -341,102 +379,75 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
         t("settings.tab.extensions"),
     ];
 
-    div()
-        .id("settings-backdrop")
-        .absolute()
-        .top_0().left_0()
-        .w(px(win_w)).h(px(win_h))
-        .bg(gpui::rgba(0x000000AA))
-        .flex().items_center().justify_center()
-        .on_mouse_down(gpui::MouseButton::Left, |_: &gpui::MouseDownEvent, _: &mut Window, _: &mut gpui::App| {})
-        .on_mouse_down(gpui::MouseButton::Right, {
-            let ocmd = ocmd.clone();
-            move |_: &gpui::MouseDownEvent, w: &mut Window, a: &mut gpui::App| {
-                ocmd((), w, a);
-            }
-        })
-        .on_key_down({
-            let oc = oc.clone();
-            move |event: &gpui::KeyDownEvent, w: &mut Window, a: &mut gpui::App| {
-                if event.keystroke.key == "escape" {
-                    oc(w, a);
-                }
-            }
-        })
-        .on_click({
-            let oc = oc.clone();
-            move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| { oc(w, a); }
-        })
+    let dialog = div()
+        .id("settings-dialog")
+        .w(px(dialog_w)).h(px(dialog_h))
+        .bg(gpui::rgba(0x1e1e2eff))
+        .border_1().border_color(gpui::rgba(0x45475aff))
+        .rounded_lg().shadow_lg()
+        .font_family(font_family)
+        .flex().flex_col()
+        .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        // Header with close button
         .child(
-            div()
-                .id("settings-dialog")
-                .w(px(dialog_w)).h(px(dialog_h))
-                .bg(gpui::rgba(0x1e1e2eff))
-                .border_1().border_color(gpui::rgba(0x45475aff))
-                .rounded_lg().shadow_lg()
-                .font_family(font_family)
-                .flex().flex_col()
-                .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                // Header with close button
+            h_flex().flex_none().justify_between().items_center()
+                .px(px(16.)).py(px(8.))
+                .border_b_1().border_color(gpui::rgba(0x45475a33))
+                .child(txt(px(14.)).font_weight(gpui::FontWeight::BOLD).child(t("settings.title")))
                 .child(
-                    h_flex().flex_none().justify_between().items_center()
-                        .px(px(16.)).py(px(8.))
-                        .border_b_1().border_color(gpui::rgba(0x45475a33))
-                        .child(txt(px(14.)).font_weight(gpui::FontWeight::BOLD).child(t("settings.title")))
-                        .child(
-                            div().id("close-btn").w(px(28.)).h(px(28.)).rounded_md()
-                                .flex().items_center().justify_center()
-                                .cursor_pointer()
-                                .hover(|d| d.bg(gpui::rgba(0xFFFFFF14)))
-                                .child(txt(px(14.)).text_color(gpui::rgba(0x888888FF)).child("\u{2715}"))
-                                .on_click({
-                                    let oc = oc.clone();
-                                    move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
-                                        oc(w, a);
-                                    }
-                                })
-                        )
+                    div().id("close-btn").w(px(28.)).h(px(28.)).rounded_md()
+                        .flex().items_center().justify_center()
+                        .cursor_pointer()
+                        .hover(|d| d.bg(gpui::rgba(0xFFFFFF14)))
+                        .child(txt(px(14.)).text_color(gpui::rgba(0x888888FF)).child("\u{2715}"))
+                        .on_click({
+                            let oc = oc.clone();
+                            move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                                oc(w, a);
+                            }
+                        })
                 )
-                // Left panel: tabs
-                .child(
-                    h_flex().flex_none().h_full()
-                    .child(
-                        v_flex().flex_none().w(px(TAB_PANEL_W)).h_full().py_2()
-                        .children((0..tab_labels.len()).map(|i| {
-                            let label = tab_labels[i].clone();
-                            let otc = otc.clone();
-                            let is_active = active_tab_c == i;
-                            Button::new(format!("tab-{i}"))
-                                .compact()
-                                .label(label)
-                                .when(is_active, |b| b.primary())
-                                .when(!is_active, |b| b.ghost())
-                                .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| otc(i, w, a))
-                                .into_any_element()
-                        }))
-                    )
-                    // Body: content area
-                    .child(
-                        div().flex_grow(1.0).min_h_0().overflow_y_scrollbar().p(px(20.))
-                        .child(tab_content(active_tab, font_size, current_theme_name, theme_buttons,
-                            on_font_down, on_font_up, locale, on_locale_change,
-                            agents, selected_agent, &oas,
-                            mcp_zenix_servers, mcp_per_agent, mcp_form,
-                            mcp_available_agents, skills, skill_dialog_input, skill_dialog_mode,
-                            &osa, &oma,
-                            api_providers, api_provider_form, &oaa,
-                            font_select,
-                            active_extension_subtab, &oet,
-                            mcp_test_results, api_test_results,
-                            agent_search, &oat, &otc, agent_search_input, &oati, agent_installed_only,
-                            active_skills_subtab, skill_search, skill_search_input,
-                            mcp_search, mcp_search_input,
-                            api_search, api_search_input,
-                            terminal_cursor_blink, terminal_cursor_style,
-                            terminal_opacity, terminal_scrollback,
-                            &ota, market_skills, market_loading, market_error))
-                    )
-                )
+        )
+        // Left panel: tabs
+        .child(
+            h_flex().flex_none().h_full()
+            .child(
+                v_flex().flex_none().w(px(TAB_PANEL_W)).h_full().py_2()
+                .children((0..tab_labels.len()).map(|i| {
+                    let label = tab_labels[i].clone();
+                    let otc = otc.clone();
+                    let is_active = active_tab_c == i;
+                    Button::new(format!("tab-{i}"))
+                        .cursor_pointer()
+                        .compact()
+                        .label(label)
+                        .when(is_active, |b| b.primary())
+                        .when(!is_active, |b| b.ghost())
+                        .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| otc(i, w, a))
+                        .into_any_element()
+                }))
+            )
+            // Body: content area
+            .child(
+                div().flex_grow(1.0).min_h_0().overflow_y_scrollbar().p(px(20.))
+                .child(tab_content(active_tab, font_size, current_theme_name, theme_buttons,
+                    on_font_down, on_font_up, locale, on_locale_change,
+                    agents, selected_agent, &oas,
+                    mcp_zenix_servers, mcp_per_agent, mcp_form,
+                    mcp_available_agents, skills, skill_dialog_input, skill_dialog_mode,
+                    &osa, &oma,
+                    api_providers, api_provider_form, &oaa,
+                    font_select,
+                    active_extension_subtab, &oet,
+                    mcp_test_results, api_test_results,
+                    agent_search, &oat, &otc, agent_search_input, &oati, agent_installed_only,
+                    active_skills_subtab, skill_search, skill_search_input,
+                    mcp_search, mcp_search_input,
+                    api_search, api_search_input,
+                    terminal_cursor_blink, terminal_cursor_style,
+                    terminal_opacity, terminal_scrollback,
+                    &ota, market_skills, market_loading, market_error))
+            )
         )
         // Toast overlay
         .when_some(toast, |el, t| {
@@ -486,12 +497,18 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
                             .child(v_flex().gap(px(12.))
                                 .child(txt(px(14.)).child(pc.message()))
                                 .child(h_flex().gap(px(8.)).justify_end()
-                                    .child(Button::new("confirm-yes").primary().label(t("general.yes"))
+                                    .child(Button::new("confirm-yes")
+                                        .cursor_pointer()
+                                        .primary()
+                                        .label(t("general.yes"))
                                         .on_click({
                                             let oca = oca.clone();
                                             move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| oca(true, w, a)
                                         }))
-                                    .child(Button::new("confirm-no").ghost().label(t("general.no"))
+                                    .child(Button::new("confirm-no")
+                                        .cursor_pointer()
+                                        .ghost()
+                                        .label(t("general.no"))
                                         .on_click({
                                             let oca = oca.clone();
                                             move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| oca(false, w, a)
@@ -501,6 +518,9 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
                     )
             )
         })
+        .into_any_element();
+
+    settings_backdrop(win_w, win_h, oc, dialog)
 }
 fn tab_content(
     active_tab: usize,
@@ -741,6 +761,7 @@ fn tab_terminal(
         let ota = ota.clone();
         let s = style.to_string();
         Button::new(format!("cstyle-{style}"))
+            .cursor_pointer()
             .when(sel, |b| b.primary())
             .when(!sel, |b| b.ghost())
             .compact()
@@ -919,10 +940,14 @@ fn tab_agent_cli(
     v_flex().gap(px(8.)).h_full()
         .child(h_flex().gap(px(8.)).items_center().justify_between()
             .child(setting_group_header(t("settings.tab.agent_cli")))
-            .child(Button::new("agent-refresh").ghost().label(t("settings.agent_cli.refresh")).on_click({
-                let oar = on_agent_refresh.clone();
-                move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| oar((), w, a)
-            }))
+            .child(Button::new("agent-refresh")
+                .cursor_pointer()
+                .ghost()
+                .label(t("settings.agent_cli.refresh"))
+                .on_click({
+                    let oar = on_agent_refresh.clone();
+                    move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| oar((), w, a)
+                }))
         )
         .child(
             h_flex().flex_grow(1.0).min_h_0().gap(px(8.))
@@ -945,8 +970,11 @@ fn tab_agent_cli(
                                     h_flex().gap(px(4.)).px(px(6.)).py(px(3.))
                                         .border_b_1().border_color(gpui::rgba(0x45475a33))
                                         .child(Button::new("installed-only")
-                                            .when(agent_installed_only, |b| b.primary()).when(!agent_installed_only, |b| b.ghost())
-                                            .compact().label(installed_label)
+                                            .cursor_pointer()
+                                            .when(agent_installed_only, |b| b.primary())
+                                            .when(!agent_installed_only, |b| b.ghost())
+                                            .compact()
+                                            .label(installed_label)
                                             .on_click(installed_toggle_cb)
                                         )
                                         .child(txt(px(10.)).text_color(gpui::rgba(0x666666FF)).child(format!("{} / {}", filtered_agents.len(), agents.len())))
@@ -1337,6 +1365,7 @@ fn tab_mcp_content(
                 .child(setting_group_header(t("settings.mcp.title")))
                 .child(
                     Button::new("add-mcp")
+                        .cursor_pointer()
                         .ghost()
                         .label(t("mcp.add_server"))
                         .on_click(add_cb),
@@ -1470,6 +1499,7 @@ fn mcp_card(
                         .gap(px(4.))
                         .child(
                             Button::new(format!("edit-zenix-mcp-{name}"))
+                                .cursor_pointer()
                                 .ghost()
                                 .compact()
                                 .label(t("general.edit"))
@@ -1477,6 +1507,7 @@ fn mcp_card(
                         )
                         .child(
                             Button::new(format!("test-zenix-mcp-{name}"))
+                                .cursor_pointer()
                                 .ghost()
                                 .compact()
                                 .label(t("general.test"))
@@ -1484,6 +1515,7 @@ fn mcp_card(
                         )
                         .child(
                             Button::new(format!("rm-zenix-mcp-{name}"))
+                                .cursor_pointer()
                                 .ghost()
                                 .compact()
                                 .label(t("mcp.remove_server"))
@@ -1610,6 +1642,7 @@ fn mcp_inline_edit_card(
                 .child(txt(px(12.)).w(px(60.)).child(t("settings.mcp.form.type")))
                 .child(
                     Button::new("inline-mcp-type-stdio")
+                        .cursor_pointer()
                         .when(!is_sse, |b| b.primary())
                         .when(is_sse, |b| b.ghost())
                         .compact()
@@ -1629,6 +1662,7 @@ fn mcp_inline_edit_card(
                 )
                 .child(
                     Button::new("inline-mcp-type-sse")
+                        .cursor_pointer()
                         .when(is_sse, |b| b.primary())
                         .when(!is_sse, |b| b.ghost())
                         .compact()
@@ -1729,12 +1763,14 @@ fn mcp_inline_edit_card(
                 .justify_end()
                 .child(
                     Button::new("inline-mcp-form-cancel")
+                        .cursor_pointer()
                         .ghost()
                         .label(t("general.cancel"))
                         .on_click(cancel_cb),
                 )
                 .child(
                     Button::new("inline-mcp-form-submit")
+                        .cursor_pointer()
                         .primary()
                         .label(t("general.update"))
                         .on_click(submit_cb),
@@ -1807,6 +1843,7 @@ fn mcp_add_form(
                 .child(txt(px(12.)).w(px(60.)).child(t("settings.mcp.form.type")))
                 .child(
                     Button::new("mcp-type-stdio")
+                        .cursor_pointer()
                         .when(is_stdio, |b| b.primary())
                         .when(!is_stdio, |b| b.ghost())
                         .compact()
@@ -1826,6 +1863,7 @@ fn mcp_add_form(
                 )
                 .child(
                     Button::new("mcp-type-sse")
+                        .cursor_pointer()
                         .when(!is_stdio, |b| b.primary())
                         .when(is_stdio, |b| b.ghost())
                         .compact()
@@ -1926,12 +1964,14 @@ fn mcp_add_form(
                 .justify_end()
                 .child(
                     Button::new("mcp-form-cancel")
+                        .cursor_pointer()
                         .ghost()
                         .label(t("general.cancel"))
                         .on_click(cancel_cb),
                 )
                 .child(
                     Button::new("mcp-form-submit")
+                        .cursor_pointer()
                         .primary()
                         .label(submit_label)
                         .on_click(submit_cb),
@@ -2035,6 +2075,7 @@ fn mcp_agent_entry_with_test(
                         .gap(px(4.))
                         .child(
                             Button::new(format!("toggle-agent-mcp-{agent}-{name}"))
+                                .cursor_pointer()
                                 .ghost()
                                 .compact()
                                 .label(if disabled {
@@ -2046,6 +2087,7 @@ fn mcp_agent_entry_with_test(
                         )
                         .child(
                             Button::new(format!("test-agent-mcp-{agent}-{name}"))
+                                .cursor_pointer()
                                 .ghost()
                                 .compact()
                                 .label(t("general.test"))
@@ -2053,6 +2095,7 @@ fn mcp_agent_entry_with_test(
                         )
                         .child(
                             Button::new(format!("remove-agent-mcp-{agent}-{name}"))
+                                .cursor_pointer()
                                 .ghost()
                                 .compact()
                                 .label(t("mcp.remove_server"))
@@ -2130,6 +2173,7 @@ fn tab_skills_content(
                 ))
                 .child(
                     Button::new("refresh-s")
+                        .cursor_pointer()
                         .ghost()
                         .label(t("general.refresh"))
                         .on_click(refresh_cb),
@@ -2193,6 +2237,7 @@ fn tab_skills_content(
                             )
                             .child(
                                 Button::new("fetch-market")
+                                    .cursor_pointer()
                                     .ghost()
                                     .label(t("skills.fetch_market"))
                                     .on_click(fetch_cb.clone()),
@@ -2225,6 +2270,7 @@ fn tab_skills_content(
                                     )
                                     .child(
                                         Button::new("refresh-market")
+                                            .cursor_pointer()
                                             .ghost()
                                             .compact()
                                             .label(t("general.refresh"))
@@ -2350,6 +2396,7 @@ fn zenix_skill_card(
                 .flex_wrap()
                 .child(
                     Button::new(btn_id_link)
+                        .cursor_pointer()
                         .ghost()
                         .compact()
                         .label(t("skills.link"))
@@ -2357,6 +2404,7 @@ fn zenix_skill_card(
                 )
                 .child(
                     Button::new(btn_id_rm)
+                        .cursor_pointer()
                         .ghost()
                         .compact()
                         .label(t("skills.remove"))
@@ -2391,6 +2439,7 @@ fn api_skill_card(
             .into_any_element()
     } else {
         Button::new(format!("install-api-{}", s.slug))
+            .cursor_pointer()
             .ghost()
             .compact()
             .label(t("agent.install"))
@@ -2478,6 +2527,7 @@ fn add_skill_card(on_skill_action: &SharedActionCb<SkillAction>) -> impl IntoEle
                 .flex_wrap()
                 .child(
                     Button::new("add-git")
+                        .cursor_pointer()
                         .ghost()
                         .compact()
                         .label(t("skills.add_from_git"))
@@ -2485,6 +2535,7 @@ fn add_skill_card(on_skill_action: &SharedActionCb<SkillAction>) -> impl IntoEle
                 )
                 .child(
                     Button::new("add-local")
+                        .cursor_pointer()
                         .ghost()
                         .compact()
                         .label(t("skills.add_from_local"))
@@ -2554,6 +2605,7 @@ fn per_agent_skill_card(
                         }
                     };
                     Button::new(format!("move-{name}"))
+                        .cursor_pointer()
                         .ghost()
                         .compact()
                         .label(t("skills.move_to_zenix"))
@@ -2561,6 +2613,7 @@ fn per_agent_skill_card(
                         .into_any_element()
                 } else {
                     Button::new(format!("unlink-{name}"))
+                        .cursor_pointer()
                         .ghost()
                         .compact()
                         .label(t("skills.unlink"))
@@ -2634,6 +2687,7 @@ fn tab_api_content(
                         )
                         .child(
                             Button::new("add-api-provider")
+                                .cursor_pointer()
                                 .ghost()
                                 .label(t("general.add"))
                                 .on_click(add_cb),
@@ -2740,6 +2794,7 @@ fn api_provider_card(
                         .gap(px(4.))
                         .child(
                             Button::new(format!("edit-api-{name}"))
+                                .cursor_pointer()
                                 .ghost()
                                 .compact()
                                 .label(t("general.edit"))
@@ -2747,6 +2802,7 @@ fn api_provider_card(
                         )
                         .child(
                             Button::new(format!("test-api-{name}"))
+                                .cursor_pointer()
                                 .ghost()
                                 .compact()
                                 .label(t("general.test"))
@@ -2754,6 +2810,7 @@ fn api_provider_card(
                         )
                         .child(
                             Button::new(format!("fetch-api-{name}"))
+                                .cursor_pointer()
                                 .ghost()
                                 .compact()
                                 .label(t("general.models"))
@@ -2761,6 +2818,7 @@ fn api_provider_card(
                         )
                         .child(
                             Button::new(format!("rm-api-{name}"))
+                                .cursor_pointer()
                                 .ghost()
                                 .compact()
                                 .label(t("general.remove"))
@@ -2806,6 +2864,7 @@ fn api_provider_card(
                     let agent_name = agent.clone();
                     let on = on_action.clone();
                     Button::new(format!("api-agent-{srv}-{agent_name}"))
+                        .cursor_pointer()
                         .when(checked, |b| b.primary())
                         .when(!checked, |b| b.ghost())
                         .compact()
@@ -2895,14 +2954,13 @@ fn api_provider_form(
                                 "preset-{}",
                                 p.name.to_lowercase().replace(' ', "-")
                             ))
-                            .ghost()
-                            .compact()
-                            .label(p.name.to_string())
-                            .on_click(
-                                move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                                .cursor_pointer()
+                                .ghost()
+                                .compact()
+                                .label(p.name.to_string())
+                                .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
                                     on(ApiProviderAction::ApplyPreset { preset: p.clone() }, w, a);
-                                },
-                            )
+                                })
                         })),
                 ),
         )
@@ -2918,18 +2976,17 @@ fn api_provider_form(
                             let s = suffix.to_string();
                             let on = on_action.clone();
                             Button::new(format!("suffix-{}", s.replace('/', "-")))
+                                .cursor_pointer()
                                 .ghost()
                                 .compact()
                                 .label(s.clone())
-                                .on_click(
-                                    move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
-                                        on(
-                                            ApiProviderAction::SetSuffix { suffix: s.clone() },
-                                            w,
-                                            a,
-                                        );
-                                    },
-                                )
+                                .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                                    on(
+                                        ApiProviderAction::SetSuffix { suffix: s.clone() },
+                                        w,
+                                        a,
+                                    );
+                                })
                         })),
                 ),
         )
@@ -2958,19 +3015,18 @@ fn api_provider_form(
                             let selected = lev == form.thinking_level;
                             let on = on_action.clone();
                             Button::new(format!("think-{}", lev.label().to_lowercase()))
+                                .cursor_pointer()
                                 .when(selected, |b| b.primary())
                                 .when(!selected, |b| b.ghost())
                                 .compact()
                                 .label(lev.label().to_string())
-                                .on_click(
-                                    move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
-                                        on(
-                                            ApiProviderAction::SetThinkingLevel { level: lev },
-                                            w,
-                                            a,
-                                        );
-                                    },
-                                )
+                                .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                                    on(
+                                        ApiProviderAction::SetThinkingLevel { level: lev },
+                                        w,
+                                        a,
+                                    );
+                                })
                         })),
                 ),
         )
@@ -3015,21 +3071,20 @@ fn api_provider_form(
                             let sel = m_clone == selected;
                             let on = on_action.clone();
                             Button::new(format!("model-{}", m_clone))
+                                .cursor_pointer()
                                 .when(sel, |b| b.primary())
                                 .when(!sel, |b| b.ghost())
                                 .compact()
                                 .label(m_clone.clone())
-                                .on_click(
-                                    move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
-                                        on(
-                                            ApiProviderAction::SelectModel {
-                                                model: m_clone.clone(),
-                                            },
-                                            w,
-                                            a,
-                                        );
-                                    },
-                                )
+                                .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                                    on(
+                                        ApiProviderAction::SelectModel {
+                                            model: m_clone.clone(),
+                                        },
+                                        w,
+                                        a,
+                                    );
+                                })
                         })),
                 )
                 .into_any_element()
@@ -3045,12 +3100,14 @@ fn api_provider_form(
                 .justify_end()
                 .child(
                     Button::new("api-form-cancel")
+                        .cursor_pointer()
                         .ghost()
                         .label(t("general.cancel"))
                         .on_click(cancel_cb),
                 )
                 .child(
                     Button::new("api-form-submit")
+                        .cursor_pointer()
                         .primary()
                         .label(submit_label)
                         .on_click(submit_cb),
@@ -3066,6 +3123,7 @@ fn api_format_btn(
     let selected = fmt == current;
     let on = on_action.clone();
     Button::new(format!("api-fmt-{}", fmt.label().to_lowercase()))
+        .cursor_pointer()
         .when(selected, |b| b.primary())
         .when(!selected, |b| b.ghost())
         .compact()

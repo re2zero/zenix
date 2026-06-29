@@ -13,10 +13,10 @@ use alacritty_terminal::{
     vte::ansi::{Color as AnsiColor, CursorShape, NamedColor},
 };
 use gpui::{
-    App, Bounds, Element, ElementId, FocusHandle, Font, FontFeatures, FontStyle, FontWeight,
-    GlobalElementId, Hsla, InputHandler, InspectorElementId, IntoElement, LayoutId, Pixels, Point,
-    Rgba, SharedString, StrikethroughStyle, TextAlign, TextRun, UTF16Selection, UnderlineStyle,
-    Window, fill, point, px, relative, rgb, size,
+    App, Bounds, CursorStyle, Element, ElementId, FocusHandle, Font, FontFeatures, FontStyle,
+    FontWeight, GlobalElementId, Hsla, HitboxBehavior, InputHandler, InspectorElementId,
+    IntoElement, LayoutId, Pixels, Point, Rgba, SharedString, StrikethroughStyle, TextAlign,
+    TextRun, UTF16Selection, UnderlineStyle, Window, fill, point, px, relative, rgb, size,
 };
 use gpui_component::ActiveTheme as _;
 
@@ -162,6 +162,7 @@ pub struct PrepaintState {
     runs: Vec<BatchedTextRun>,
     cursor: Option<CursorLayout>,
     ime_cursor_bounds: Option<Bounds<Pixels>>,
+    hitbox: gpui::Hitbox,
 }
 
 // ── Terminal Input Handler (IME support) ──────────────────────────────
@@ -248,16 +249,16 @@ impl InputHandler for TerminalInputHandler {
         None
     }
 
-    fn accepts_text_input(&mut self, _window: &mut Window, _cx: &mut App) -> bool {
-        true
+    fn accepts_text_input(&mut self, _window: &mut Window, cx: &mut App) -> bool {
+        self.app.read(cx).marked_text_range().is_some()
     }
 
     fn apple_press_and_hold_enabled(&mut self) -> bool {
         false
     }
 
-    fn prefers_ime_for_printable_keys(&mut self, _window: &mut Window, _cx: &mut App) -> bool {
-        true
+    fn prefers_ime_for_printable_keys(&mut self, _window: &mut Window, cx: &mut App) -> bool {
+        self.app.read(cx).marked_text_range().is_some()
     }
 }
 
@@ -448,11 +449,18 @@ impl TerminalElement {
     }
 
     fn cursor_layout(&self, cx: &App) -> Option<CursorLayout> {
-        self.snapshot.cursor.map(|c| CursorLayout {
-            line: c.row as i32,
-            col: c.col as i32,
-            shape: c.shape,
-            color: cx.theme().primary,
+        self.snapshot.cursor.map(|c| {
+            let shape = match self.app.read(cx).terminal_cursor_style.as_str() {
+                "bar" => CursorShape::Beam,
+                "underline" => CursorShape::Underline,
+                _ => c.shape, // "block" or unknown → use snapshot shape
+            };
+            CursorLayout {
+                line: c.row as i32,
+                col: c.col as i32,
+                shape,
+                color: cx.theme().primary,
+            }
         })
     }
 }
@@ -513,7 +521,6 @@ impl Element for TerminalElement {
         let (rects, runs) = self.layout_grid(cx);
         let cursor = self.cursor_layout(cx);
         let ime_cursor_bounds = cursor.map(|c| c.bounds(origin, metrics));
-
         PrepaintState {
             bounds,
             metrics,
@@ -522,6 +529,7 @@ impl Element for TerminalElement {
             runs,
             cursor,
             ime_cursor_bounds,
+            hitbox: window.insert_hitbox(bounds, HitboxBehavior::Normal),
         }
     }
 
@@ -535,6 +543,8 @@ impl Element for TerminalElement {
         window: &mut Window,
         cx: &mut App,
     ) {
+        // Set mouse cursor to text style when over terminal
+        window.set_cursor_style(CursorStyle::IBeam, &prepaint.hitbox);
         let origin = prepaint.origin;
         let metrics = prepaint.metrics;
 
@@ -604,12 +614,14 @@ impl Element for TerminalElement {
             );
         }
 
-        // Paint cursor (hidden during IME composition).
+        // Paint cursor (hidden during IME composition or when blinking off)
+        let cursor_visible = self.app.read(cx).cursor_visible;
         if (self.ime_state.is_none()
             || self
                 .ime_state
                 .as_ref()
                 .is_some_and(|s| s.marked_text.is_empty()))
+            && cursor_visible
             && let Some(cursor) = &prepaint.cursor
             && !matches!(cursor.shape, CursorShape::Hidden)
         {
