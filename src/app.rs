@@ -2097,6 +2097,32 @@ impl Render for ZenixApp {
                 self.skill_search_input = Some(input_state);
             }
             let font_select_ref = self.font_select.as_ref();
+            let scrollback_input = cx.new(|cx| {
+                gpui_component::input::InputState::new(window, cx)
+                    .placeholder(self.terminal_scrollback.to_string())
+            });
+            // Subscribe to scrollback input for Enter/blur handling
+            cx.subscribe(&scrollback_input, {
+                let entity = entity.clone();
+                move |this: &mut ZenixApp, _input: gpui::Entity<gpui_component::input::InputState>, event: &gpui_component::input::InputEvent, cx| {
+                    let save_value = match event {
+                        gpui_component::input::InputEvent::PressEnter { shift: false, .. } => true,
+                        gpui_component::input::InputEvent::Blur => true,
+                        _ => false,
+                    };
+                    if save_value {
+                        let val = _input.read(cx).value().to_string();
+                        if let Ok(n) = val.parse::<u32>() {
+                            let bounded = n.min(100000).max(100);
+                            let aligned = (bounded / 100) * 100;
+                            this.terminal_scrollback = aligned;
+                            this.config.set_terminal_scrollback(aligned);
+                            let _ = this.config.save();
+                            cx.notify();
+                        }
+                    }
+                }
+            }).detach();
 
             div()
                 .relative()
@@ -2181,6 +2207,7 @@ impl Render for ZenixApp {
                     terminal_cursor_style: &self.terminal_cursor_style,
                     terminal_opacity: self.terminal_opacity,
                     terminal_scrollback: self.terminal_scrollback,
+                    scrollback_input: Some(&scrollback_input),
                     on_terminal_action: Box::new({
                         let entity = entity.clone();
                         move |action: crate::ui::settings::TerminalAction,

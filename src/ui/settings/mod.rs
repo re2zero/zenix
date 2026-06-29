@@ -287,6 +287,7 @@ pub struct SettingsDialogProps<'a> {
     pub terminal_cursor_style: &'a str,
     pub terminal_opacity: f32,
     pub terminal_scrollback: u32,
+    pub scrollback_input: Option<&'a Entity<gpui_component::input::InputState>>,
     pub on_terminal_action: ActionCb<TerminalAction>,
     pub win_w: f32,
     pub toast: Option<&'a ToastMessage>,
@@ -350,6 +351,7 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
         market_error,
         on_terminal_action,
         terminal_scrollback,
+        scrollback_input,
         toast,
         context_menu,
         on_context_menu_dismiss,
@@ -450,7 +452,7 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
                     mcp_search, mcp_search_input,
                     api_search, api_search_input,
                     terminal_cursor_blink, terminal_cursor_style,
-                    terminal_opacity, terminal_scrollback,
+                    terminal_opacity, terminal_scrollback, scrollback_input,
                     &ota, market_skills, market_loading, market_error))
             )
         )

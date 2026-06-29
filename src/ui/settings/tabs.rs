@@ -77,6 +77,7 @@ pub fn tab_content(
     terminal_cursor_style: &str,
     terminal_opacity: f32,
     terminal_scrollback: u32,
+    scrollback_input: Option<&Entity<gpui_component::input::InputState>>,
     on_terminal_action: &SharedActionCb<TerminalAction>,
     market_skills: &[ApiSkill],
     market_loading: bool,
@@ -98,6 +99,7 @@ pub fn tab_content(
             terminal_cursor_style,
             terminal_opacity,
             terminal_scrollback,
+            scrollback_input,
             on_terminal_action,
         )
         .into_any_element(),
@@ -258,11 +260,76 @@ fn tab_appearance(
 
 // ── Terminal Tab ──────────────────────────────────────────────────────
 
+fn opacity_slider(value: f32) -> impl IntoElement {
+    // value: 0.5..=1.0, display as percentage
+    let pct = (value * 100.0).round() as i32;
+    let track_h = px(6.);
+    let track_w = 160.0;
+    let thumb_r = 8.0;
+    let track_bg = gpui::rgba(0x45475a66);
+    let fill_color = gpui::rgba(0x3B82F688);
+    let thumb_color = gpui::rgba(0x3B82F6FF);
+
+    // normalized 0..=1
+    let normalized = ((value - 0.5) * 100.0).clamp(0.0, 100.0) / 100.0;
+    let fill_w = (track_w * normalized).max(thumb_r * 2.);
+    let thumb_left = (track_w * normalized) - thumb_r;
+
+    h_flex()
+        .items_center()
+        .gap(px(8.))
+        .child(
+            div()
+                .id("opacity-slider-track")
+                .w(px(track_w))
+                .h(track_h + px(thumb_r * 2.))
+                .relative()
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(0.))
+                        .left(px(0.))
+                        .w_full()
+                        .h(track_h)
+                        .rounded_full()
+                        .bg(track_bg),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(0.))
+                        .left(px(0.))
+                        .w(px(fill_w))
+                        .h(track_h)
+                        .rounded_full()
+                        .bg(fill_color),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(thumb_r))
+                        .left(px(thumb_left))
+                        .w(px(thumb_r * 2.))
+                        .h(px(thumb_r * 2.))
+                        .rounded_full()
+                        .bg(thumb_color)
+                        .shadow_md(),
+                ),
+        )
+        .child(
+            txt(px(12.))
+                .w(px(44.))
+                .text_right()
+                .child(format!("{pct}%")),
+        )
+}
+
 fn tab_terminal(
     cursor_blink: bool,
     cursor_style: &str,
     opacity: f32,
     scrollback: u32,
+    scrollback_input: Option<&Entity<gpui_component::input::InputState>>,
     ota: &SharedActionCb<TerminalAction>,
 ) -> impl IntoElement {
     let style_btn = |style: &'static str, current: &str| {
@@ -292,6 +359,27 @@ fn tab_terminal(
         "\u{2610} off"
     };
     let ota_blink = ota.clone();
+
+    let sb_down = {
+        let ota = ota.clone();
+        move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+            let new_sb = (scrollback as i32 - 100).max(100) as u32;
+            ota(TerminalAction::SetScrollback(new_sb), w, a);
+        }
+    };
+    let sb_up = {
+        let ota = ota.clone();
+        move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+            let new_sb = (scrollback as i32 + 100).min(100000) as u32;
+            ota(TerminalAction::SetScrollback(new_sb), w, a);
+        }
+    };
+
+    let scrollback_display: AnyElement = if let Some(input) = scrollback_input {
+        Input::new(input).w(px(100.)).into_any_element()
+    } else {
+        txt(px(12.)).w(px(80.)).child(format!("{scrollback}")).into_any_element()
+    };
 
     v_flex()
         .gap(px(16.))
@@ -327,16 +415,13 @@ fn tab_terminal(
                         .on_click({
                             let ota = ota.clone();
                             move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
-                                let new_op = (opacity * 10.0 - 1.0).clamp(0.5, 10.0) / 10.0;
+                                let new_op =
+                                    ((opacity * 100.0 - 1.0) as i32).clamp(50, 100) as f32 / 100.0;
                                 ota(TerminalAction::SetOpacity(new_op), w, a);
                             }
                         }),
                 )
-                .child(
-                    txt(px(12.))
-                        .w(px(40.))
-                        .child(format!("{:.0}%", opacity * 100.0)),
-                )
+                .child(opacity_slider(opacity))
                 .child(
                     Button::new("opacity-up")
                         .ghost()
@@ -345,7 +430,8 @@ fn tab_terminal(
                         .on_click({
                             let ota = ota.clone();
                             move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
-                                let new_op = (opacity * 10.0 + 1.0).clamp(0.5, 10.0) / 10.0;
+                                let new_op =
+                                    ((opacity * 100.0 + 1.0) as i32).clamp(50, 100) as f32 / 100.0;
                                 ota(TerminalAction::SetOpacity(new_op), w, a);
                             }
                         }),
@@ -361,27 +447,15 @@ fn tab_terminal(
                         .ghost()
                         .label("-")
                         .text_size(px(18.))
-                        .on_click({
-                            let ota = ota.clone();
-                            move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
-                                let new_sb = (scrollback as i32 - 100).max(100) as u32;
-                                ota(TerminalAction::SetScrollback(new_sb), w, a);
-                            }
-                        }),
+                        .on_click(sb_down),
                 )
-                .child(txt(px(12.)).w(px(60.)).child(format!("{scrollback}")))
+                .child(scrollback_display)
                 .child(
                     Button::new("scrollback-up")
                         .ghost()
                         .label("+")
                         .text_size(px(18.))
-                        .on_click({
-                            let ota = ota.clone();
-                            move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
-                                let new_sb = (scrollback as i32 + 100).max(100) as u32;
-                                ota(TerminalAction::SetScrollback(new_sb), w, a);
-                            }
-                        }),
+                        .on_click(sb_up),
                 )
                 .child(
                     txt(px(10.))
