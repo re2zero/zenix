@@ -1,0 +1,48 @@
+{
+  "id": "01-settings-refactor",
+  "name": "settings-refactor",
+  "title": "Settings UI Refactor & Agent Management",
+  "description": "Comprehensive refactor of settings dialog: remove empty-shell agents, design AgentConfigAdapter trait, unify MCP data sources, extend skill/API provider management with per-agent adaptation, and restructure the settings module.",
+  "status": "in_progress",
+  "dev_type": "feature",
+  "scope": "settings",
+  "package": null,
+  "priority": "P0",
+  "creator": "re2zero",
+  "assignee": "re2zero",
+  "createdAt": "2026-06-29",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": null,
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "src/ui/settings.rs",
+    "src/agent/mod.rs",
+    "src/mcp/mod.rs",
+    "src/skills/mod.rs",
+    "src/api_provider/mod.rs",
+    "src/provider/builtin.rs",
+    "src/provider/mod.rs",
+    "src/config/mod.rs"
+  ],
+  "notes": "Settings dialog is 3281 lines in a single file. Provider registry has 4 empty-shell agents. MCP has dual data sources. No per-agent config format adaptation beyond Claude/OpenCode/Generic.",
+  "meta": {
+    "refactor_scope": "full",
+    "removed_agents": ["copilot", "kimi", "cursor", "windsurf"],
+    "key_changes": [
+      "Remove empty-shell agents (copilot, kimi, cursor, windsurf)",
+      "Design AgentConfigAdapter trait for per-agent config formats",
+      "Implement adapters for: claude, codex, opencode, droid, pi, omp, kilo, hermes",
+      "Unify MCP data sources (Zenix NDJSON + per-agent into single view)",
+      "Extend skill management with per-agent format support",
+      "Extend API provider config generation for all supported agents",
+      "Restructure settings module (split large file, add state management)",
+      "Add search/filter state, form state, and UI state as separate concerns"
+    ]
+  }
+}
