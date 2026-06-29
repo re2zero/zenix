@@ -15,11 +15,16 @@
   2. 删除"+"按钮后的"行"文字标签
 
 ## 接受标准
-1. 透明度滑块可拖动，拖拽时数值和进度条实时更新
-2. 透明度范围 30%-100%，保存后终端实际透明
-3. 回滚行数输入框可点击编辑，Enter/Blur 保存
-4. "+"按钮后无"行"文字
+1. ✅ 透明度范围改为 30%-100%
+2. ✅ 透明度值应用到终端背景
+3. ✅ 回滚行数输入框可编辑（使用 default_value）
+4. ✅ "+"按钮后无"行"文字
+5. ❌ 滑块拖动交互（需要添加鼠标事件处理）
 
 ## 修改文件
-- `src/ui/settings/tabs.rs` — 修复滑块交互和回滚输入
-- 可能需要检查 `src/terminal/element.rs` — 透明度应用
+- `src/ui/settings/tabs.rs` — 修改滑块范围，删除"行"文字
+- `src/terminal/element.rs` — 添加 opacity 参数并应用到背景
+- `src/app.rs` — 传递 opacity 到 TerminalElement，使用 default_value
+
+## 待完成
+- 添加滑块拖拽交互（on_mouse_down, on_mouse_move, on_mouse_up）
