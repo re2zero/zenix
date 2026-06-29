@@ -470,6 +470,8 @@ fn zenix_mcp_path() -> PathBuf {
     platform::zenix_config_dir().join("mcp.json")
 }
 
+/// Load all Zenix MCP servers from the config file.
+/// Returns an empty vec if the file doesn't exist.
 pub fn load_zenix_mcp_servers() -> Vec<ZenixMcpServer> {
     let path = zenix_mcp_path();
     if !path.exists() {
@@ -507,6 +509,7 @@ fn save_zenix_mcp_servers(servers: &[ZenixMcpServer]) -> Result<(), String> {
     .map_err(|e| format!("write: {e}"))
 }
 
+/// Add a new Zenix MCP server or update an existing one with the same name.
 pub fn add_zenix_mcp_server(server: &ZenixMcpServer) -> Result<(), String> {
     let mut servers = load_zenix_mcp_servers();
     servers.retain(|s| s.name != server.name);
@@ -514,6 +517,7 @@ pub fn add_zenix_mcp_server(server: &ZenixMcpServer) -> Result<(), String> {
     save_zenix_mcp_servers(&servers)
 }
 
+/// Remove a Zenix MCP server by name. Returns error if not found.
 pub fn remove_zenix_mcp_server(name: &str) -> Result<(), String> {
     let mut servers = load_zenix_mcp_servers();
     let before = servers.len();
@@ -524,6 +528,8 @@ pub fn remove_zenix_mcp_server(name: &str) -> Result<(), String> {
     save_zenix_mcp_servers(&servers)
 }
 
+/// Toggle an agent's association with a Zenix MCP server.
+/// Enables the agent for the server if disabled, or disables if enabled.
 pub fn toggle_zenix_mcp_agent(server_name: &str, agent_name: &str) -> Result<(), String> {
     let mut servers = load_zenix_mcp_servers();
     let idx = servers

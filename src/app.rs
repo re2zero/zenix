@@ -1487,6 +1487,7 @@ impl Render for ZenixApp {
                                     env: Some(env_input),
                                     url: None,
                                     mcp_type: "stdio".to_string(),
+                                    original_command: None,
                                 };
                                 this.mcp_form = Some(form);
                                 cx.notify();
@@ -1529,8 +1530,14 @@ impl Render for ZenixApp {
                                         crate::mcp::McpType::Stdio
                                     };
                                     // For SSE, use URL as command; for stdio, use command field
+                                    // If editing and switching from SSE to stdio, restore original command
                                     let effective_cmd = if mcp_type == crate::mcp::McpType::Sse {
                                         url_val.trim().to_string()
+                                    } else if mcp_type == crate::mcp::McpType::Stdio
+                                        && form.original_command.is_some()
+                                    {
+                                        // User switched from SSE back to stdio — restore original command
+                                        form.original_command.unwrap()
                                     } else {
                                         cmd_val.trim().to_string()
                                     };
@@ -1693,6 +1700,12 @@ impl Render for ZenixApp {
                                     } else {
                                         None
                                     };
+                                    // Preserve original command when switching to SSE mode
+                                    let original_command = if s.mcp_type == crate::mcp::McpType::Sse {
+                                        Some(s.command.clone())
+                                    } else {
+                                        None
+                                    };
                                     let form = McpFormState {
                                         editing_name: Some(s.name.clone()),
                                         name: Some(name_input),
@@ -1704,6 +1717,7 @@ impl Render for ZenixApp {
                                             crate::mcp::McpType::Sse => "sse".into(),
                                             crate::mcp::McpType::Stdio => "stdio".into(),
                                         },
+                                        original_command,
                                     };
                                     this.mcp_form = Some(form);
                                 }

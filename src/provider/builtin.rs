@@ -1,4 +1,4 @@
-//! Built-in provider definitions — all 12 known AI agent CLI tools.
+//! Built-in provider definitions — 8 known AI agent CLI tools with config management.
 //!
 //! Each provider declares its name, binary names for PATH detection,
 //! config directory resolver, and which capabilities it supports
@@ -38,15 +38,6 @@ pub fn all_providers() -> Vec<Provider> {
             skills_dir: Some("skills"),
         },
         Provider {
-            name: "copilot",
-            display_name: "GitHub Copilot",
-            binary_names: &["copilot"],
-            install_command: "npm install -g @github/copilot-cli",
-            config_dir: || platform::env_or_home("COPYLOT_CONFIG_DIR", "~/.github/copilot"),
-            mcp_config_file: None,
-            skills_dir: None,
-        },
-        Provider {
             name: "droid",
             display_name: "Droid",
             binary_names: &["droid"],
@@ -54,15 +45,6 @@ pub fn all_providers() -> Vec<Provider> {
             config_dir: || platform::env_or_home("DROID_CONFIG_DIR", "~/.droid"),
             mcp_config_file: Some("config.json"),
             skills_dir: Some("skills"),
-        },
-        Provider {
-            name: "kimi",
-            display_name: "Kimi",
-            binary_names: &["kimi"],
-            install_command: "npm install -g @kimi/kimi-cli",
-            config_dir: || platform::env_or_home("KIMI_CONFIG_DIR", "~/.kimi"),
-            mcp_config_file: None,
-            skills_dir: None,
         },
         Provider {
             name: "pi",
@@ -99,24 +81,6 @@ pub fn all_providers() -> Vec<Provider> {
             config_dir: || platform::env_or_home("HERMES_CONFIG_DIR", "~/.hermes"),
             mcp_config_file: Some("config.json"),
             skills_dir: Some("skills"),
-        },
-        Provider {
-            name: "cursor",
-            display_name: "Cursor",
-            binary_names: &["cursor"],
-            install_command: "Download from cursor.com",
-            config_dir: || platform::env_or_home("CURSOR_CONFIG_DIR", "~/.cursor"),
-            mcp_config_file: None,
-            skills_dir: None,
-        },
-        Provider {
-            name: "windsurf",
-            display_name: "Windsurf",
-            binary_names: &["windsurf"],
-            install_command: "Download from codeium.com/windsurf",
-            config_dir: || platform::env_or_home("WINDSURF_CONFIG_DIR", "~/.windsurf"),
-            mcp_config_file: None,
-            skills_dir: None,
         },
     ]
 }

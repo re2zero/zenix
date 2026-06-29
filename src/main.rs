@@ -6,6 +6,7 @@ mod api_provider;
 mod app;
 mod client;
 mod config;
+mod config_adapters;
 mod i18n;
 mod mcp;
 mod platform;

@@ -1,16 +1,15 @@
 //! Unified skills management — scan and symlink skills across compatible agents.
 //!
-//! Uses the ProviderRegistry for agent paths instead of hardcoded lists.
+//! Uses AgentConfigAdapter for agent path resolution.
 //!
-//! Compatibility matrix (derived from ProviderRegistry):
-//!   Group A (Claude-format: directory with SKILL.md): Claude, Codex, Pi, OMP, Kilo, Hermes
-//!   Group B (OpenCode-format, also reads Claude-format): OpenCode
+//! Compatibility matrix:
+//!   Claude-format (directory with SKILL.md): claude, codex, pi, omp, kilo, hermes, droid
+//!   OpenCode (also reads Claude-format skills): opencode
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::platform;
-use crate::provider::ProviderRegistry;
 use serde::{Deserialize, Serialize};
 
 /// Information about a skill installed across agents.
@@ -23,19 +22,34 @@ pub struct SkillInfo {
     pub linked_agents: Vec<String>,
 }
 
-// ── Per-agent skills directories (delegated to ProviderRegistry) ────
+// ── Per-agent skills directories (delegated to AgentConfigAdapter) ────
 
 /// Returns Vec<(agent_name, skills_dir)> for agents that support skill directories.
 fn agent_skills_dirs() -> Vec<(String, PathBuf)> {
-    let registry = ProviderRegistry::builtin();
-    registry
-        .skills_supporting()
+    crate::config_adapters::adapters::all_adapters()
         .into_iter()
-        .filter_map(|prov| {
-            let dir = prov.skills_path()?;
-            Some((prov.name.to_string(), dir))
+        .filter_map(|adapter| {
+            let specs = adapter.config_paths();
+            for spec in specs {
+                if let crate::config_adapters::adapters::ConfigPathSpec::SkillsDir(dir) = spec {
+                    return Some((adapter.name().to_string(), dir));
+                }
+            }
+            None
         })
         .collect()
+}
+
+/// Get the skills directory for a specific agent using its adapter.
+pub fn skill_dir_for_agent(agent_name: &str) -> Option<PathBuf> {
+    let adapter = crate::config_adapters::adapters::adapter_for(agent_name)?;
+    let specs = adapter.config_paths();
+    for spec in specs {
+        if let crate::config_adapters::adapters::ConfigPathSpec::SkillsDir(dir) = spec {
+            return Some(dir);
+        }
+    }
+    None
 }
 
 // ── Scanning ─────────────────────────────────────────────────────────
@@ -99,10 +113,11 @@ pub fn scan_all_skills() -> HashMap<String, SkillInfo> {
 
 // ── Link / Unlink ────────────────────────────────────────────────────
 
-/// Choose the best source directory for a skill. Prefers Claude, then any Group A agent.
+/// Choose the best source directory for a skill.
+/// Prefers agents in this order: claude > codex > opencode > pi > omp > kilo > hermes > droid.
 pub fn best_source(skill: &SkillInfo) -> Option<(String, PathBuf)> {
-    let preferred = ["claude", "codex", "pi", "omp", "kilo", "hermes"];
-    for agent in &preferred {
+    let preferred_order = ["claude", "codex", "opencode", "pi", "omp", "kilo", "hermes", "droid"];
+    for agent in &preferred_order {
         if skill.source_agents.contains(&agent.to_string())
             && let Some(dir) = source_dir_for(agent, &skill.name)
         {
@@ -139,10 +154,7 @@ pub fn link_skill(skill_name: &str, target_agent: &str) -> Result<(), String> {
     let (source_agent, source_dir) =
         best_source(info).ok_or_else(|| format!("no source agent found for '{skill_name}'"))?;
 
-    let target_dir = agent_skills_dirs()
-        .into_iter()
-        .find(|(a, _)| a == target_agent)
-        .map(|(_, d)| d)
+    let target_dir = skill_dir_for_agent(target_agent)
         .ok_or_else(|| format!("target agent '{target_agent}' not supported"))?;
 
     if !target_dir.exists() {
@@ -172,10 +184,7 @@ pub fn link_skill_to_agent(skill_name: &str, target_agent: &str) -> Result<(), S
     let (source_agent, source_dir) =
         best_source(info).ok_or_else(|| format!("no source agent found for '{skill_name}'"))?;
 
-    let target_dir = agent_skills_dirs()
-        .into_iter()
-        .find(|(a, _)| a == target_agent)
-        .map(|(_, d)| d)
+    let target_dir = skill_dir_for_agent(target_agent)
         .ok_or_else(|| format!("target agent '{target_agent}' not supported"))?;
 
     if !target_dir.exists() {
@@ -194,10 +203,7 @@ pub fn link_skill_to_agent(skill_name: &str, target_agent: &str) -> Result<(), S
 
 /// Remove a symlink from one target agent's skills dir. NEVER deletes real directories.
 pub fn unlink_skill(skill_name: &str, target_agent: &str) -> Result<(), String> {
-    let target_dir = agent_skills_dirs()
-        .into_iter()
-        .find(|(a, _)| a == target_agent)
-        .map(|(_, d)| d)
+    let target_dir = skill_dir_for_agent(target_agent)
         .ok_or_else(|| format!("target agent '{target_agent}' not supported"))?;
 
     let link_path = target_dir.join(skill_name);

@@ -290,102 +290,123 @@ impl ApiProviderConfig {
 
 /// Sync a provider to a specific agent CLI's config file.
 ///
-/// - Claude: writes env vars into `claude_desktop_config.json`
-/// - OpenCode: writes provider entry into `config.json`
-/// - Others: writes OpenAI-compatible env vars (best-effort)
+/// Uses the `AgentConfigAdapter` for the target agent to determine
+/// the correct config format and file path.
 pub fn sync_api_to_agent(provider: &ApiProviderConfig, agent_name: &str) -> Result<(), String> {
-    let registry = crate::provider::ProviderRegistry::builtin();
-    let prov = registry
-        .find(agent_name)
-        .ok_or_else(|| format!("unknown agent: {agent_name}"))?;
+    let adapter = crate::config_adapters::adapters::adapter_for(agent_name)
+        .ok_or_else(|| format!("unknown or unsupported agent: {agent_name}"))?;
 
-    let config_path = prov
-        .mcp_config_path()
-        .or_else(|| {
-            // Some agents don't have mcp_config_file but might have a config dir
-            (prov.config_dir)().map(|d| d.join("config.json"))
-        })
-        .ok_or_else(|| format!("no config path for agent: {agent_name}"))?;
+    // Get the API config file path from the adapter
+    let config_path = get_api_config_path(agent_name)?;
 
     if let Some(parent) = config_path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("create dir: {e}"))?;
     }
 
-    match agent_name {
-        "claude" => {
-            let env = provider.to_claude_env();
-            let mut map = crate::config::scanner::ConfigMap::load(&config_path)?;
-            let env_value: serde_json::Value = env
-                .into_iter()
-                .map(|(k, v)| (k, serde_json::Value::String(v)))
-                .collect::<serde_json::Map<_, _>>()
-                .into();
-            map.upsert(&["env"], env_value);
-            map.save()
-        }
-        "opencode" => {
-            let entry = provider.to_opencode_provider();
-            let mut map = crate::config::scanner::ConfigMap::load(&config_path)?;
-            map.upsert(&[&provider.name], entry);
-            map.save()
-        }
-        _ => {
-            // Generic: write OpenAI env vars for agents that support env config
-            let env = provider.to_openai_env();
-            let mut map = crate::config::scanner::ConfigMap::load(&config_path)?;
-            let env_value: serde_json::Value = env
-                .into_iter()
-                .map(|(k, v)| (k, serde_json::Value::String(v)))
-                .collect::<serde_json::Map<_, _>>()
-                .into();
-            map.upsert(&["env"], env_value);
-            map.save()
-        }
+    // Check if the adapter generates env vars or provider entries
+    if let Some(env_vars) = adapter.api_env_vars(provider) {
+        // Write env vars to the config file under "env" key
+        let mut map = crate::config::scanner::ConfigMap::load(&config_path)?;
+        let env_value: serde_json::Value = env_vars
+            .into_iter()
+            .map(|(k, v)| (k, serde_json::Value::String(v)))
+            .collect::<serde_json::Map<_, _>>()
+            .into();
+        map.upsert(&["env"], env_value);
+        map.save()
+    } else if let Some(entry) = adapter.api_config_entry(provider) {
+        // Write provider entry directly to the config file
+        let mut map = crate::config::scanner::ConfigMap::load(&config_path)?;
+        map.upsert(&[&provider.name], entry);
+        map.save()
+    } else {
+        Err(format!(
+            "agent '{agent_name}' does not support API provider configuration"
+        ))
     }
 }
 
 /// Remove a provider from a specific agent's config.
 pub fn unsync_api_from_agent(provider_name: &str, agent_name: &str) -> Result<(), String> {
-    let registry = crate::provider::ProviderRegistry::builtin();
-    let prov = registry
-        .find(agent_name)
-        .ok_or_else(|| format!("unknown agent: {agent_name}"))?;
+    // Verify the agent is supported
+    let _adapter = crate::config_adapters::adapters::adapter_for(agent_name)
+        .ok_or_else(|| format!("unknown or unsupported agent: {agent_name}"))?;
 
-    let config_path = prov
-        .mcp_config_path()
-        .or_else(|| (prov.config_dir)().map(|d| d.join("config.json")))
-        .ok_or_else(|| format!("no config path for agent: {agent_name}"))?;
+    let config_path = get_api_config_path(agent_name)?;
 
     if !config_path.exists() {
         return Ok(());
     }
 
-    match agent_name {
-        "opencode" => {
-            let mut map = crate::config::scanner::ConfigMap::load(&config_path)?;
-            map.remove(&[provider_name]);
-            map.save()
-        }
-        _ => {
-            // Remove from env section
-            let mut map = crate::config::scanner::ConfigMap::load(&config_path)?;
-            // Only remove known env keys
-            for key in &[
-                "ANTHROPIC_BASE_URL",
-                "ANTHROPIC_AUTH_TOKEN",
-                "ANTHROPIC_MODEL",
-                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-                "ANTHROPIC_DEFAULT_SONNET_MODEL",
-                "ANTHROPIC_DEFAULT_OPUS_MODEL",
-                "OPENAI_API_KEY",
-                "OPENAI_BASE_URL",
-                "OPENAI_MODEL",
-            ] {
-                map.remove(&["env", key]);
+    let mut map = crate::config::scanner::ConfigMap::load(&config_path)?;
+
+    // For OpenCode: remove the provider entry by name
+    if agent_name == "opencode" {
+        map.remove(&[provider_name]);
+        map.save()?;
+        return Ok(());
+    }
+
+    // For all other agents: check if other providers also use this agent
+    // before removing env keys (to avoid deleting another provider's config)
+    let other_providers_use_agent = {
+        let providers = load_all();
+        providers
+            .iter()
+            .filter(|p| p.name != provider_name)
+            .any(|p| p.enabled_agents.iter().any(|a| a == agent_name))
+    };
+
+    if other_providers_use_agent {
+        // Another provider also uses this agent — don't remove env keys
+        // They might be needed by the other provider
+        return Ok(());
+    }
+
+    // Safe to remove known env keys
+    let known_keys: Vec<&str> = vec![
+        "ANTHROPIC_BASE_URL",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
+        "OPENAI_MODEL",
+    ];
+
+    // Only remove keys that are in the env section
+    if let Some(env_obj) = map.get(&["env"]).and_then(|v| v.as_object()) {
+        let keys_to_remove: Vec<&&str> = known_keys
+            .iter()
+            .filter(|key| env_obj.contains_key(**key))
+            .collect();
+
+        if !keys_to_remove.is_empty() {
+            for key in keys_to_remove {
+                map.remove(&["env", *key]);
             }
-            map.save()
+            map.save()?;
         }
     }
+
+    Ok(())
+}
+
+/// Get the API config file path for an agent.
+fn get_api_config_path(agent_name: &str) -> Result<std::path::PathBuf, String> {
+    let registry = crate::provider::ProviderRegistry::builtin();
+    let prov = registry
+        .find(agent_name)
+        .ok_or_else(|| format!("unknown agent: {agent_name}"))?;
+
+    // Use the provider's mcp_config_file if available, otherwise fall back to config_dir/config.json
+    prov.mcp_config_path()
+        .or_else(|| {
+            (prov.config_dir)().map(|d| d.join("config.json"))
+        })
+        .ok_or_else(|| format!("no config path for agent: {agent_name}"))
 }
 
 /// Toggle a provider's enabled state for an agent, syncing the config.
