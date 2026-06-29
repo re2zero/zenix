@@ -241,3 +241,129 @@ src/ui/settings/
 ---
 
 ## 2026-06-29 14:20 — 重构全部完成 🎉
+
+---
+
+## 2026-06-29 14:30 — 修复审查发现的 2 个中等严重问题
+
+### 修复 #1: `unsync_api_from_agent` 硬编码键列表问题
+
+**问题**: 移除 API provider 时会删除所有已知 env keys，可能误删其他 provider 的配置
+
+**修复**: 在移除前检查其他 provider 是否也使用同个 agent，如果是则跳过移除
+
+**文件**: `src/api_provider/mod.rs`
+
+```rust
+let other_providers_use_agent = {
+    let providers = load_all();
+    providers
+        .iter()
+        .filter(|p| p.name != provider_name)
+        .any(|p| p.enabled_agents.iter().any(|a| a == agent_name))
+};
+
+if other_providers_use_agent {
+    return Ok(()); // 其他 provider 也使用此 agent，不删除 env keys
+}
+```
+
+### 修复 #2: SSE 编辑时 URL 与 command 混用问题
+
+**问题**: 编辑 SSE 服务器时，切换回 stdio 模式后原始命令丢失
+
+**修复**: 
+1. `McpFormState` 增加 `original_command: Option<String>` 字段
+2. 编辑 SSE 服务器时保存原始命令
+3. 提交时如果从 SSE 切回 stdio，恢复原始命令
+
+**文件**: 
+- `src/ui/settings/mod.rs` — 添加 `original_command` 字段
+- `src/app.rs` — 编辑/提交逻辑中保存/恢复原始命令
+
+### 编译验证
+- ✅ `cargo check` 通过
+
+---
+
+## 2026-06-29 14:35 — 提交完成 ✅
+
+**Commit**: `8a65329`
+**信息**: `refactor(settings): complete agent config adapter system and UI split`
+
+**变更统计**:
+- 14 files changed
+- +3851 insertions
+- -3420 deletions
+
+**净效果**: +431 行代码，但结构更清晰
+
+**新文件**:
+- `src/config_adapters/adapters/mod.rs` — Adapter 实现
+- `src/config_adapters/mod.rs` — 模块入口
+- `src/ui/settings/components.rs` — Card 组件
+- `src/ui/settings/helpers.rs` — 辅助函数
+- `src/ui/settings/mod.rs` — 主入口（527 行）
+- `src/ui/settings/tabs.rs` — Tab 渲染（1220 行）
+
+**删除文件**:
+- `src/ui/settings.rs` — 原 3281 行单一文件
+
+**重构完成** 🎉
+
+---
+
+## 2026-06-29 15:00 — 修复编辑卡片问题
+
+### 问题 1: API 编辑显示两个卡片
+**原因**: 编辑时修改名称，旧 provider 未被删除，新 provider 被添加，导致重复
+
+**修复**: 在 `SubmitForm` 中，如果名称改变，先删除旧 provider 再 upsert 新 provider
+
+**文件**: `src/app.rs`
+
+### 问题 2: MCP 编辑显示双重卡片
+**原因**: `form_el` 独立渲染表单，同时 `mcp_card` 在编辑时也渲染内联表单，导致双重显示
+
+**修复**: 
+1. 当 `editing_name.is_some()` 时不渲染 `form_el`
+2. 简化 MCP 编辑提交逻辑，保留 enabled_agents
+
+**文件**: `src/ui/settings/tabs.rs`, `src/app.rs`
+
+### 提交
+- Commit: `b486cde`
+- 信息: `fix(settings): resolve API and MCP edit card issues`
+
+---
+
+## 2026-06-29 15:30 — API 编辑卡片内联展开
+
+### 问题
+API 编辑时，编辑表单显示在卡片上方/下方，而不是在原有卡片上展开
+
+### 修复
+1. 添加 `api_inline_edit_card` 函数 — 内联编辑表单
+2. 修改 `api_provider_card` — 接受 `api_form` 参数，编辑时显示内联表单
+3. 更新调用方传递 `api_form`
+
+### 提交
+- Commit: `010268e`
+- 信息: `fix(settings): API edit card now expands inline on existing card`
+
+---
+
+## 2026-06-29 16:00 — 修复双重卡片和溢出问题
+
+### 问题
+1. API 编辑时仍然显示双重卡片（form_el 和 inline edit card）
+2. 编辑表单超出设置面板显示区域
+
+### 修复
+1. **双重卡片**: `form_el` 只在非编辑状态显示（`form.editing_name.is_none()`）
+2. **溢出问题**: 给内联编辑卡片添加 `overflow_y_scrollbar()` 和 `max_h(px(500.))`
+3. 导入 `ScrollableElement` trait
+
+### 提交
+- Commit: `c3fb805` (squash 3 commits)
+- 信息: `fix(settings): resolve API and MCP edit card issues`

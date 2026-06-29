@@ -3,7 +3,7 @@
   "name": "settings-refactor",
   "title": "Settings UI Refactor & Agent Management",
   "description": "Comprehensive refactor of settings dialog: remove empty-shell agents, design AgentConfigAdapter trait, unify MCP data sources, extend skill/API provider management with per-agent adaptation, and restructure the settings module.",
-  "status": "in_progress",
+  "status": "done",
   "dev_type": "feature",
   "scope": "settings",
   "package": null,
@@ -33,7 +33,12 @@
   "notes": "Settings dialog is 3281 lines in a single file. Provider registry has 4 empty-shell agents. MCP has dual data sources. No per-agent config format adaptation beyond Claude/OpenCode/Generic.",
   "meta": {
     "refactor_scope": "full",
-    "removed_agents": ["copilot", "kimi", "cursor", "windsurf"],
+    "removed_agents": [
+      "copilot",
+      "kimi",
+      "cursor",
+      "windsurf"
+    ],
     "key_changes": [
       "Remove empty-shell agents (copilot, kimi, cursor, windsurf)",
       "Design AgentConfigAdapter trait for per-agent config formats",
