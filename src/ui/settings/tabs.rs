@@ -261,7 +261,7 @@ fn tab_appearance(
 // ── Terminal Tab ──────────────────────────────────────────────────────
 
 fn opacity_slider(value: f32) -> impl IntoElement {
-    // value: 0.5..=1.0, display as percentage
+    // value: 0.3..=1.0, display as percentage
     let pct = (value * 100.0).round() as i32;
     let track_h = px(6.);
     let track_w = 160.0;
@@ -270,8 +270,8 @@ fn opacity_slider(value: f32) -> impl IntoElement {
     let fill_color = gpui::rgba(0x3B82F688);
     let thumb_color = gpui::rgba(0x3B82F6FF);
 
-    // normalized 0..=1
-    let normalized = ((value - 0.5) * 100.0).clamp(0.0, 100.0) / 100.0;
+    // normalized 0..=1 (30% = 0, 100% = 1)
+    let normalized = ((value - 0.3) * 100.0).clamp(0.0, 70.0) / 70.0;
     let fill_w = (track_w * normalized).max(thumb_r * 2.);
     let thumb_left = (track_w * normalized) - thumb_r;
 
@@ -416,7 +416,7 @@ fn tab_terminal(
                             let ota = ota.clone();
                             move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
                                 let new_op =
-                                    ((opacity * 100.0 - 1.0) as i32).clamp(50, 100) as f32 / 100.0;
+                                    ((opacity * 100.0 - 1.0) as i32).clamp(30, 100) as f32 / 100.0;
                                 ota(TerminalAction::SetOpacity(new_op), w, a);
                             }
                         }),
@@ -431,7 +431,7 @@ fn tab_terminal(
                             let ota = ota.clone();
                             move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
                                 let new_op =
-                                    ((opacity * 100.0 + 1.0) as i32).clamp(50, 100) as f32 / 100.0;
+                                    ((opacity * 100.0 + 1.0) as i32).clamp(30, 100) as f32 / 100.0;
                                 ota(TerminalAction::SetOpacity(new_op), w, a);
                             }
                         }),
@@ -456,11 +456,6 @@ fn tab_terminal(
                         .label("+")
                         .text_size(px(18.))
                         .on_click(sb_up),
-                )
-                .child(
-                    txt(px(10.))
-                        .text_color(gpui::rgba(0x666666FF))
-                        .child(t("settings.terminal.lines")),
                 ),
         ))
 }

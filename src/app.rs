@@ -1151,6 +1151,7 @@ impl Render for ZenixApp {
                         self.terminal_ascent,
                         self.terminal_descent,
                         ime,
+                        self.terminal_opacity,
                     ))
                     .into_any_element()
             }
@@ -2099,7 +2100,7 @@ impl Render for ZenixApp {
             let font_select_ref = self.font_select.as_ref();
             let scrollback_input = cx.new(|cx| {
                 gpui_component::input::InputState::new(window, cx)
-                    .placeholder(self.terminal_scrollback.to_string())
+                    .default_value(self.terminal_scrollback.to_string())
             });
             // Subscribe to scrollback input for Enter/blur handling
             cx.subscribe(&scrollback_input, {

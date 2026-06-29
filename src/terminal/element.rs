@@ -274,6 +274,7 @@ pub struct TerminalElement {
     ascent: Pixels,
     descent: Pixels,
     ime_state: Option<ImeState>,
+    opacity: f32,
 }
 
 impl TerminalElement {
@@ -289,6 +290,7 @@ impl TerminalElement {
         ascent: Pixels,
         descent: Pixels,
         ime_state: Option<ImeState>,
+        opacity: f32,
     ) -> Self {
         Self {
             snapshot,
@@ -301,6 +303,7 @@ impl TerminalElement {
             ascent,
             descent,
             ime_state,
+            opacity,
         }
     }
 
@@ -548,8 +551,13 @@ impl Element for TerminalElement {
         let origin = prepaint.origin;
         let metrics = prepaint.metrics;
 
-        // Background fill.
-        window.paint_quad(fill(prepaint.bounds, cx.theme().background));
+        // Background fill with opacity.
+        let bg_color = cx.theme().background;
+        let bg_with_opacity = Hsla {
+            a: bg_color.a * self.opacity,
+            ..bg_color
+        };
+        window.paint_quad(fill(prepaint.bounds, bg_with_opacity));
 
         // Register IME input handler — this is the key fix for Chinese input.
         let handler = TerminalInputHandler {
