@@ -8,9 +8,10 @@ use std::{
 
 use alacritty_terminal::{index::Side, selection::SelectionType};
 use gpui::{
-    AppContext, Bounds, ClickEvent, ClipboardItem, Context, FocusHandle, InteractiveElement as _,
-    IntoElement, KeyDownEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    ParentElement as _, Pixels, Point, Render, ScrollWheelEvent, Styled as _, Window, div, px,
+    actions, App, AppContext, Bounds, ClickEvent, ClipboardItem, Context, FocusHandle,
+    InteractiveElement as _, IntoElement, KeyBinding, KeyDownEvent, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render, ScrollWheelEvent,
+    Styled as _, Window, div, point, px,
 };
 use gpui_component::{
     ActiveTheme as _, ElementExt, Theme, ThemeRegistry,
@@ -39,6 +40,18 @@ use crate::{
     },
     ui::{self as sidebar, Panel},
 };
+
+// Tab action types to intercept Tab before gpui-component's Root handler.
+actions!([TabToPty, ShiftTabToPty]);
+
+/// Register Tab keybindings at app level. Must be called after gpui_component::init
+/// so these bindings take precedence over gpui-component's Root-level Tab bindings.
+pub fn init_actions(cx: &mut App) {
+    cx.bind_keys([
+        KeyBinding::new("tab", TabToPty, None),
+        KeyBinding::new("shift-tab", ShiftTabToPty, None),
+    ]);
+}
 
 const MAX_CONNECT_ATTEMPTS: usize = 200;
 const FONT_SIZE_MIN: f32 = 8.0;
@@ -96,7 +109,7 @@ pub struct ZenixApp {
     market_loading: bool,
     market_error: Option<String>,
     terminal_cursor_blink: bool,
-    terminal_cursor_style: String,
+    pub terminal_cursor_style: String,
     terminal_opacity: f32,
     terminal_scrollback: u32,
     terminal_line_height: Pixels,
@@ -108,17 +121,20 @@ pub struct ZenixApp {
     toast: Option<ToastMessage>,
     context_menu: Option<ContextMenuState>,
     pending_confirm: Option<crate::ui::settings::PendingConfirm>,
+    pub cursor_visible: bool,
     single_instance_rx: Option<std::sync::mpsc::Receiver<crate::single_instance::Signal>>,
 }
 type FontSelect = SelectState<SearchableVec<String>>;
 
 fn write_to_pty(backend: &Option<BackendTx>, tab: &mut Option<TerminalTab>, bytes: Vec<u8>) {
     if let Some(backend) = backend {
+        // Scroll to bottom if there's a display offset
         if let Some(tab) = tab
             && tab.render_snapshot().display_offset > 0
         {
             tab.scroll_to_bottom();
         }
+        // Always send input regardless of display_offset
         backend.send(BackendCommand::Input(bytes));
     }
 }
@@ -137,7 +153,7 @@ impl ZenixApp {
         let cursor_style = config.terminal_cursor_style().to_string();
         let opacity = config.terminal_opacity();
         let scrollback = config.terminal_scrollback();
-        Self {
+        let result = Self {
             focus_handle,
             backend: None,
             tab: None,
@@ -198,11 +214,41 @@ impl ZenixApp {
             last_mouse_cell: None,
             last_selection_cell: None,
             ime_state: None,
+            cursor_visible: true,
             toast: None,
             context_menu: None,
             pending_confirm: None,
             single_instance_rx,
+        };
+        // Start cursor blink timer if enabled
+        if cursor_blink {
+            cx.spawn(async move |this, cx| {
+                loop {
+                    cx.background_executor().timer(Duration::from_millis(500)).await;
+                    if this
+                        .update(cx, |this, cx| {
+                            // Stop blinking if cursor_blink is disabled
+                            if !this.terminal_cursor_blink {
+                                this.cursor_visible = true;
+                                return true;
+                            }
+                            this.cursor_visible = !this.cursor_visible;
+                            cx.notify();
+                            false
+                        })
+                        .is_err()
+                        || this
+                            .update(cx, |this, _| this.terminal_cursor_blink)
+                            .unwrap_or(true)
+                            == false
+                    {
+                        break;
+                    }
+                }
+            })
+            .detach();
         }
+        result
     }
 
     fn start_event_pump(&self, cx: &mut Context<Self>) {
@@ -410,11 +456,10 @@ impl ZenixApp {
         self.ime_state = Some(ImeState { marked_text: text });
         cx.notify();
     }
-
-    /// Returns the current marked text range (UTF-16) for IME cursor placement.
     pub(crate) fn marked_text_range(&self) -> Option<Range<usize>> {
         self.ime_state
             .as_ref()
+            .filter(|s| !s.marked_text.is_empty())
             .map(|state| 0..state.marked_text.encode_utf16().count())
     }
 
@@ -460,7 +505,7 @@ impl ZenixApp {
         })
         .detach();
     }
-    fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
+    fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let modifiers = event.keystroke.modifiers;
         let key = &event.keystroke.key;
 
@@ -504,10 +549,26 @@ impl ZenixApp {
             return;
         }
 
+        // Tab key penetration: when terminal has focus and settings is not shown,
+        // send Tab to PTY. Use stop_propagation to prevent GPUI's built-in
+        // Tab/Shift-Tab focus navigation from moving focus away.
+        if key.eq_ignore_ascii_case("tab") && !self.show_settings {
+            if let Some(tab) = &self.tab
+                && let Some(bytes) = encode_key(&event.keystroke, tab.app_cursor_mode(), false)
+            {
+                write_to_pty(&self.backend, &mut self.tab, bytes);
+            }
+            cx.stop_propagation();
+            return;
+        }
+
         // All printable characters without ctrl/alt/platform modifiers are handled by
         // the InputHandler's replace_text_in_range. We must NOT send
         // them here to avoid double input (including shift+letter).
-        if (event.keystroke.key.len() == 1 || event.keystroke.key.eq_ignore_ascii_case("space"))
+        // Linux reports Tab as a named key, so encode it explicitly instead of
+        // treating it as printable text.
+        if !key.eq_ignore_ascii_case("tab")
+            && (event.keystroke.key.len() == 1 || event.keystroke.key.eq_ignore_ascii_case("space"))
             && !event.keystroke.modifiers.alt
             && !event.keystroke.modifiers.control
             && !event.keystroke.modifiers.platform
@@ -516,12 +577,33 @@ impl ZenixApp {
         }
 
         // Terminal keystrokes (named keys, modified keys): encode and send.
+        // Stop propagation to prevent GPUI's InputHandler from also dispatching
+        // the key_char, which would cause double-send (e.g., Ctrl+V sent twice).
         if let Some(tab) = &self.tab
             && let Some(bytes) = encode_key(&event.keystroke, tab.app_cursor_mode(), false)
         {
             write_to_pty(&self.backend, &mut self.tab, bytes);
+            cx.stop_propagation();
+            return;
         }
     }
+
+    // Tab action handler — catches Tab before gpui-component's Root handler.
+    // Writes Tab byte to PTY. In the action dispatch bubble phase, propagation
+    // stops by default, preventing Root's focus_next from running.
+    fn on_tab_to_pty(&mut self, _: &TabToPty, _window: &mut Window, _cx: &mut Context<Self>) {
+        write_to_pty(&self.backend, &mut self.tab, vec![0x09]);
+    }
+
+    fn on_shift_tab_to_pty(
+        &mut self,
+        _: &ShiftTabToPty,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
+    ) {
+        write_to_pty(&self.backend, &mut self.tab, vec![0x09]);
+    }
+
     // ── Mouse dispatch ──────────────────────────────────────────────────
 
     fn on_mouse_down(
@@ -1111,6 +1193,8 @@ impl Render for ZenixApp {
             .font_family(self.config.font_family())
             .track_focus(&focus)
             .on_key_down(cx.listener(Self::on_key_down))
+            .on_action(cx.listener(Self::on_tab_to_pty))
+            .on_action(cx.listener(Self::on_shift_tab_to_pty))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
@@ -2007,6 +2091,7 @@ impl Render for ZenixApp {
             let font_select_ref = self.font_select.as_ref();
 
             div()
+                .relative()
                 .size_full()
                 .child(main_ui)
                 .child(super::ui::settings_dialog(SettingsDialogProps {
@@ -2103,6 +2188,33 @@ impl Render for ZenixApp {
                                         this.terminal_cursor_blink = !this.terminal_cursor_blink;
                                         this.config
                                             .set_terminal_cursor_blink(this.terminal_cursor_blink);
+                                        // Restart blink timer if enabled
+                                        if this.terminal_cursor_blink {
+                                            cx.spawn(async move |this, cx| {
+                                                loop {
+                                                    cx.background_executor().timer(Duration::from_millis(500)).await;
+                                                    if this
+                                                        .update(cx, |this, cx| {
+                                                            if !this.terminal_cursor_blink {
+                                                                this.cursor_visible = true;
+                                                                return true;
+                                                            }
+                                                            this.cursor_visible = !this.cursor_visible;
+                                                            cx.notify();
+                                                            false
+                                                        })
+                                                        .is_err()
+                                                        || this
+                                                            .update(cx, |this, _| this.terminal_cursor_blink)
+                                                            .unwrap_or(true)
+                                                            == false
+                                                    {
+                                                        break;
+                                                    }
+                                                }
+                                            })
+                                            .detach();
+                                        }
                                     }
                                     crate::ui::settings::TerminalAction::SetOpacity(op) => {
                                         this.terminal_opacity = op;

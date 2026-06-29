@@ -162,6 +162,7 @@ fn main() {
         gpui_component::init(cx);
         load_embedded_themes(cx);
         load_embedded_fonts(cx);
+        app::init_actions(cx);
 
         open_main_window(cx, single_instance_rx);
     });
