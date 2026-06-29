@@ -14,7 +14,7 @@ use alacritty_terminal::{
 };
 use gpui::{
     App, Bounds, CursorStyle, Element, ElementId, FocusHandle, Font, FontFeatures, FontStyle,
-    FontWeight, GlobalElementId, Hsla, HitboxBehavior, InputHandler, InspectorElementId,
+    FontWeight, GlobalElementId, HitboxBehavior, Hsla, InputHandler, InspectorElementId,
     IntoElement, LayoutId, Pixels, Point, Rgba, SharedString, StrikethroughStyle, TextAlign,
     TextRun, UTF16Selection, UnderlineStyle, Window, fill, point, px, relative, rgb, size,
 };

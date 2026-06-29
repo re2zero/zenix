@@ -116,7 +116,9 @@ pub fn scan_all_skills() -> HashMap<String, SkillInfo> {
 /// Choose the best source directory for a skill.
 /// Prefers agents in this order: claude > codex > opencode > pi > omp > kilo > hermes > droid.
 pub fn best_source(skill: &SkillInfo) -> Option<(String, PathBuf)> {
-    let preferred_order = ["claude", "codex", "opencode", "pi", "omp", "kilo", "hermes", "droid"];
+    let preferred_order = [
+        "claude", "codex", "opencode", "pi", "omp", "kilo", "hermes", "droid",
+    ];
     for agent in &preferred_order {
         if skill.source_agents.contains(&agent.to_string())
             && let Some(dir) = source_dir_for(agent, &skill.name)

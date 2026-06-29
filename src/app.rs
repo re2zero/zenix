@@ -8,10 +8,10 @@ use std::{
 
 use alacritty_terminal::{index::Side, selection::SelectionType};
 use gpui::{
-    actions, App, AppContext, Bounds, ClickEvent, ClipboardItem, Context, FocusHandle,
+    App, AppContext, Bounds, ClickEvent, ClipboardItem, Context, FocusHandle,
     InteractiveElement as _, IntoElement, KeyBinding, KeyDownEvent, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render, ScrollWheelEvent,
-    Styled as _, Window, div, point, px,
+    Styled as _, Window, actions, div, point, px,
 };
 use gpui_component::{
     ActiveTheme as _, ElementExt, Theme, ThemeRegistry,
@@ -224,7 +224,9 @@ impl ZenixApp {
         if cursor_blink {
             cx.spawn(async move |this, cx| {
                 loop {
-                    cx.background_executor().timer(Duration::from_millis(500)).await;
+                    cx.background_executor()
+                        .timer(Duration::from_millis(500))
+                        .await;
                     if this
                         .update(cx, |this, cx| {
                             // Stop blinking if cursor_blink is disabled
@@ -1686,7 +1688,8 @@ impl Render for ZenixApp {
                                         None
                                     };
                                     // Preserve original command when switching to SSE mode
-                                    let original_command = if s.mcp_type == crate::mcp::McpType::Sse {
+                                    let original_command = if s.mcp_type == crate::mcp::McpType::Sse
+                                    {
                                         Some(s.command.clone())
                                     } else {
                                         None
@@ -2197,20 +2200,25 @@ impl Render for ZenixApp {
                                         if this.terminal_cursor_blink {
                                             cx.spawn(async move |this, cx| {
                                                 loop {
-                                                    cx.background_executor().timer(Duration::from_millis(500)).await;
+                                                    cx.background_executor()
+                                                        .timer(Duration::from_millis(500))
+                                                        .await;
                                                     if this
                                                         .update(cx, |this, cx| {
                                                             if !this.terminal_cursor_blink {
                                                                 this.cursor_visible = true;
                                                                 return true;
                                                             }
-                                                            this.cursor_visible = !this.cursor_visible;
+                                                            this.cursor_visible =
+                                                                !this.cursor_visible;
                                                             cx.notify();
                                                             false
                                                         })
                                                         .is_err()
                                                         || this
-                                                            .update(cx, |this, _| this.terminal_cursor_blink)
+                                                            .update(cx, |this, _| {
+                                                                this.terminal_cursor_blink
+                                                            })
                                                             .unwrap_or(true)
                                                             == false
                                                     {

@@ -19,8 +19,7 @@ use gpui_component::{
 use crate::ui::settings::helpers::*;
 
 use super::{
-    ApiProviderAction, ApiProviderFormState, McpAction, McpFormState, SkillAction,
-    SharedActionCb,
+    ApiProviderAction, ApiProviderFormState, McpAction, McpFormState, SharedActionCb, SkillAction,
 };
 
 // ── MCP Cards ─────────────────────────────────────────────────────────
@@ -256,7 +255,7 @@ pub fn mcp_inline_edit_card(
             h_flex()
                 .gap(px(8.))
                 .items_center()
-                .child(txt(px(12.)).w(px(60.)).child(t("settings.mcp.form.name")))
+                .child(txt(px(12.)).w(px(100.)).child(t("settings.mcp.form.name")))
                 .child(
                     form.name
                         .as_ref()
@@ -273,7 +272,7 @@ pub fn mcp_inline_edit_card(
             h_flex()
                 .gap(px(8.))
                 .items_center()
-                .child(txt(px(12.)).w(px(60.)).child(t("settings.mcp.form.type")))
+                .child(txt(px(12.)).w(px(100.)).child(t("settings.mcp.form.type")))
                 .child(
                     Button::new("inline-mcp-type-stdio")
                         .cursor_pointer()
@@ -322,7 +321,7 @@ pub fn mcp_inline_edit_card(
                     .items_center()
                     .child(
                         txt(px(12.))
-                            .w(px(60.))
+                            .w(px(100.))
                             .child(t("settings.mcp.form.command")),
                     )
                     .child(
@@ -341,7 +340,7 @@ pub fn mcp_inline_edit_card(
                 h_flex()
                     .gap(px(8.))
                     .items_center()
-                    .child(txt(px(12.)).w(px(60.)).child(t("settings.mcp.form.args")))
+                    .child(txt(px(12.)).w(px(100.)).child(t("settings.mcp.form.args")))
                     .child(
                         form.args
                             .as_ref()
@@ -360,7 +359,7 @@ pub fn mcp_inline_edit_card(
                 h_flex()
                     .gap(px(8.))
                     .items_center()
-                    .child(txt(px(12.)).w(px(60.)).child("URL"))
+                    .child(txt(px(12.)).w(px(100.)).child("URL"))
                     .child(
                         form.url
                             .as_ref()
@@ -378,7 +377,7 @@ pub fn mcp_inline_edit_card(
             h_flex()
                 .gap(px(8.))
                 .items_start()
-                .child(txt(px(12.)).w(px(60.)).child(t("settings.mcp.form.env")))
+                .child(txt(px(12.)).w(px(100.)).child(t("settings.mcp.form.env")))
                 .child(
                     form.env
                         .as_ref()
@@ -457,7 +456,7 @@ pub fn mcp_add_form(
             h_flex()
                 .gap(px(8.))
                 .items_center()
-                .child(txt(px(12.)).w(px(60.)).child(t("settings.mcp.form.name")))
+                .child(txt(px(12.)).w(px(100.)).child(t("settings.mcp.form.name")))
                 .child(
                     form.name
                         .as_ref()
@@ -474,7 +473,7 @@ pub fn mcp_add_form(
             h_flex()
                 .gap(px(8.))
                 .items_center()
-                .child(txt(px(12.)).w(px(60.)).child(t("settings.mcp.form.type")))
+                .child(txt(px(12.)).w(px(100.)).child(t("settings.mcp.form.type")))
                 .child(
                     Button::new("mcp-type-stdio")
                         .cursor_pointer()
@@ -523,7 +522,7 @@ pub fn mcp_add_form(
                     .items_center()
                     .child(
                         txt(px(12.))
-                            .w(px(60.))
+                            .w(px(100.))
                             .child(t("settings.mcp.form.command")),
                     )
                     .child(
@@ -542,7 +541,7 @@ pub fn mcp_add_form(
                 h_flex()
                     .gap(px(8.))
                     .items_center()
-                    .child(txt(px(12.)).w(px(60.)).child(t("settings.mcp.form.args")))
+                    .child(txt(px(12.)).w(px(100.)).child(t("settings.mcp.form.args")))
                     .child(
                         form.args
                             .as_ref()
@@ -561,7 +560,7 @@ pub fn mcp_add_form(
                 h_flex()
                     .gap(px(8.))
                     .items_center()
-                    .child(txt(px(12.)).w(px(60.)).child("URL"))
+                    .child(txt(px(12.)).w(px(100.)).child("URL"))
                     .child(
                         form.url
                             .as_ref()
@@ -579,7 +578,7 @@ pub fn mcp_add_form(
             h_flex()
                 .gap(px(8.))
                 .items_start()
-                .child(txt(px(12.)).w(px(60.)).child(t("settings.mcp.form.env")))
+                .child(txt(px(12.)).w(px(100.)).child(t("settings.mcp.form.env")))
                 .child(
                     form.env
                         .as_ref()
@@ -932,7 +931,8 @@ pub fn add_skill_card(on_skill_action: &SharedActionCb<SkillAction>) -> impl Int
         .gap(px(4.))
         .py(px(6.))
         .px(px(8.))
-        .w(px(200.))
+        .min_w(px(180.))
+        .max_w(px(240.))
         .border_1()
         .border_color(gpui::rgba(0x45475a66))
         .rounded_md()
@@ -994,7 +994,8 @@ pub fn per_agent_skill_card(
         .gap(px(8.))
         .py(px(6.))
         .px(px(8.))
-        .w(px(200.))
+        .min_w(px(180.))
+        .max_w(px(240.))
         .border_1()
         .border_color(gpui::rgba(0x45475a44))
         .rounded_md()
@@ -1269,7 +1270,11 @@ pub fn api_inline_edit_card(
             h_flex()
                 .gap(px(8.))
                 .items_center()
-                .child(txt(px(12.)).w(px(80.)).child(t("settings.api.form.format")))
+                .child(
+                    txt(px(12.))
+                        .w(px(100.))
+                        .child(t("settings.api.form.format")),
+                )
                 .child(api_format_btn(ApiFormat::OpenAI, form.format, on_action))
                 .child(api_format_btn(ApiFormat::Anthropic, form.format, on_action)),
         )
@@ -1278,7 +1283,11 @@ pub fn api_inline_edit_card(
             h_flex()
                 .gap(px(8.))
                 .items_center()
-                .child(txt(px(12.)).w(px(80.)).child(t("settings.api.form.preset")))
+                .child(
+                    txt(px(12.))
+                        .w(px(100.))
+                        .child(t("settings.api.form.preset")),
+                )
                 .child(
                     h_flex()
                         .gap(px(4.))
@@ -1290,13 +1299,15 @@ pub fn api_inline_edit_card(
                                 "preset-{}",
                                 p.name.to_lowercase().replace(' ', "-")
                             ))
-                                .cursor_pointer()
-                                .ghost()
-                                .compact()
-                                .label(p.name.to_string())
-                                .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                            .cursor_pointer()
+                            .ghost()
+                            .compact()
+                            .label(p.name.to_string())
+                            .on_click(
+                                move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
                                     on(ApiProviderAction::ApplyPreset { preset: p.clone() }, w, a);
-                                })
+                                },
+                            )
                         })),
                 ),
         )
@@ -1304,7 +1315,11 @@ pub fn api_inline_edit_card(
             h_flex()
                 .gap(px(8.))
                 .items_center()
-                .child(txt(px(12.)).w(px(80.)).child(t("settings.api.form.suffix")))
+                .child(
+                    txt(px(12.))
+                        .w(px(100.))
+                        .child(t("settings.api.form.suffix")),
+                )
                 .child(
                     h_flex()
                         .gap(px(4.))
@@ -1316,13 +1331,15 @@ pub fn api_inline_edit_card(
                                 .ghost()
                                 .compact()
                                 .label(s.clone())
-                                .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
-                                    on(
-                                        ApiProviderAction::SetSuffix { suffix: s.clone() },
-                                        w,
-                                        a,
-                                    );
-                                })
+                                .on_click(
+                                    move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                                        on(
+                                            ApiProviderAction::SetSuffix { suffix: s.clone() },
+                                            w,
+                                            a,
+                                        );
+                                    },
+                                )
                         })),
                 ),
         )
@@ -1330,37 +1347,48 @@ pub fn api_inline_edit_card(
             t("settings.api.form.base_url"),
             form.base_url.as_ref(),
         ))
-        .child(form_field(t("settings.api.form.api_key"), form.api_key.as_ref()))
+        .child(form_field(
+            t("settings.api.form.api_key"),
+            form.api_key.as_ref(),
+        ))
         .child(
             h_flex()
                 .gap(px(8.))
                 .items_start()
-                .child(txt(px(12.)).w(px(80.)).child(t("settings.api.form.thinking")))
+                .child(
+                    txt(px(12.))
+                        .w(px(100.))
+                        .child(t("settings.api.form.thinking")),
+                )
                 .child(
                     h_flex()
                         .gap(px(4.))
-                        .children(
-                            ThinkingLevel::all().iter().map(|level| {
-                                let l = *level;
-                                let on = on_action.clone();
-                                Button::new(format!("think-{}", format!("{:?}", l).to_lowercase()))
-                                    .cursor_pointer()
-                                    .when(form.thinking_level == l, |b| b.primary())
-                                    .when(form.thinking_level != l, |b| b.ghost())
-                                    .compact()
-                                    .label(l.label())
-                                    .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                        .children(ThinkingLevel::all().iter().map(|level| {
+                            let l = *level;
+                            let on = on_action.clone();
+                            Button::new(format!("think-{}", format!("{:?}", l).to_lowercase()))
+                                .cursor_pointer()
+                                .when(form.thinking_level == l, |b| b.primary())
+                                .when(form.thinking_level != l, |b| b.ghost())
+                                .compact()
+                                .label(l.label())
+                                .on_click(
+                                    move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
                                         on(ApiProviderAction::SetThinkingLevel { level: l }, w, a);
-                                    })
-                            }),
-                        ),
+                                    },
+                                )
+                        })),
                 ),
         )
         .child(
             h_flex()
                 .gap(px(8.))
                 .items_start()
-                .child(txt(px(12.)).w(px(80.)).child(t("settings.api.form.selected_model")))
+                .child(
+                    txt(px(12.))
+                        .w(px(100.))
+                        .child(t("settings.api.form.selected_model")),
+                )
                 .child(
                     Button::new("fetch-models-inline")
                         .cursor_pointer()
@@ -1370,7 +1398,13 @@ pub fn api_inline_edit_card(
                         .on_click({
                             let on = on_action.clone();
                             move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
-                                on(ApiProviderAction::FetchModels { name: String::new() }, w, a);
+                                on(
+                                    ApiProviderAction::FetchModels {
+                                        name: String::new(),
+                                    },
+                                    w,
+                                    a,
+                                );
                             }
                         }),
                 ),
@@ -1462,7 +1496,11 @@ pub fn api_provider_form(
             h_flex()
                 .gap(px(8.))
                 .items_center()
-                .child(txt(px(12.)).w(px(80.)).child(t("settings.api.form.format")))
+                .child(
+                    txt(px(12.))
+                        .w(px(100.))
+                        .child(t("settings.api.form.format")),
+                )
                 .child(api_format_btn(ApiFormat::OpenAI, form.format, on_action))
                 .child(api_format_btn(ApiFormat::Anthropic, form.format, on_action)),
         )
@@ -1471,7 +1509,11 @@ pub fn api_provider_form(
             h_flex()
                 .gap(px(8.))
                 .items_center()
-                .child(txt(px(12.)).w(px(80.)).child(t("settings.api.form.preset")))
+                .child(
+                    txt(px(12.))
+                        .w(px(100.))
+                        .child(t("settings.api.form.preset")),
+                )
                 .child(
                     h_flex()
                         .gap(px(4.))
@@ -1483,13 +1525,15 @@ pub fn api_provider_form(
                                 "preset-{}",
                                 p.name.to_lowercase().replace(' ', "-")
                             ))
-                                .cursor_pointer()
-                                .ghost()
-                                .compact()
-                                .label(p.name.to_string())
-                                .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                            .cursor_pointer()
+                            .ghost()
+                            .compact()
+                            .label(p.name.to_string())
+                            .on_click(
+                                move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
                                     on(ApiProviderAction::ApplyPreset { preset: p.clone() }, w, a);
-                                })
+                                },
+                            )
                         })),
                 ),
         )
@@ -1497,7 +1541,11 @@ pub fn api_provider_form(
             h_flex()
                 .gap(px(8.))
                 .items_center()
-                .child(txt(px(12.)).w(px(80.)).child(t("settings.api.form.suffix")))
+                .child(
+                    txt(px(12.))
+                        .w(px(100.))
+                        .child(t("settings.api.form.suffix")),
+                )
                 .child(
                     h_flex()
                         .gap(px(4.))
@@ -1509,13 +1557,15 @@ pub fn api_provider_form(
                                 .ghost()
                                 .compact()
                                 .label(s.clone())
-                                .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
-                                    on(
-                                        ApiProviderAction::SetSuffix { suffix: s.clone() },
-                                        w,
-                                        a,
-                                    );
-                                })
+                                .on_click(
+                                    move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                                        on(
+                                            ApiProviderAction::SetSuffix { suffix: s.clone() },
+                                            w,
+                                            a,
+                                        );
+                                    },
+                                )
                         })),
                 ),
         )
@@ -1535,7 +1585,7 @@ pub fn api_provider_form(
             h_flex()
                 .gap(px(8.))
                 .items_center()
-                .child(txt(px(12.)).w(px(80.)).child(t("settings.api.form.think")))
+                .child(txt(px(12.)).w(px(100.)).child(t("settings.api.form.think")))
                 .child(
                     h_flex()
                         .gap(px(4.))
@@ -1549,13 +1599,15 @@ pub fn api_provider_form(
                                 .when(!selected, |b| b.ghost())
                                 .compact()
                                 .label(lev.label().to_string())
-                                .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
-                                    on(
-                                        ApiProviderAction::SetThinkingLevel { level: lev },
-                                        w,
-                                        a,
-                                    );
-                                })
+                                .on_click(
+                                    move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                                        on(
+                                            ApiProviderAction::SetThinkingLevel { level: lev },
+                                            w,
+                                            a,
+                                        );
+                                    },
+                                )
                         })),
                 ),
         )
@@ -1605,15 +1657,17 @@ pub fn api_provider_form(
                                 .when(!sel, |b| b.ghost())
                                 .compact()
                                 .label(m_clone.clone())
-                                .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
-                                    on(
-                                        ApiProviderAction::SelectModel {
-                                            model: m_clone.clone(),
-                                        },
-                                        w,
-                                        a,
-                                    );
-                                })
+                                .on_click(
+                                    move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                                        on(
+                                            ApiProviderAction::SelectModel {
+                                                model: m_clone.clone(),
+                                            },
+                                            w,
+                                            a,
+                                        );
+                                    },
+                                )
                         })),
                 )
                 .into_any_element()
@@ -1669,7 +1723,7 @@ pub fn form_field(
     h_flex()
         .gap(px(8.))
         .items_center()
-        .child(txt(px(12.)).w(px(80.)).child(label.into()))
+        .child(txt(px(12.)).w(px(100.)).child(label.into()))
         .child(
             input
                 .map(|e| Input::new(e).into_any_element())

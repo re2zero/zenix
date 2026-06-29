@@ -296,14 +296,14 @@ fn tab_terminal(
     v_flex()
         .gap(px(16.))
         .child(setting_group_header(t("settings.terminal.title")))
-        .child(setting_label(t("settings.terminal.cursor_style")))
-        .child(
+        .child(setting_row(
+            t("settings.terminal.cursor_style"),
             h_flex()
                 .gap(px(8.))
                 .child(style_btn("block", cursor_style))
                 .child(style_btn("bar", cursor_style))
                 .child(style_btn("underline", cursor_style)),
-        )
+        ))
         .child(setting_row(
             t("settings.terminal.cursor_blink"),
             Button::new("cursor-blink")
@@ -314,8 +314,8 @@ fn tab_terminal(
                     ota_blink(TerminalAction::ToggleCursorBlink, w, a)
                 }),
         ))
-        .child(setting_label(t("settings.terminal.opacity")))
-        .child(
+        .child(setting_row(
+            t("settings.terminal.opacity"),
             h_flex()
                 .gap(px(8.))
                 .items_center()
@@ -350,7 +350,7 @@ fn tab_terminal(
                             }
                         }),
                 ),
-        )
+        ))
         .child(setting_row(
             t("settings.terminal.scrollback"),
             h_flex()
@@ -738,11 +738,9 @@ fn agent_detail_panel(
                     h_flex()
                         .gap(px(8.))
                         .flex_wrap()
-                        .children(
-                            agent_skills
-                                .iter()
-                                .map(|s| components::per_agent_skill_card(agent_name, s, on_skill_action)),
-                        )
+                        .children(agent_skills.iter().map(|s| {
+                            components::per_agent_skill_card(agent_name, s, on_skill_action)
+                        }))
                         .into_any_element()
                 }),
         )
@@ -1018,85 +1016,84 @@ fn tab_skills_content(
                     }
                 };
 
-                let market_content =
-                    if market_loading {
-                        txt(px(12.))
-                            .text_color(gpui::rgba(0x888888FF))
-                            .child(t("skills.market_loading"))
-                            .into_any_element()
-                    } else if let Some(err) = market_error {
-                        txt(px(12.))
-                            .text_color(gpui::rgba(0xFF4444FF))
-                            .child(err.to_string())
-                            .into_any_element()
-                    } else if market_skills.is_empty() {
-                        v_flex()
-                            .gap(px(8.))
-                            .child(
-                                txt(px(12.))
-                                    .text_color(gpui::rgba(0x888888FF))
-                                    .child(t("skills.market_empty")),
-                            )
-                            .child(
-                                Button::new("fetch-market")
-                                    .cursor_pointer()
-                                    .ghost()
-                                    .label(t("skills.fetch_market"))
-                                    .on_click(fetch_cb.clone()),
-                            )
-                            .into_any_element()
-                    } else {
-                        let filtered: Vec<&ApiSkill> = market_skills
-                            .iter()
-                            .filter(|s| {
-                                skill_search.is_empty()
-                                    || s.name.to_lowercase().contains(&skill_search.to_lowercase())
-                                    || s.slug.to_lowercase().contains(&skill_search.to_lowercase())
-                                    || s.source
-                                        .to_lowercase()
-                                        .contains(&skill_search.to_lowercase())
-                            })
-                            .collect();
-                        let count = filtered.len();
-                        v_flex()
-                            .gap(px(12.))
-                            .child(
-                                h_flex()
-                                    .gap(px(8.))
-                                    .items_center()
-                                    .justify_between()
-                                    .child(
-                                        txt(px(10.))
-                                            .text_color(gpui::rgba(0x666666FF))
-                                            .child(format!("{} items", count)),
-                                    )
-                                    .child(
-                                        Button::new("refresh-market")
-                                            .cursor_pointer()
-                                            .ghost()
-                                            .compact()
-                                            .label(t("general.refresh"))
-                                            .on_click(fetch_cb),
-                                    ),
-                            )
-                            .child(if filtered.is_empty() {
-                                txt(px(12.))
-                                    .text_color(gpui::rgba(0x888888FF))
-                                    .child(t("skills.no_skills"))
-                                    .into_any_element()
-                            } else {
-                                h_flex()
-                                    .gap(px(8.))
-                                    .flex_wrap()
-                                    .min_w_0()
-                                    .overflow_x_hidden()
-                                    .children(filtered.iter().map(|s| {
-                                        components::api_skill_card(s, &installed_names, on_skill_action)
-                                    }))
-                                    .into_any_element()
-                            })
-                            .into_any_element()
-                    };
+                let market_content = if market_loading {
+                    txt(px(12.))
+                        .text_color(gpui::rgba(0x888888FF))
+                        .child(t("skills.market_loading"))
+                        .into_any_element()
+                } else if let Some(err) = market_error {
+                    txt(px(12.))
+                        .text_color(gpui::rgba(0xFF4444FF))
+                        .child(err.to_string())
+                        .into_any_element()
+                } else if market_skills.is_empty() {
+                    v_flex()
+                        .gap(px(8.))
+                        .child(
+                            txt(px(12.))
+                                .text_color(gpui::rgba(0x888888FF))
+                                .child(t("skills.market_empty")),
+                        )
+                        .child(
+                            Button::new("fetch-market")
+                                .cursor_pointer()
+                                .ghost()
+                                .label(t("skills.fetch_market"))
+                                .on_click(fetch_cb.clone()),
+                        )
+                        .into_any_element()
+                } else {
+                    let filtered: Vec<&ApiSkill> = market_skills
+                        .iter()
+                        .filter(|s| {
+                            skill_search.is_empty()
+                                || s.name.to_lowercase().contains(&skill_search.to_lowercase())
+                                || s.slug.to_lowercase().contains(&skill_search.to_lowercase())
+                                || s.source
+                                    .to_lowercase()
+                                    .contains(&skill_search.to_lowercase())
+                        })
+                        .collect();
+                    let count = filtered.len();
+                    v_flex()
+                        .gap(px(12.))
+                        .child(
+                            h_flex()
+                                .gap(px(8.))
+                                .items_center()
+                                .justify_between()
+                                .child(
+                                    txt(px(10.))
+                                        .text_color(gpui::rgba(0x666666FF))
+                                        .child(format!("{} items", count)),
+                                )
+                                .child(
+                                    Button::new("refresh-market")
+                                        .cursor_pointer()
+                                        .ghost()
+                                        .compact()
+                                        .label(t("general.refresh"))
+                                        .on_click(fetch_cb),
+                                ),
+                        )
+                        .child(if filtered.is_empty() {
+                            txt(px(12.))
+                                .text_color(gpui::rgba(0x888888FF))
+                                .child(t("skills.no_skills"))
+                                .into_any_element()
+                        } else {
+                            h_flex()
+                                .gap(px(8.))
+                                .flex_wrap()
+                                .min_w_0()
+                                .overflow_x_hidden()
+                                .children(filtered.iter().map(|s| {
+                                    components::api_skill_card(s, &installed_names, on_skill_action)
+                                }))
+                                .into_any_element()
+                        })
+                        .into_any_element()
+                };
                 v_flex()
                     .gap(px(8.))
                     .child(market_content)
@@ -1217,11 +1214,15 @@ fn tab_api_content(
         } else {
             v_flex()
                 .gap(px(8.))
-                .children(
-                    filtered.iter().map(|p| {
-                        components::api_provider_card(p, available_agents, on_action, api_test_results, form)
-                    }),
-                )
+                .children(filtered.iter().map(|p| {
+                    components::api_provider_card(
+                        p,
+                        available_agents,
+                        on_action,
+                        api_test_results,
+                        form,
+                    )
+                }))
                 .into_any_element()
         })
 }

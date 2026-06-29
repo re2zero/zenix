@@ -1,0 +1,48 @@
+{
+  "id": "02-settings-layout",
+  "name": "settings-layout",
+  "title": "Settings UI Layout Optimization",
+  "description": "Fix poor layout in settings dialog: labels and controls misaligned, action buttons pushed to far right, no max-width constraints, inconsistent label widths across forms.",
+  "status": "done",
+  "dev_type": "fix",
+  "scope": "settings-ui",
+  "package": null,
+  "priority": "P1",
+  "creator": "re2zero",
+  "assignee": "re2zero",
+  "createdAt": "2026-06-29",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": null,
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "src/ui/settings/components.rs",
+    "src/ui/settings/tabs.rs",
+    "src/ui/settings/helpers.rs"
+  ],
+  "notes": "Fixed settings UI layout: standardized label widths, added max_w constraints to cards/forms, improved setting_row layout, converted raw h_flex to setting_row for terminal controls.",
+  "meta": {
+    "layout_issues_fixed": [
+      "terminal tab: setting_row no longer uses justify_between",
+      "mcp form: label width changed from 60px to 100px",
+      "api form: label width changed from 80px to 100px for consistency",
+      "cards: added max_w(px(600.)) to mcp_card, api_provider_card, mcp_agent_entry_with_test, agent_detail_panel",
+      "inline edit forms: added max_w(px(600.)) to mcp_inline_edit_card, api_inline_edit_card",
+      "add forms: added max_w(px(600.)) to mcp_add_form, api_provider_form",
+      "skill cards: changed fixed w(px(200.)) to min_w/max_w range",
+      "terminal tab: opacity section converted from raw h_flex to setting_row",
+      "terminal tab: cursor style section converted from raw h_flex to setting_row",
+      "content lists: added max_w(px(600.)) to card list containers in api/mcp/skills tabs"
+    ],
+    "files_changed": [
+      "src/ui/settings/helpers.rs",
+      "src/ui/settings/components.rs",
+      "src/ui/settings/tabs.rs"
+    ]
+  }
+}

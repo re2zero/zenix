@@ -1,13 +1,10 @@
 //! Shared UI helper functions extracted from settings.rs.
 
 use gpui::{
-    px, ClickEvent, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, Window, prelude::FluentBuilder as _,
+    ClickEvent, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
+    StatefulInteractiveElement as _, Styled as _, Window, prelude::FluentBuilder as _, px,
 };
-use gpui_component::{
-    h_flex,
-    v_flex,
-};
+use gpui_component::{h_flex, v_flex};
 
 /// Zed-style search bar with magnifying glass icon.
 pub fn zed_search_bar(
@@ -85,7 +82,6 @@ pub fn setting_label(text: impl Into<String>) -> impl IntoElement {
 pub fn setting_row<L: Into<String>, V: IntoElement>(label: L, ctrl: V) -> impl IntoElement {
     h_flex()
         .items_center()
-        .justify_between()
         .gap(px(12.))
         .child(setting_label(label))
         .child(ctrl)

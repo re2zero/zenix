@@ -403,9 +403,7 @@ fn get_api_config_path(agent_name: &str) -> Result<std::path::PathBuf, String> {
 
     // Use the provider's mcp_config_file if available, otherwise fall back to config_dir/config.json
     prov.mcp_config_path()
-        .or_else(|| {
-            (prov.config_dir)().map(|d| d.join("config.json"))
-        })
+        .or_else(|| (prov.config_dir)().map(|d| d.join("config.json")))
         .ok_or_else(|| format!("no config path for agent: {agent_name}"))
 }
 

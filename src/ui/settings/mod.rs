@@ -61,7 +61,7 @@ pub fn settings_backdrop(
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(dialog)
+                .child(dialog),
         )
 }
 pub type ActionCb<T> = Box<dyn Fn(T, &mut Window, &mut gpui::App)>;
