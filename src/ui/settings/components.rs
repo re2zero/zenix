@@ -12,13 +12,14 @@ use gpui_component::{
     button::{Button, ButtonVariants as _},
     h_flex,
     input::Input,
+    scroll::ScrollableElement as _,
     v_flex,
 };
 
 use crate::ui::settings::helpers::*;
 
 use super::{
-    ApiProviderAction, McpAction, McpFormState, SkillAction,
+    ApiProviderAction, ApiProviderFormState, McpAction, McpFormState, SkillAction,
     SharedActionCb,
 };
 
@@ -249,6 +250,8 @@ pub fn mcp_inline_edit_card(
         .border_1()
         .border_color(gpui::rgba(0x44AAFFFF))
         .rounded_md()
+        .overflow_y_scrollbar()
+        .max_h(px(500.))
         .child(
             h_flex()
                 .gap(px(8.))
@@ -1047,6 +1050,7 @@ pub fn api_provider_card(
     available_agents: &[String],
     on_action: &SharedActionCb<ApiProviderAction>,
     api_test_results: &HashMap<String, String>,
+    api_form: Option<&ApiProviderFormState>,
 ) -> impl IntoElement {
     let name = p.name.clone();
     let format_label = p.format.label();
@@ -1066,6 +1070,15 @@ pub fn api_provider_card(
         "****".to_string()
     };
     let test_result = api_test_results.get(&name);
+    let is_editing = api_form
+        .and_then(|f| f.editing_name.as_ref())
+        .map_or(false, |en| en == &p.name);
+
+    // If this provider is being edited inline, render form fields
+    if is_editing {
+        let form = api_form.unwrap();
+        return api_inline_edit_card(form, on_action).into_any_element();
+    }
 
     let edit_cb = {
         let on = on_action.clone();
@@ -1215,6 +1228,192 @@ pub fn api_provider_card(
                         })
                 })),
         )
+        .into_any_element()
+}
+
+pub fn api_inline_edit_card(
+    form: &super::ApiProviderFormState,
+    on_action: &SharedActionCb<ApiProviderAction>,
+) -> impl IntoElement {
+    let cancel_cb = {
+        let on = on_action.clone();
+        move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+            on(ApiProviderAction::CancelForm, w, a);
+        }
+    };
+    let submit_cb = {
+        let on = on_action.clone();
+        move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+            on(ApiProviderAction::SubmitForm, w, a);
+        }
+    };
+
+    let presets = form.format.presets();
+
+    v_flex()
+        .gap(px(6.))
+        .py(px(8.))
+        .px(px(10.))
+        .border_1()
+        .border_color(gpui::rgba(0x44AAFFFF))
+        .rounded_md()
+        .overflow_y_scrollbar()
+        .max_h(px(500.))
+        .child(
+            txt(px(12.))
+                .font_weight(gpui::FontWeight::BOLD)
+                .child(t("settings.api.form.title_edit")),
+        )
+        .child(form_field(t("settings.api.form.name"), form.name.as_ref()))
+        .child(
+            h_flex()
+                .gap(px(8.))
+                .items_center()
+                .child(txt(px(12.)).w(px(80.)).child(t("settings.api.form.format")))
+                .child(api_format_btn(ApiFormat::OpenAI, form.format, on_action))
+                .child(api_format_btn(ApiFormat::Anthropic, form.format, on_action)),
+        )
+        // Preset selector
+        .child(
+            h_flex()
+                .gap(px(8.))
+                .items_center()
+                .child(txt(px(12.)).w(px(80.)).child(t("settings.api.form.preset")))
+                .child(
+                    h_flex()
+                        .gap(px(4.))
+                        .flex_wrap()
+                        .children(presets.iter().map(|preset| {
+                            let p = preset.clone();
+                            let on = on_action.clone();
+                            Button::new(format!(
+                                "preset-{}",
+                                p.name.to_lowercase().replace(' ', "-")
+                            ))
+                                .cursor_pointer()
+                                .ghost()
+                                .compact()
+                                .label(p.name.to_string())
+                                .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                                    on(ApiProviderAction::ApplyPreset { preset: p.clone() }, w, a);
+                                })
+                        })),
+                ),
+        )
+        .child(
+            h_flex()
+                .gap(px(8.))
+                .items_center()
+                .child(txt(px(12.)).w(px(80.)).child(t("settings.api.form.suffix")))
+                .child(
+                    h_flex()
+                        .gap(px(4.))
+                        .children(form.format.suffix_options().iter().map(|suffix| {
+                            let s = suffix.to_string();
+                            let on = on_action.clone();
+                            Button::new(format!("suffix-{}", s.replace('/', "-")))
+                                .cursor_pointer()
+                                .ghost()
+                                .compact()
+                                .label(s.clone())
+                                .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                                    on(
+                                        ApiProviderAction::SetSuffix { suffix: s.clone() },
+                                        w,
+                                        a,
+                                    );
+                                })
+                        })),
+                ),
+        )
+        .child(form_field(
+            t("settings.api.form.base_url"),
+            form.base_url.as_ref(),
+        ))
+        .child(form_field(t("settings.api.form.api_key"), form.api_key.as_ref()))
+        .child(
+            h_flex()
+                .gap(px(8.))
+                .items_start()
+                .child(txt(px(12.)).w(px(80.)).child(t("settings.api.form.thinking")))
+                .child(
+                    h_flex()
+                        .gap(px(4.))
+                        .children(
+                            ThinkingLevel::all().iter().map(|level| {
+                                let l = *level;
+                                let on = on_action.clone();
+                                Button::new(format!("think-{}", format!("{:?}", l).to_lowercase()))
+                                    .cursor_pointer()
+                                    .when(form.thinking_level == l, |b| b.primary())
+                                    .when(form.thinking_level != l, |b| b.ghost())
+                                    .compact()
+                                    .label(l.label())
+                                    .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                                        on(ApiProviderAction::SetThinkingLevel { level: l }, w, a);
+                                    })
+                            }),
+                        ),
+                ),
+        )
+        .child(
+            h_flex()
+                .gap(px(8.))
+                .items_start()
+                .child(txt(px(12.)).w(px(80.)).child(t("settings.api.form.selected_model")))
+                .child(
+                    Button::new("fetch-models-inline")
+                        .cursor_pointer()
+                        .ghost()
+                        .compact()
+                        .label(t("general.fetch"))
+                        .on_click({
+                            let on = on_action.clone();
+                            move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                                on(ApiProviderAction::FetchModels { name: String::new() }, w, a);
+                            }
+                        }),
+                ),
+        )
+        .when(!form.available_models.is_empty(), |el| {
+            el.child(
+                h_flex()
+                    .gap(px(4.))
+                    .flex_wrap()
+                    .children(form.available_models.iter().map(|model| {
+                        let m = model.clone();
+                        let on = on_action.clone();
+                        Button::new(format!("select-model-inline-{}", m))
+                            .cursor_pointer()
+                            .ghost()
+                            .compact()
+                            .label(m.clone())
+                            .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                                on(ApiProviderAction::SelectModel { model: m.clone() }, w, a);
+                            })
+                    })),
+            )
+        })
+        .child(
+            h_flex()
+                .gap(px(8.))
+                .justify_end()
+                .child(
+                    Button::new("inline-api-cancel")
+                        .cursor_pointer()
+                        .ghost()
+                        .label(t("general.cancel"))
+                        .on_click(cancel_cb),
+                )
+                .child(
+                    Button::new("inline-api-submit")
+                        .cursor_pointer()
+                        .primary()
+                        .label(t("general.update"))
+                        .on_click(submit_cb),
+                ),
+        )
+        .into_any_element()
 }
 
 pub fn api_provider_form(

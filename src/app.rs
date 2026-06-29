@@ -1576,22 +1576,7 @@ impl Render for ZenixApp {
                                                 .map(|s| s.enabled_agents.clone())
                                                 .unwrap_or_default();
                                             let _ = crate::mcp::remove_zenix_mcp_server(old_name);
-                                            if old_name != name_val.trim() {
-                                                for agent in &old_agents {
-                                                    let _ = crate::mcp::sync_zenix_server_to_agent(
-                                                        &crate::mcp::ZenixMcpServer {
-                                                            name: old_name.clone(),
-                                                            mcp_type: crate::mcp::McpType::Stdio,
-                                                            command: String::new(),
-                                                            args: vec![],
-                                                            env: std::collections::HashMap::new(),
-                                                            enabled_agents: vec![],
-                                                        },
-                                                        agent,
-                                                        false,
-                                                    );
-                                                }
-                                            }
+                                            // Create new server with preserved enabled agents
                                             (
                                                 crate::mcp::ZenixMcpServer {
                                                     name: name_val.trim().to_string(),
@@ -1599,7 +1584,7 @@ impl Render for ZenixApp {
                                                     command: effective_cmd,
                                                     args,
                                                     env,
-                                                    enabled_agents: old_agents,
+                                                    enabled_agents: old_agents.clone(),
                                                 },
                                                 true,
                                             )
@@ -1906,6 +1891,12 @@ impl Render for ZenixApp {
                                 } else {
                                     vec![]
                                 };
+                                // If editing, remove the old provider first (in case name changed)
+                                if let Some(old_name) = &form.editing_name {
+                                    if old_name != &name_val {
+                                        let _ = crate::api_provider::remove(old_name);
+                                    }
+                                }
                                 let cfg = ApiProviderConfig {
                                     name: name_val.trim().to_string(),
                                     format: form.format,

@@ -871,7 +871,11 @@ fn tab_mcp_content(
             .collect()
     };
 
-    let form_el = mcp_form.map(|form| components::mcp_add_form(form, on_mcp_action));
+    // Only show the form if we're adding a new server (not editing an existing one)
+    // When editing, the card itself renders the inline edit form
+    let form_el = mcp_form
+        .filter(|f| f.editing_name.is_none())
+        .map(|form| components::mcp_add_form(form, on_mcp_action));
 
     v_flex()
         .gap(px(12.))
@@ -1201,7 +1205,10 @@ fn tab_api_content(
                         ),
                 ),
         )
-        .when_some(form, |el, f| el.child(components::api_provider_form(f, on_action)))
+        // Only show the add form if not editing (editing is inline in the card)
+        .when_some(form.filter(|f| f.editing_name.is_none()), |el, f| {
+            el.child(components::api_provider_form(f, on_action))
+        })
         .child(if filtered.is_empty() && form.is_none() {
             txt(px(12.))
                 .text_color(gpui::rgba(0x888888FF))
@@ -1212,7 +1219,7 @@ fn tab_api_content(
                 .gap(px(8.))
                 .children(
                     filtered.iter().map(|p| {
-                        components::api_provider_card(p, available_agents, on_action, api_test_results)
+                        components::api_provider_card(p, available_agents, on_action, api_test_results, form)
                     }),
                 )
                 .into_any_element()
