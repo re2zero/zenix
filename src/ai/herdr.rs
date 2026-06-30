@@ -510,7 +510,7 @@ impl AgentStatus {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<AgentStatus> {
+    pub fn from_str_value(s: &str) -> Option<AgentStatus> {
         match s {
             "idle" => Some(AgentStatus::Idle),
             "working" => Some(AgentStatus::Working),

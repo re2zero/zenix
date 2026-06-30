@@ -142,18 +142,21 @@ pub struct OrchestratorEngine {
 
 /// SSE response chunk from the LLM API.
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct SseChunk {
     id: Option<String>,
     choices: Option<Vec<SseChoice>>,
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct SseChoice {
     delta: Option<SseDelta>,
     finish_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct SseDelta {
     content: Option<String>,
     role: Option<String>,
@@ -178,11 +181,7 @@ fn parse_anthropic_sse_event(data: &str) -> Option<String> {
         "content_block_delta" => {
             // Anthropic format: delta.text contains the text directly
             let delta = value.get("delta")?.as_object()?;
-            if let Some(text) = delta.get("text")?.as_str() {
-                Some(text.to_string())
-            } else {
-                None
-            }
+            delta.get("text")?.as_str().map(String::from)
         }
         _ => None,
     }
@@ -729,7 +728,7 @@ impl OrchestratorEngine {
         let mut dispatch_count = 0u32;
         let max_dispatch_rounds = 5; // Safety limit
         let mut loop_messages: Vec<ChatMessageRef> = messages.to_vec();
-        let mut final_response;
+        let final_response;
 
         // Arc the callback so it can be shared across loop iterations.
         let on_event: Arc<dyn Fn(DispatchStreamEvent) + Send + Sync + 'static> =

@@ -57,7 +57,7 @@ impl AgentActivity {
                 })
             })
             .collect();
-        Ok(serde_json::to_string(&items).context("serialize agent_activities")?)
+        serde_json::to_string(&items).context("serialize agent_activities")
     }
 
     pub fn from_json(json: &str) -> Result<Vec<AgentActivity>> {
