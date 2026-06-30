@@ -18,6 +18,7 @@ Zenix is a cross-platform GPUI desktop frontend. There is no traditional "backen
 | [Error Handling](./error-handling.md) | anyhow::Context, Result types, no unwrap | ✅ Populated |
 | [Logging Guidelines](./logging-guidelines.md) | tracing crate, structured logs | ✅ Populated |
 | [Quality Guidelines](./quality-guidelines.md) | GPUI patterns, clippy, formatting | ✅ Populated |
+| [AI Orchestrator](./ai-orchestrator.md) | Multi-agent orchestration: LLM + herdr IPC + dispatch loop | ✅ Populated |
 
 > **Note**: This project has no database layer. `database-guidelines.md` is intentionally omitted — if a database is added in the future, create that file then.
 
