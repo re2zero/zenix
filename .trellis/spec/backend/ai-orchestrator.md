@@ -9,11 +9,12 @@
 ```
 src/ai/
 ├── mod.rs          # Module root, re-exports
-├── chat.rs         # Chat panel UI (消息列表、输入框、底部栏)
+├── chat.rs         # Chat panel UI (AgentBlock, AgentMonitorEntry, config bar, history, search)
 ├── session.rs      # SQLite 持久化 (CRUD、FTS5 搜索)
 ├── engine.rs       # 编排器引擎 (LLM API、SSE 流式、调度循环)
 ├── herdr.rs        # Herdr IPC 客户端 (Unix socket、JSON-line)
-└── config.rs       # ZenixAI 配置 (provider/model/thinking)
+├── config.rs       # ZenixAI 配置 (provider/model/thinking)
+└── error.rs        # AiError 枚举 + user_friendly + retryable
 ```
 
 ### Re-export 约定
@@ -28,7 +29,7 @@ pub mod herdr;
 pub mod session;
 
 pub use session::*;   // Session, ChatMessage, AgentActivity, SearchHit, SessionManager
-pub use engine::*;    // OrchestratorEngine, AgentTask, AgentResult, DispatchDirective, DispatchStreamEvent
+pub use engine::*;    // OrchestratorEngine, AgentTask, AgentResult, DispatchDirective, DispatchStreamEvent, parse_dispatch_directive, execute_agent_task
 ```
 
 > **Why**: 避免 `crate::ai::chat::AiChatPanelData` 等长路径，但 `#[allow(dead_code)]` 禁止——死代码必须移除或标记为 Phase N prep。
@@ -504,9 +505,10 @@ let config = ConfigStore::load().context("load config")?;
 
 | 模块 | 必需测试 |
 |------|----------|
-| `herdr.rs` | JSON 序列化/反序列化 round-trip（所有关键类型）、请求 ID 生成、响应解析（success/error/empty/invalid） |
-| `engine.rs` | `parse_dispatch_directive`（JSON code block、inline JSON、text format、malformed input）、`AgentResult` 构造、`execute_agent_task` 错误路径 |
+| `herdr.rs` | JSON 序列化/反序列化 round-trip（所有关键类型）、请求 ID 生成、响应解析（success/error/empty/invalid）、17 种 RPC 方法 wire protocol 校验 |
+| `engine.rs` | `parse_dispatch_directive`（JSON code block、inline JSON、text format、malformed input）、`AgentResult` 构造、`execute_agent_task` 错误路径、`chat_and_dispatch` 调度循环 |
 | `session.rs` | CRUD、FTS5 搜索（含特殊字符）、ON DELETE CASCADE、搜索范围过滤（仅 user 消息） |
+| `chat.rs` | `AiChatPanelData` 构造、`AgentBlock` 折叠状态管理、`AgentMonitorEntry::from_herdr` 转换、底部栏按钮渲染 |
 
 ### 8.2 测试断言点
 
@@ -555,12 +557,19 @@ fn test_parse_dispatch_directive_none() {
 ### 10.1 当前限制
 
 - **单 Agent 串行执行**: `chat_and_dispatch` 按顺序执行 Agent，不支持并行
-- **无 Agent 实时监控**: 通过 `wait_for_output` 等待完成，无实时状态推送
-- **无配置同步**: API Provider 配置未自动同步到 Agent CLI（Phase 3 实现）
 
-### 10.2 未来改进方向
+### 10.2 已实现功能 (第三次迭代)
+
+- **Agent 输出 UI**: `AgentBlock` 可折叠内联区块 + `AgentMonitorEntry` 监控浮层
+- **Agent 监控**: 底部栏 `👤 运行中 N` + 颜色编码状态图标 (● working, ◉ blocked, ○ idle, ✓ done)
+- **配置同步**: `api_provider::sync_to_all_agents()` / `unsync_from_unused_agents()`
+- **配置栏**: 模型选择 ▏思考度 ▏workspace 选择
+- **历史面板**: 会话列表，点击切换，删除
+- **FTS5 搜索**: 搜索输入 + 结果列表
+- **i18n**: 17 unique keys (34 en/zh-CN 翻译条目)
+
+### 10.3 未来改进方向
 
 - **并行 Agent 执行**: 多 Agent 同时运行，提高复杂度任务效率
 - **Event 订阅**: 使用 `events.subscribe` 实现 Agent 状态实时推送
-- **配置同步**: 通过 `config_adapters/` 基础设施自动同步 API 配置到 Agent CLI
-- **Agent 输出 UI**: Agent 内联输出显示为可折叠区块（Phase 6 实现）
+- **多会话并发**: 切换会话时保留后台 agent 运行状态
