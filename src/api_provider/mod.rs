@@ -439,6 +439,60 @@ pub fn toggle_api_agent(provider: &mut ApiProviderConfig, agent_name: &str) -> R
     upsert(provider)
 }
 
+/// Sync a provider to all agents listed in `provider.enabled_agents`.
+///
+/// Returns a list of (agent_name, result) pairs so callers can report
+/// individual failures to the user.
+pub fn sync_to_all_agents(
+    provider: &ApiProviderConfig,
+) -> Vec<(String, Result<(), String>)> {
+    provider
+        .enabled_agents
+        .iter()
+        .map(|agent| {
+            let result = sync_api_to_agent(provider, agent);
+            (agent.clone(), result)
+        })
+        .collect()
+}
+
+/// Remove a provider from all agents that are no longer used by any other provider.
+///
+/// For each agent, checks whether any *other* provider still references it.
+/// If not, safely removes that agent's env config entries.
+///
+/// Returns a list of (agent_name, result) pairs.
+pub fn unsync_from_unused_agents(provider_name: &str) -> Vec<(String, Result<(), String>)> {
+    let all_providers = load_all();
+    let mut results = Vec::new();
+
+    // Collect all agents that appear in any other provider's enabled_agents
+    let mut agents_still_used: std::collections::HashSet<String> =
+        std::collections::HashSet::new();
+    for p in &all_providers {
+        if p.name == provider_name {
+            continue;
+        }
+        for a in &p.enabled_agents {
+            agents_still_used.insert(a.clone());
+        }
+    }
+
+    // Check all known agents to see if this provider was their only source
+    let known_agents = [
+        "claude", "codex", "opencode", "cursor", "aider", "gemini-cli",
+    ];
+
+    for agent in &known_agents {
+        if !agents_still_used.contains(*agent) {
+            let result = unsync_api_from_agent(provider_name, agent);
+            results.push((agent.to_string(), result));
+        }
+    }
+
+    results
+}
+
 // ── Persistence ──────────────────────────────────────────────────────
 
 fn config_path() -> PathBuf {
@@ -652,5 +706,60 @@ mod tests {
         let json = r#"{"object":"list","data":[{"id":"gpt-4o","object":"model"},{"id":"gpt-4-turbo","object":"model"}]}"#;
         let models = parse_openai_model_list(json).unwrap();
         assert_eq!(models, vec!["gpt-4o", "gpt-4-turbo"]);
+    }
+
+    #[test]
+    fn test_sync_to_all_agents_returns_results_for_each_agent() {
+        // sync_to_all_agents should return one result per enabled agent.
+        // We can't test actual filesystem I/O in unit tests, but we can
+        // verify the function signature and return type.
+        let cfg = ApiProviderConfig {
+            name: "test".into(),
+            format: ApiFormat::OpenAI,
+            base_url: "https://api.openai.com".into(),
+            api_key: "sk-test".into(),
+            model: "gpt-4o".into(),
+            thinking_level: ThinkingLevel::Medium,
+            url_suffix: "/v1/chat/completions".into(),
+            enabled_agents: vec!["claude".into(), "codex".into()],
+        };
+        // The function signature returns Vec<(String, Result<(), String>)>
+        // We verify it compiles and returns the right type.
+        let _results: Vec<(String, Result<(), String>)> = sync_to_all_agents(&cfg);
+        // With no filesystem, the results will have errors, but the count matches
+        assert_eq!(_results.len(), 2);
+        assert_eq!(_results[0].0, "claude");
+        assert_eq!(_results[1].0, "codex");
+    }
+
+    #[test]
+    fn test_sync_to_all_agents_empty_agents() {
+        let cfg = ApiProviderConfig {
+            name: "test".into(),
+            format: ApiFormat::OpenAI,
+            base_url: "https://api.openai.com".into(),
+            api_key: "sk-test".into(),
+            model: "gpt-4o".into(),
+            thinking_level: ThinkingLevel::Medium,
+            url_suffix: "/v1/chat/completions".into(),
+            enabled_agents: vec![],
+        };
+        let results = sync_to_all_agents(&cfg);
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_unsync_from_unused_agents_signature() {
+        // unsync_from_unused_agents returns Vec<(String, Result<(), String>)>
+        // With no providers loaded from disk, it should return empty results
+        // for all known agents (since no provider uses them).
+        let results = unsync_from_unused_agents("nonexistent-provider");
+        // The function returns results for known agents that are unused.
+        // Since no providers are loaded from disk, all known agents are unused.
+        assert!(!results.is_empty());
+        // Each entry has the agent name as the first element
+        for (agent, _) in &results {
+            assert!(!agent.is_empty());
+        }
     }
 }

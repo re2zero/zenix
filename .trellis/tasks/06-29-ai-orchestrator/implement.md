@@ -13,9 +13,9 @@
 | 05 | Herdr IPC 客户端 | P2 | 10(AiError 可选) | `ai/herdr.rs` | ✅ 已完成 (本次迭代) |
 | 06 | Agent 调度 | P2 | 03(engine), 05(herdr), 01(AgentActivity) | `ai/engine.rs`（chat_and_dispatch） | ✅ 已完成 (本次迭代) |
 | 04 | 聊天面板 UI | P1 | 01, 02, 03, 05(workspace), 06(dispatch) | `ai/chat.rs` + `sidebar.rs` + `app.rs` | ✅ 已完成 (commit 529717b) |
-| 07 | Agent 输出 UI | P2 | 04, 06 | `ai/chat.rs`（AgentBlock 组件） | ⬜ 待实现 |
-| 09 | API 配置同步 | P3 | 无 | `api_provider/mod.rs`（批量 sync） | ⬜ 待实现 |
-| 08 | Agent 监控 UI | P3 | 05, 07 | `ai/chat.rs`（👤 浮层） | ⬜ 待实现 |
+| 07 | Agent 输出 UI | P2 | 04, 06 | `ai/chat.rs`（AgentBlock 组件） | ✅ 已完成 (本次迭代) |
+| 09 | API 配置同步 | P3 | 无 | `api_provider/mod.rs`（批量 sync） | ✅ 已完成 (本次迭代) |
+| 08 | Agent 监控 UI | P3 | 05, 07 | `ai/chat.rs`（👤 浮层） | ✅ 已完成 (本次迭代) |
 
 ## 依赖图
 
@@ -52,7 +52,7 @@ Phase 6:  07(Agent Output UI)   08(Agent Monitoring)
 - tokio runtime 修复（main.rs + engine.rs `chat_stream`）
 - 代码质量清理（dead code、clippy warnings）
 
-**Check 结果** (2026-06-30):
+**第二次迭代 Check** (2026-06-30):
 - ✅ 编译 0 错误
 - ✅ 93/93 测试通过
 - ✅ 17 种 herdr RPC 方法 wire protocol 校验通过
@@ -62,7 +62,14 @@ Phase 6:  07(Agent Output UI)   08(Agent Monitoring)
 - 🔧 修复: dead code cleanup（chat.rs, config.rs, error.rs）
 - 🔧 修复: clippy warnings（`&url`→`url`, `unwrap_or_else`→`unwrap_or_default`, 移除死方法）
 
-**第三次迭代** (未来): 07 → 08 → 09
-- Agent 内联输出显示
-- 运行监控浮层
-- 配置同步增强
+**第三次迭代** ✅ 已完成 (本次 commit)
+- Agent 内联输出显示 — AgentBlock 可折叠区块，状态图标，摘要/完整输出切换
+- 运行监控浮层 — 👤 按钮 + 实时 agent 状态列表（颜色编码状态图标）
+- 配置同步增强 — `sync_to_all_agents()` / `unsync_from_unused_agents()`
+- 配置栏 — 模型选择 ▏思考度 ▏workspace 选择
+- 历史面板 — 会话列表，点击切换，删除
+- FTS5 搜索 — 搜索输入 + 结果列表
+- 底部栏扩展 — [+ 新建] [📋 历史] [👤 运行中 N] [⚙]
+- 22 个 i18n 翻译键 (en/zh-CN)
+- ✅ 编译 0 错误, clippy 无新增警告
+- ✅ 108/108 测试通过

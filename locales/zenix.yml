@@ -616,3 +616,64 @@ skills:
   fetch_market:
     en: "Fetch Market"
     zh-CN: "获取市场"
+
+# ═══════════════════════════════════════════════════════════════════════
+# AI Orchestrator — multi-agent chat panel
+# ═══════════════════════════════════════════════════════════════════════
+ai:
+  chat:
+    new_chat:
+      en: "New Chat"
+      zh-CN: "新会话"
+    new_session:
+      en: "+ New"
+      zh-CN: "+ 新建"
+    history:
+      en: "History"
+      zh-CN: "历史"
+    search_btn:
+      en: "Search"
+      zh-CN: "搜索"
+    config_btn:
+      en: "Config"
+      zh-CN: "配置"
+    send:
+      en: "Send"
+      zh-CN: "发送"
+    stop:
+      en: "Stop"
+      zh-CN: "停止"
+    streaming:
+      en: "Thinking..."
+      zh-CN: "思考中…"
+    messages:
+      en: "messages"
+      zh-CN: "条消息"
+    settings:
+      en: "⚙"
+      zh-CN: "⚙"
+  history:
+    title:
+      en: "Session History"
+      zh-CN: "会话历史"
+  agent:
+    monitor_title:
+      en: "Active Agents"
+      zh-CN: "运行中的 Agent"
+    running:
+      en: "Running %{n}"
+      zh-CN: "运行中 %{n}"
+    expand:
+      en: "Expand"
+      zh-CN: "展开"
+    collapse:
+      en: "Collapse"
+      zh-CN: "收起"
+  search:
+    icon:
+      en: "🔍"
+      zh-CN: "🔍"
+  config:
+    no_workspace:
+      en: "No workspace"
+      zh-CN: "无工作区"
