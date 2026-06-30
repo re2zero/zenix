@@ -9,11 +9,10 @@
 ```
 src/ai/
 ├── mod.rs          # Module root, re-exports
-├── chat.rs         # Chat panel UI (AgentBlock, AgentMonitorEntry, config bar, history, search)
+├── chat.rs         # Chat panel UI (AiChatPanelData, AgentBlock, AgentMonitorEntry, config bar, history, search)
 ├── session.rs      # SQLite 持久化 (CRUD、FTS5 搜索)
 ├── engine.rs       # 编排器引擎 (LLM API、SSE 流式、调度循环)
 ├── herdr.rs        # Herdr IPC 客户端 (Unix socket、JSON-line)
-├── config.rs       # ZenixAI 配置 (provider/model/thinking)
 └── error.rs        # AiError 枚举 + user_friendly + retryable
 ```
 
@@ -22,7 +21,6 @@ src/ai/
 ```rust
 // mod.rs
 pub mod chat;
-pub mod config;
 pub mod engine;
 pub mod error;
 pub mod herdr;
@@ -31,6 +29,8 @@ pub mod session;
 pub use session::*;   // Session, ChatMessage, AgentActivity, SearchHit, SessionManager
 pub use engine::*;    // OrchestratorEngine, AgentTask, AgentResult, DispatchDirective, DispatchStreamEvent, parse_dispatch_directive, execute_agent_task
 ```
+
+> **Note**: `config.rs` was removed in the fourth iteration — ZenixAI config is now integrated into API providers. The AI chat panel reads provider/model/thinking from `api_provider::load_all()` directly.
 
 > **Why**: 避免 `crate::ai::chat::AiChatPanelData` 等长路径，但 `#[allow(dead_code)]` 禁止——死代码必须移除或标记为 Phase N prep。
 
@@ -508,7 +508,7 @@ let config = ConfigStore::load().context("load config")?;
 | `herdr.rs` | JSON 序列化/反序列化 round-trip（所有关键类型）、请求 ID 生成、响应解析（success/error/empty/invalid）、17 种 RPC 方法 wire protocol 校验 |
 | `engine.rs` | `parse_dispatch_directive`（JSON code block、inline JSON、text format、malformed input）、`AgentResult` 构造、`execute_agent_task` 错误路径、`chat_and_dispatch` 调度循环 |
 | `session.rs` | CRUD、FTS5 搜索（含特殊字符）、ON DELETE CASCADE、搜索范围过滤（仅 user 消息） |
-| `chat.rs` | `AiChatPanelData` 构造、`AgentBlock` 折叠状态管理、`AgentMonitorEntry::from_herdr` 转换、底部栏按钮渲染 |
+| `chat.rs` | `AiChatPanelData` 构造、`AgentBlock` 折叠状态管理、`AgentMonitorEntry::from_herdr` 转换、底部栏按钮渲染、config bar pill-style selectors、history panel, agent monitor, search bar |
 
 ### 8.2 测试断言点
 
@@ -557,19 +557,33 @@ fn test_parse_dispatch_directive_none() {
 ### 10.1 当前限制
 
 - **单 Agent 串行执行**: `chat_and_dispatch` 按顺序执行 Agent，不支持并行
+- **AI chat config bar 的 dropdown 交互尚未实现** (目前为静态显示，用户选择通过 app state 管理)
 
-### 10.2 已实现功能 (第三次迭代)
+### 10.2 已实现功能
 
-- **Agent 输出 UI**: `AgentBlock` 可折叠内联区块 + `AgentMonitorEntry` 监控浮层
-- **Agent 监控**: 底部栏 `👤 运行中 N` + 颜色编码状态图标 (● working, ◉ blocked, ○ idle, ✓ done)
-- **配置同步**: `api_provider::sync_to_all_agents()` / `unsync_from_unused_agents()`
-- **配置栏**: 模型选择 ▏思考度 ▏workspace 选择
-- **历史面板**: 会话列表，点击切换，删除
-- **FTS5 搜索**: 搜索输入 + 结果列表
+- **Agent 输出 UI**: `AgentBlock` 可折叠内联区块 + `AgentMonitorEntry` 监控浮层 (第三次迭代)
+- **Agent 监控**: 底部栏 `👤 运行中 N` + 颜色编码状态图标 (● working, ◉ blocked, ○ idle, ✓ done) (第三次迭代)
+- **配置同步**: `api_provider::sync_to_all_agents()` / `unsync_from_unused_agents()` (第三次迭代)
+- **配置栏**: 模型选择 ▏思考度 ▏workspace 选择 (第三次迭代)
+- **历史面板**: 会话列表，点击切换，删除 (第三次迭代)
+- **FTS5 搜索**: 搜索输入 + 结果列表 (第三次迭代)
 - **i18n**: 17 unique keys (34 en/zh-CN 翻译条目)
+- **侧边栏布局**: AI 图标紧邻设置按钮 (第四次迭代)
+- **AI 聊天 UI 重写**: 完整重构渲染函数，改进样式/间距/交互 (第四次迭代)
+- **ZenixAI 配置集成**: 移除独立设置 Tab，集成到 API 提供商配置 (第四次迭代)
 
 ### 10.3 未来改进方向
 
 - **并行 Agent 执行**: 多 Agent 同时运行，提高复杂度任务效率
 - **Event 订阅**: 使用 `events.subscribe` 实现 Agent 状态实时推送
 - **多会话并发**: 切换会话时保留后台 agent 运行状态
+
+### 10.4 TODO（待讨论/实现）
+
+1. **AI 会话界面重构**: 当前 AI 聊天面板 UI 需要完整重构，现有实现为迭代式修补，需要统一设计后重写。
+
+2. **AI 会话 API 配置隔离**: 当前侧边栏 AI 会话没有独立的 API 配置入口，默认使用所有已配置的 API Provider。需要设计：如果没有配置任何 API，则侧边栏 AI 不可用。具体实现方案待讨论。
+
+3. **Rust Agent CLI 调查**: ZenixAI 侧边栏 AI 会话需要一个基于 Rust 实现的 Agent CLI 开源库作为后端。当前所有 Agent CLI（Claude Code、Codex、OpenCode）均为非 Rust 实现。需要调查是否有合适的 Rust Agent CLI 可选。
+
+4. **编排功能 Tool 化**: 当前编排器直接调用 LLM API + herdr IPC 执行任务。需要评估是否应该将编排功能封装为 MCP Tool，由 LLM 通过 tool call 方式调用，而非编排器内部硬编码调度逻辑。这会影响 `engine.rs` 的架构设计。
