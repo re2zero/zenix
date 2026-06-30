@@ -1,0 +1,18 @@
+{
+  "id": "04-chat-panel-ui",
+  "name": "聊天面板 UI",
+  "title": "AI 聊天面板 — 消息列表、输入框、会话管理、搜索",
+  "description": "",
+  "status": "planning",
+  "dev_type": "ui",
+  "package": null,
+  "priority": "P1",
+  "createdAt": "2026-06-30",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "parent": "06-29-ai-orchestrator",
+  "relatedFiles": ["src/ai/chat.rs", "src/ui/sidebar.rs", "src/app.rs"],
+  "notes": "依赖: 01(session) + 02(config) + 03(engine) + 05(herdr workspace列表) + 06(agent dispatch). 开发周期最长。on_send() 调 chat_and_dispatch()，含会话自动命名逻辑。",
+  "meta": {}
+}

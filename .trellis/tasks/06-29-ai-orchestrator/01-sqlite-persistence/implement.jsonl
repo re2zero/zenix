@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/06-29-ai-orchestrator/01-sqlite-persistence/design.md", "reason": "完整的 schema 定义、结构体签名、FTS5 搜索实现"}
+{"file": ".trellis/tasks/06-29-ai-orchestrator/01-sqlite-persistence/prd.md", "reason": "验收标准和接口契约"}
+{"file": "Cargo.toml", "reason": "需要添加 rusqlite 依赖"}
+{"file": "src/lib.rs", "reason": "需要添加 pub mod ai"}
+{"file": "src/platform.rs", "reason": "platform::zenix_config_dir() 获取数据库路径"}

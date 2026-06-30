@@ -1,0 +1,2 @@
+{"file": ".trellis/tasks/06-29-ai-orchestrator/04-chat-panel-ui/design.md", "reason": "验证 AiChatPanel 渲染和交互实现、chat_and_dispatch 调用、auto_naming"}
+{"file": ".trellis/tasks/06-29-ai-orchestrator/04-chat-panel-ui/prd.md", "reason": "对照 acceptance criteria"}

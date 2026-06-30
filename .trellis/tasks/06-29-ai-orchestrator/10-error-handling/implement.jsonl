@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/06-29-ai-orchestrator/10-error-handling/design.md", "reason": "AiError 枚举、retry_with_backoff、user_facing_error"}
+{"file": ".trellis/tasks/06-29-ai-orchestrator/10-error-handling/prd.md", "reason": "验收标准"}
+{"file": "src/ai/error.rs", "reason": "创建文件：AiError enum、retry_with_backoff、user_facing_error、truncate_agent_output"}
+{"file": "src/ai/mod.rs", "reason": "需要添加 pub mod error"}

@@ -136,6 +136,33 @@ settings:
       en: "off"
       zh-CN: "关"
   agent_cli:
+  ai:
+    chat:
+      placeholder:
+        en: "Type a message..."
+        zh-CN: "输入消息…"
+      send:
+        en: "Send"
+        zh-CN: "发送"
+      stop:
+        en: "Stop"
+        zh-CN: "停止"
+      streaming:
+        en: "Orchestrating…"
+        zh-CN: "编排中…"
+      new_session:
+        en: "+ New"
+        zh-CN: "+ 新建"
+      history:
+        en: "📋"
+        zh-CN: "📋"
+      messages:
+        en: "msgs"
+        zh-CN: "条消息"
+      new_session_title:
+        en: "New Chat"
+        zh-CN: "新建会话"
+  agent_cli:
     no_agent_selected:
       en: "Select an agent to view details"
       zh-CN: "选择一个 agent 查看详情"
@@ -265,6 +292,56 @@ settings:
       title_edit:
         en: "Edit MCP Server"
         zh-CN: "编辑 MCP 服务器"
+  zenix_ai:
+    tab:
+      en: "ZenixAI"
+      zh-CN: "ZenixAI"
+    title:
+      en: "ZenixAI Orchestration"
+      zh-CN: "ZenixAI 编排"
+    description:
+      en: "Configure the AI provider and model used by the AI orchestrator sidebar."
+      zh-CN: "配置 AI 编排侧边栏使用的 AI 提供商和模型。"
+    provider:
+      label:
+        en: "Provider"
+        zh-CN: "提供商"
+      hint:
+        en: "Select an API provider..."
+        zh-CN: "选择 API 提供商…"
+      no_providers:
+        en: "No API providers configured — add one in the API tab first."
+        zh-CN: "未配置 API 提供商 — 请先在 API 标签页中添加。"
+    model:
+      label:
+        en: "Model"
+        zh-CN: "模型"
+      hint:
+        en: "Select or enter a model name..."
+        zh-CN: "选择或输入模型名称…"
+      no_models:
+        en: "No models available — select a provider to see its models."
+        zh-CN: "暂无可用模型 — 请选择提供商以查看其模型。"
+      custom_hint:
+        en: "Enter a custom model name…"
+        zh-CN: "输入自定义模型名称…"
+    thinking:
+      label:
+        en: "Thinking Level"
+        zh-CN: "思考度"
+    save:
+      en: "Save"
+      zh-CN: "保存"
+    reset:
+      en: "Reset to Defaults"
+      zh-CN: "恢复默认"
+    status:
+      saved:
+        en: "Saved"
+        zh-CN: "已保存"
+      reset:
+        en: "Reset to defaults"
+        zh-CN: "已恢复默认值"
   api:
     title:
       en: "API Providers"

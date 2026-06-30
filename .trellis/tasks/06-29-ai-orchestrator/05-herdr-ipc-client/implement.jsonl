@@ -1,0 +1,3 @@
+{"file": ".trellis/tasks/06-29-ai-orchestrator/05-herdr-ipc-client/design.md", "reason": "HerdrIpcClient 完整设计、协议细节、事件订阅"}
+{"file": ".trellis/tasks/06-29-ai-orchestrator/05-herdr-ipc-client/prd.md", "reason": "验收标准和接口契约"}
+{"file": "src/client/mod.rs", "reason": "现有 herdr 客户端 patterns（socket_path 等）"}

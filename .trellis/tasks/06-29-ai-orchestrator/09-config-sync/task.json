@@ -1,0 +1,18 @@
+{
+  "id": "09-config-sync",
+  "name": "API Provider Agent 配置同步增强",
+  "title": "完善 API Provider → Agent CLI 的配置分发",
+  "description": "",
+  "status": "planning",
+  "dev_type": "lib",
+  "package": null,
+  "priority": "P3",
+  "createdAt": "2026-06-30",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "parent": "06-29-ai-orchestrator",
+  "relatedFiles": ["src/api_provider/mod.rs"],
+  "notes": "独立无上游依赖。基于现有 sync_api_to_agent 完善。",
+  "meta": {}
+}

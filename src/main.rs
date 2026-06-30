@@ -2,6 +2,7 @@
 rust_i18n::i18n!("locales");
 
 mod agent;
+mod ai;
 mod api_provider;
 mod app;
 mod client;

@@ -1,0 +1,6 @@
+{"file": ".trellis/tasks/06-29-ai-orchestrator/03-orchestrator-engine/design.md", "reason": "SSE 解析器、OrchestratorEngine struct、StreamEvent enum"}
+{"file": ".trellis/tasks/06-29-ai-orchestrator/03-orchestrator-engine/prd.md", "reason": "验收标准和接口契约"}
+{"file": ".trellis/tasks/06-29-ai-orchestrator/01-sqlite-persistence/design.md", "reason": "ChatMessage 结构体定义，chat_stream 签名依赖"}
+{"file": "Cargo.toml", "reason": "需要添加 reqwest, tokio, futures, regex"}
+{"file": "src/main.rs", "reason": "需要初始化 tokio runtime"}
+{"file": "src/api_provider/mod.rs", "reason": "ApiProviderConfig, ApiFormat, ThinkingLevel"}

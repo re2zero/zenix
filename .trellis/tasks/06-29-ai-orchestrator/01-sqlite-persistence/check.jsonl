@@ -1,0 +1,2 @@
+{"file": ".trellis/tasks/06-29-ai-orchestrator/01-sqlite-persistence/design.md", "reason": "验证 SessionManager 接口是否按设计实现"}
+{"file": ".trellis/tasks/06-29-ai-orchestrator/01-sqlite-persistence/prd.md", "reason": "对照 acceptance criteria 逐条检查"}

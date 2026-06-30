@@ -1,0 +1,2 @@
+{"file": ".trellis/tasks/06-29-ai-orchestrator/02-zenixai-config/design.md", "reason": "验证 ZenixAIConfig 和 ConfigFile 修改是否正确"}
+{"file": ".trellis/tasks/06-29-ai-orchestrator/02-zenixai-config/prd.md", "reason": "对照 acceptance criteria"}

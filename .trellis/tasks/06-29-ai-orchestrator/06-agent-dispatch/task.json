@@ -1,0 +1,18 @@
+{
+  "id": "06-agent-dispatch",
+  "name": "编排器调度逻辑",
+  "title": "编排器 System Prompt + Agent 调度（pane 管理）",
+  "description": "",
+  "status": "planning",
+  "dev_type": "lib",
+  "package": null,
+  "priority": "P2",
+  "createdAt": "2026-06-30",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "parent": "06-29-ai-orchestrator",
+  "relatedFiles": ["src/ai/engine.rs", "src/ai/herdr.rs"],
+  "notes": "依赖: 03(engine SSE) + 05(herdr ipc). 接口在 engine.rs 中扩展。",
+  "meta": {}
+}

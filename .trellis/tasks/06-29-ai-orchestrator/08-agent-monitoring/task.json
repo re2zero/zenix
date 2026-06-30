@@ -1,0 +1,18 @@
+{
+  "id": "08-agent-monitoring",
+  "name": "Agent 监控 UI",
+  "title": "👤 状态浮层 + 运行计数 + 实时状态更新",
+  "description": "",
+  "status": "planning",
+  "dev_type": "ui",
+  "package": null,
+  "priority": "P3",
+  "createdAt": "2026-06-30",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "parent": "06-29-ai-orchestrator",
+  "relatedFiles": ["src/ai/chat.rs"],
+  "notes": "依赖: 05(herdr ipc event) + 07(output ui). 独立 UI。",
+  "meta": {}
+}

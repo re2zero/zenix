@@ -16,10 +16,12 @@ use crate::sys::{NetInterface, SystemInfo};
 pub enum Panel {
     None,
     SystemInfo,
+    AiChat,
 }
 
 pub const SIDEBAR_WIDTH: f32 = 44.0;
 pub const PANEL_WIDTH: f32 = 280.0;
+pub const AI_PANEL_WIDTH: f32 = 400.0;
 
 pub type ThemeCallback = Box<dyn Fn(&ClickEvent, &mut Window, &mut gpui::App)>;
 
@@ -30,6 +32,7 @@ pub fn sidebar(
     active: Panel,
     settings_active: bool,
     on_sysinfo: ThemeCallback,
+    on_ai: ThemeCallback,
     on_settings: ThemeCallback,
 ) -> gpui::Div {
     let bg = theme.background;
@@ -50,6 +53,12 @@ pub fn sidebar(
                     "\u{1F4CA}",
                     active == Panel::SystemInfo,
                     on_sysinfo,
+                )))
+                .child(v_flex().gap_1().px(px(4.)).child(icon_btn(
+                    "ai",
+                    "\u{1F916}",
+                    active == Panel::AiChat,
+                    on_ai,
                 )))
                 .child(v_flex().gap_1().px(px(4.)).child(icon_btn(
                     "settings",

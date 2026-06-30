@@ -1,0 +1,20 @@
+{
+  "id": "01-sqlite-persistence",
+  "name": "SQLite 持久化层",
+  "title": "SessionManager — SQLite 会话存储 + FTS5 搜索",
+  "description": "",
+  "status": "done",
+  "dev_type": "lib",
+  "package": null,
+  "priority": "P1",
+  "createdAt": "2026-06-30",
+  "completedAt": "2026-06-30",
+  "branch": "main",
+  "base_branch": "main",
+  "parent": "06-29-ai-orchestrator",
+  "relatedFiles": [
+    "src/ai/session.rs"
+  ],
+  "notes": "依赖: rusqlite(bundled). 独立无上游依赖。",
+  "meta": {}
+}

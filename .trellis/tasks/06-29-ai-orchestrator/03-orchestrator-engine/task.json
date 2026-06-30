@@ -1,0 +1,18 @@
+{
+  "id": "03-orchestrator-engine",
+  "name": "编排器引擎",
+  "title": "编排器 LLM 客户端 — SSE 流式 chat API",
+  "description": "",
+  "status": "planning",
+  "dev_type": "lib",
+  "package": null,
+  "priority": "P1",
+  "createdAt": "2026-06-30",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "parent": "06-29-ai-orchestrator",
+  "relatedFiles": ["src/ai/engine.rs"],
+  "notes": "依赖任务01(ChatMessage结构体)和任务10(AiError enum)。Cargo.toml 需加 reqwest+tokio+futures+regex。StreamEvent定义Agent*占位variant供06替换。",
+  "meta": {}
+}

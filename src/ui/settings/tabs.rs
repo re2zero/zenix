@@ -82,6 +82,12 @@ pub fn tab_content(
     market_skills: &[ApiSkill],
     market_loading: bool,
     market_error: Option<&str>,
+    zenix_ai_config: &crate::ai::config::ZenixAIConfig,
+    zenix_ai_providers: &[crate::api_provider::ApiProviderConfig],
+    zenix_ai_thinking_levels: Vec<String>,
+    on_zenixai_provider: &SharedActionCb<String>,
+    on_zenixai_model: &SharedActionCb<String>,
+    on_zenixai_thinking: &SharedActionCb<String>,
 ) -> AnyElement {
     match active_tab {
         0 => tab_general(locale, on_locale_change).into_any_element(),
@@ -121,6 +127,15 @@ pub fn tab_content(
             on_agent_refresh,
             on_tab_change,
             on_extension_tab_change,
+        )
+        .into_any_element(),
+        4 => tab_zenixai(
+            zenix_ai_config,
+            zenix_ai_providers,
+            zenix_ai_thinking_levels,
+            on_zenixai_provider,
+            on_zenixai_model,
+            on_zenixai_thinking,
         )
         .into_any_element(),
         _ => tab_extensions(
@@ -1234,4 +1249,154 @@ fn tab_api_content(
                 }))
                 .into_any_element()
         })
+}
+
+// ── ZenixAI Tab ───────────────────────────────────────────────────────
+
+fn tab_zenixai(
+    zenix_ai_config: &crate::ai::config::ZenixAIConfig,
+    zenix_ai_providers: &[crate::api_provider::ApiProviderConfig],
+    zenix_ai_thinking_levels: Vec<String>,
+    on_provider: &SharedActionCb<String>,
+    on_model: &SharedActionCb<String>,
+    on_thinking: &SharedActionCb<String>,
+) -> impl IntoElement {
+    let config = zenix_ai_config.clone();
+    let providers = zenix_ai_providers.to_vec();
+    let thinking_levels = zenix_ai_thinking_levels.clone();
+
+    let provider_id = config.provider_id.clone();
+
+    v_flex()
+        .gap(px(16.))
+        .child(
+            v_flex().gap(px(4.)).child(
+                setting_group_header(t("settings.zenix_ai.title")),
+            ),
+        )
+        .child(
+            txt(px(12.))
+                .text_color(gpui::rgba(0x888888FF))
+                .child(t("settings.zenix_ai.description")),
+        )
+        .child(
+            zed_card()
+                .child(v_flex().gap(px(12.)).child(
+                    v_flex()
+                        .gap(px(6.))
+                        .child(setting_label(t("settings.zenix_ai.provider.label")))
+                        .child(
+                            if providers.is_empty() {
+                                txt(px(13.))
+                                    .text_color(gpui::rgba(0x888888FF))
+                                    .child(t("settings.zenix_ai.provider.no_providers"))
+                                    .into_any_element()
+                            } else {
+                                let provider_ids: Vec<String> =
+                                    providers.iter().map(|p| p.name.clone()).collect();
+                                v_flex().gap(px(2.)).children(
+                                    provider_ids
+                                        .iter()
+                                        .map(|pid| {
+                                            let is_selected = pid == &provider_id;
+                                            let on_prov = on_provider.clone();
+                                            Button::new(format!("zenixai-provider-{pid}"))
+                                                .ghost()
+                                                
+                                                .when(is_selected, |b| b.primary())
+                                                .label(pid)
+                                                .w(px(240.))
+                                                .on_click({
+                                                    let pid = pid.clone();
+                                                    move |_e, w, a| on_prov(pid.clone(), w, a)
+                                                })
+                                                .into_any_element()
+                                        })
+                                )
+                                .into_any_element()
+                            },
+                        ),
+                )),
+        )
+        .child(
+            zed_card()
+                .child(v_flex().gap(px(12.)).child(
+                    v_flex()
+                        .gap(px(6.))
+                        .child(setting_label(t("settings.zenix_ai.model.label")))
+                        .child(
+                            if provider_id.is_empty() {
+                                txt(px(13.))
+                                    .text_color(gpui::rgba(0x888888FF))
+                                    .child(t("settings.zenix_ai.model.no_provider"))
+                                    .into_any_element()
+                            } else if let Some(ref provider) =
+                                providers.iter().find(|p| p.name == provider_id)
+                            {
+                                txt(px(13.))
+                                    .child(if provider.model.is_empty() {
+                                        t("settings.zenix_ai.model.placeholder")
+                                    } else {
+                                        provider.model.clone()
+                                    })
+                                    .into_any_element()
+                            } else {
+                                txt(px(13.))
+                                    .text_color(gpui::rgba(0x888888FF))
+                                    .child(t("settings.zenix_ai.model.unknown_provider"))
+                                    .into_any_element()
+                            },
+                        ),
+                )),
+        )
+        .child(
+            zed_card()
+                .child(v_flex().gap(px(12.)).child(
+                    v_flex()
+                        .gap(px(6.))
+                        .child(setting_label(t("settings.zenix_ai.thinking.label")))
+                        .child(
+                            v_flex().gap(px(2.)).children(
+                                thinking_levels
+                                    .iter()
+                                    .map(|level| {
+                                        let is_selected = level == &config.thinking_level.label();
+                                        let on_think = on_thinking.clone();
+                                        Button::new(format!("zenixai-thinking-{level}"))
+                                            .ghost()
+                                            
+                                            .when(is_selected, |b| b.primary())
+                                            .label(level)
+                                            .w(px(240.))
+                                            .on_click({
+                                                let level = level.clone();
+                                                move |_e, w, a| on_think(level.clone(), w, a)
+                                            })
+                                            .into_any_element()
+                                    })
+                            )
+                        ),
+                )),
+        )
+        .child(
+            h_flex()
+                .justify_end()
+                .gap(px(8.))
+                .child(
+                    Button::new("zenixai-save")
+                        .primary()
+                        .label(t("settings.zenix_ai.save"))
+                        .on_click({
+                            let config = config.clone();
+                            let on_prov = on_provider.clone();
+                            let on_mod = on_model.clone();
+                            let on_think = on_thinking.clone();
+                            move |_e, w, a| {
+                                on_prov(config.provider_id.clone(), w, a);
+                                on_mod(config.model.clone(), w, a);
+                                on_think(config.thinking_level.label().to_string(), w, a);
+                            }
+                        }),
+                ),
+        )
 }

@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/06-29-ai-orchestrator/02-zenixai-config/design.md", "reason": "ZenixAIConfig 结构体、ConfigFile 扩展、ProviderSelector"}
+{"file": ".trellis/tasks/06-29-ai-orchestrator/02-zenixai-config/prd.md", "reason": "验收标准和功能要求"}
+{"file": "src/config.rs", "reason": "需要修改 ConfigFile 结构体"}
+{"file": "src/api_provider/mod.rs", "reason": "ApiProviderConfig, ThinkingLevel, fetch_models, load_all"}
+{"file": "src/ui/settings/", "reason": "现有设置面板 UI 模式"}

@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/06-29-ai-orchestrator/04-chat-panel-ui/design.md", "reason": "AIChatPanel 完整设计、render 布局、事件处理"}
+{"file": ".trellis/tasks/06-29-ai-orchestrator/04-chat-panel-ui/prd.md", "reason": "验收标准和 UI 布局"}
+{"file": "src/ui/sidebar.rs", "reason": "需要修改 Panel 枚举和 sidebar 函数"}
+{"file": "src/app.rs", "reason": "需要修改 ZenixApp 渲染和事件处理"}
+{"file": "src/ai/mod.rs", "reason": "AI 模块入口"}
+{"file": "src/ai/session.rs", "reason": "SessionManager 接口"}
+{"file": "src/ai/engine.rs", "reason": "OrchestratorEngine 接口（chat_and_dispatch 任务 06）"}
+{"file": "src/ai/herdr.rs", "reason": "HerdrIpcClient — workspace 列表供底部栏选择"}

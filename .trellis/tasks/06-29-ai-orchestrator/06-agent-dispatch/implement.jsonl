@@ -1,0 +1,7 @@
+{"file": ".trellis/tasks/06-29-ai-orchestrator/06-agent-dispatch/design.md", "reason": "chat_and_dispatch 流程、dispatch_single/dispatch_all、system prompt"}
+{"file": ".trellis/tasks/06-29-ai-orchestrator/06-agent-dispatch/prd.md", "reason": "验收标准和接口契约"}
+{"file": ".trellis/tasks/06-29-ai-orchestrator/03-orchestrator-engine/design.md", "reason": "StreamEvent 定义、OrchestratorEngine 基础、占位 AgentTask/AgentResult"}
+{"file": ".trellis/tasks/06-29-ai-orchestrator/05-herdr-ipc-client/design.md", "reason": "HerdrIpcClient 接口"}
+{"file": ".trellis/tasks/06-29-ai-orchestrator/01-sqlite-persistence/design.md", "reason": "AgentActivity 结构体"}
+{"file": "src/ai/engine.rs", "reason": "修改文件：替换占位、添加方法"}
+{"file": "src/ai/herdr.rs", "reason": "HerdrIpcClient"}

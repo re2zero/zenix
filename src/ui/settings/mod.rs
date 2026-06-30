@@ -297,6 +297,12 @@ pub struct SettingsDialogProps<'a> {
     pub on_confirm_action: ActionCb<bool>,
     pub font_family: &'a str,
     pub win_h: f32,
+    pub zenix_ai_config: &'a crate::ai::config::ZenixAIConfig,
+    pub zenix_ai_providers: &'a [crate::api_provider::ApiProviderConfig],
+    pub zenix_ai_thinking_levels: Vec<String>,
+    pub on_zenixai_provider: SharedActionCb<String>,
+    pub on_zenixai_model: SharedActionCb<String>,
+    pub on_zenixai_thinking: SharedActionCb<String>,
 }
 
 pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
@@ -360,6 +366,12 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
         font_family,
         win_w,
         win_h,
+        zenix_ai_config,
+        zenix_ai_providers,
+        zenix_ai_thinking_levels,
+        on_zenixai_provider,
+        on_zenixai_model,
+        on_zenixai_thinking,
     } = props;
 
     let dialog_w = (win_w * 0.75).max(TAB_MIN_W);
@@ -384,6 +396,7 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
         t("settings.tab.terminal"),
         t("settings.tab.agent_cli"),
         t("settings.tab.extensions"),
+        t("settings.tab.zenix_ai"),
     ];
 
     let dialog = div()
@@ -453,7 +466,10 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
                     api_search, api_search_input,
                     terminal_cursor_blink, terminal_cursor_style,
                     terminal_opacity, terminal_scrollback, scrollback_input,
-                    &ota, market_skills, market_loading, market_error))
+                    &ota, market_skills, market_loading, market_error,
+                    zenix_ai_config, zenix_ai_providers,
+                    zenix_ai_thinking_levels, &on_zenixai_provider,
+                    &on_zenixai_model, &on_zenixai_thinking))
             )
         )
         // Toast overlay

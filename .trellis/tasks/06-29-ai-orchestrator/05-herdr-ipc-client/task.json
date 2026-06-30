@@ -1,0 +1,18 @@
+{
+  "id": "05-herdr-ipc-client",
+  "name": "Herdr IPC 客户端",
+  "title": "Unix Socket JSON-line 协议实现",
+  "description": "",
+  "status": "planning",
+  "dev_type": "lib",
+  "package": null,
+  "priority": "P2",
+  "createdAt": "2026-06-30",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "parent": "06-29-ai-orchestrator",
+  "relatedFiles": ["src/ai/herdr.rs"],
+  "notes": "独立无上游依赖（暂用 anyhow::Error，任务10就绪后可导入 AiError 替换）。定义 HerdrIpcClient 接口供06使用。",
+  "meta": {}
+}

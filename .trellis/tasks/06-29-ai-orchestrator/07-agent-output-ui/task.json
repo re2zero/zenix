@@ -1,0 +1,18 @@
+{
+  "id": "07-agent-output-ui",
+  "name": "Agent 输出 UI 区块",
+  "title": "Agent 内联输出折叠区块 + 状态指示",
+  "description": "",
+  "status": "planning",
+  "dev_type": "ui",
+  "package": null,
+  "priority": "P2",
+  "createdAt": "2026-06-30",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "parent": "06-29-ai-orchestrator",
+  "relatedFiles": ["src/ai/chat.rs"],
+  "notes": "依赖: 04(chat panel) + 06(dispatch). 纯 UI 改动。",
+  "meta": {}
+}

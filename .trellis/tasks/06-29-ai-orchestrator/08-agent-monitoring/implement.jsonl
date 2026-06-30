@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/06-29-ai-orchestrator/08-agent-monitoring/design.md", "reason": "状态轮询、👤 按钮、状态浮层设计"}
+{"file": ".trellis/tasks/06-29-ai-orchestrator/08-agent-monitoring/prd.md", "reason": "验收标准和 UI 设计"}
+{"file": "src/ai/chat.rs", "reason": "AiChatPanel UI 代码"}
+{"file": "src/ai/herdr.rs", "reason": "HerdrIpcClient.list_agent_statuses()"}

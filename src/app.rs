@@ -2,6 +2,7 @@
 
 use std::{
     ops::Range,
+    rc::Rc,
     sync::mpsc::{self, Receiver, Sender},
     time::Duration,
 };
@@ -121,6 +122,10 @@ pub struct ZenixApp {
     toast: Option<ToastMessage>,
     context_menu: Option<ContextMenuState>,
     pending_confirm: Option<crate::ui::settings::PendingConfirm>,
+    zenix_ai_provider_id: String,
+    zenix_ai_model: String,
+    zenix_ai_thinking_level: crate::api_provider::ThinkingLevel,
+    ai_chat_panel: Option<crate::ai::chat::AiChatPanelData>,
     pub cursor_visible: bool,
     single_instance_rx: Option<std::sync::mpsc::Receiver<crate::single_instance::Signal>>,
 }
@@ -153,7 +158,16 @@ impl ZenixApp {
         let cursor_style = config.terminal_cursor_style().to_string();
         let opacity = config.terminal_opacity();
         let scrollback = config.terminal_scrollback();
-        let result = Self {
+        let zenix_ai_provider_id = config.data.zenix_ai.as_ref()
+            .map(|c| c.provider_id.clone())
+            .unwrap_or_default();
+        let zenix_ai_model = config.data.zenix_ai.as_ref()
+            .map(|c| c.model.clone())
+            .unwrap_or_default();
+        let zenix_ai_thinking_level = config.data.zenix_ai.as_ref()
+            .map(|c| c.thinking_level)
+            .unwrap_or_default();
+        let mut result = Self {
             focus_handle,
             backend: None,
             tab: None,
@@ -218,6 +232,10 @@ impl ZenixApp {
             toast: None,
             context_menu: None,
             pending_confirm: None,
+            zenix_ai_provider_id,
+            zenix_ai_model,
+            zenix_ai_thinking_level,
+            ai_chat_panel: None,
             single_instance_rx,
         };
         // Start cursor blink timer if enabled
@@ -940,12 +958,12 @@ impl Render for ZenixApp {
         self.terminal_ascent = ascent;
         self.terminal_descent = descent;
         // Calculate available width for terminal (account for sidebar + panel)
-        let sidebar_w = sidebar::SIDEBAR_WIDTH
-            + if self.active_panel != Panel::None {
-                sidebar::PANEL_WIDTH
-            } else {
-                0.0
-            };
+        let panel_w = match self.active_panel {
+            Panel::AiChat => sidebar::AI_PANEL_WIDTH,
+            Panel::SystemInfo => sidebar::PANEL_WIDTH,
+            Panel::None => 0.0,
+        };
+        let sidebar_w = sidebar::SIDEBAR_WIDTH + panel_w;
 
         if let Some(tab) = &mut self.tab {
             let b = window.bounds();
@@ -1041,6 +1059,11 @@ impl Render for ZenixApp {
                 this.toggle_panel(Panel::SystemInfo);
                 cx.notify();
             }));
+        let ai_cb: sidebar::ThemeCallback =
+            Box::new(cx.listener(|this, _: &ClickEvent, _window, cx| {
+                this.toggle_panel(Panel::AiChat);
+                cx.notify();
+            }));
         let settings_cb: sidebar::ThemeCallback =
             Box::new(cx.listener(|this, _: &ClickEvent, window, cx| {
                 // Lazy-init on first open
@@ -1116,10 +1139,14 @@ impl Render for ZenixApp {
                 this.change_font_size(this.terminal_font_size + 1.0);
                 cx.notify();
             }));
-        // Expanded panel (conditionally shown) — only SystemInfo now, Settings is a dialog
+        // Expanded panel (conditionally shown) — SystemInfo or AiChat, Settings is a dialog
         let panel: Option<gpui::AnyElement> = match self.active_panel {
             Panel::SystemInfo => {
                 Some(sidebar::system_info_panel(&theme, &self.system_info).into_any_element())
+            }
+            Panel::AiChat => {
+                let data = self.ai_chat_panel.get_or_insert_with(crate::ai::chat::AiChatPanelData::new);
+                Some(crate::ai::chat::render_ai_chat_panel(data, &theme).into_any_element())
             }
             _ => None,
         };
@@ -1212,6 +1239,7 @@ impl Render for ZenixApp {
                 self.active_panel,
                 self.show_settings,
                 sysinfo_cb,
+                ai_cb,
                 settings_cb,
             ));
 
@@ -2204,6 +2232,70 @@ impl Render for ZenixApp {
                     market_skills: &self.market_skills,
                     market_loading: self.market_loading,
                     market_error: self.market_error.as_deref(),
+                    zenix_ai_config: &crate::ai::config::ZenixAIConfig {
+                        provider_id: self.zenix_ai_provider_id.clone(),
+                        model: self.zenix_ai_model.clone(),
+                        thinking_level: self.zenix_ai_thinking_level.clone(),
+                    },
+                    zenix_ai_providers: &self.api_providers,
+                    zenix_ai_thinking_levels: vec![
+                        "Low".into(),
+                        "Medium".into(),
+                        "High".into(),
+                        "X-High".into(),
+                    ],
+                    on_zenixai_provider: Rc::new(Box::new({
+                        let entity = entity.clone();
+                        move |provider_id: String, _w: &mut Window, app: &mut gpui::App| {
+                            entity.update(app, |this: &mut ZenixApp, cx| {
+                                this.zenix_ai_provider_id = provider_id.clone();
+                                this.zenix_ai_model = String::new();
+                                this.config.set_zenixai_config(crate::ai::config::ZenixAIConfig {
+                                    provider_id,
+                                    model: String::new(),
+                                    thinking_level: this.zenix_ai_thinking_level.clone(),
+                                });
+                                let _ = this.config.save();
+                                cx.notify();
+                            });
+                        }
+                    })),
+                    on_zenixai_model: Rc::new(Box::new({
+                        let entity = entity.clone();
+                        move |model: String, _w: &mut Window, app: &mut gpui::App| {
+                            entity.update(app, |this: &mut ZenixApp, cx| {
+                                this.zenix_ai_model = model.clone();
+                                this.config.set_zenixai_config(crate::ai::config::ZenixAIConfig {
+                                    provider_id: this.zenix_ai_provider_id.clone(),
+                                    model,
+                                    thinking_level: this.zenix_ai_thinking_level.clone(),
+                                });
+                                let _ = this.config.save();
+                                cx.notify();
+                            });
+                        }
+                    })),
+                    on_zenixai_thinking: Rc::new(Box::new({
+                        let entity = entity.clone();
+                        move |level: String, _w: &mut Window, app: &mut gpui::App| {
+                            entity.update(app, |this: &mut ZenixApp, cx| {
+                                let tl = match level.as_str() {
+                                    "Low" => crate::api_provider::ThinkingLevel::Low,
+                                    "High" => crate::api_provider::ThinkingLevel::High,
+                                    "X-High" => crate::api_provider::ThinkingLevel::XHigh,
+                                    _ => crate::api_provider::ThinkingLevel::Medium,
+                                };
+                                this.zenix_ai_thinking_level = tl.clone();
+                                this.config.set_zenixai_config(crate::ai::config::ZenixAIConfig {
+                                    provider_id: this.zenix_ai_provider_id.clone(),
+                                    model: this.zenix_ai_model.clone(),
+                                    thinking_level: tl,
+                                });
+                                let _ = this.config.save();
+                                cx.notify();
+                            });
+                        }
+                    })),
                     terminal_cursor_blink: self.terminal_cursor_blink,
                     terminal_cursor_style: &self.terminal_cursor_style,
                     terminal_opacity: self.terminal_opacity,

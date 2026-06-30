@@ -1,0 +1,8 @@
+{"file": ".trellis/tasks/06-29-ai-orchestrator/prd.md", "reason": "产品需求文档 — 定义了交互模型、UI 布局、配置体系、异常策略"}
+{"file": ".trellis/tasks/06-29-ai-orchestrator/design.md", "reason": "技术设计 — 架构、数据流、组件定义、SQLite schema、依赖变更"}
+{"file": ".trellis/tasks/06-29-ai-orchestrator/implement.md", "reason": "执行计划 — Phase 拆分、文件列表、验证标准"}
+{"file": "src/api_provider/mod.rs", "reason": "API Provider 完整实现 — 复用 ApiProviderConfig、ThinkingLevel、格式兼容"}
+{"file": "src/ui/sidebar.rs", "reason": "现有 Panel 枚举和 sidebar 布局模式 — 增加 AiChat 变体"}
+{"file": "src/ui/mod.rs", "reason": "UI 模块导出模式"}
+{"file": "src/app.rs", "reason": "ZenixApp 主状态和 render 布局 — inline panel 渲染位置"}
+{"file": "Cargo.toml", "reason": "现有依赖 — 定位新增 deps 的位置"}

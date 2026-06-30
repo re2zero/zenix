@@ -1,0 +1,18 @@
+{
+  "id": "02-zenixai-config",
+  "name": "ZenixAI 配置",
+  "title": "ZenixAI 配置结构体 + 设置面板扩展",
+  "description": "",
+  "status": "planning",
+  "dev_type": "lib",
+  "package": null,
+  "priority": "P1",
+  "createdAt": "2026-06-30",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "parent": "06-29-ai-orchestrator",
+  "relatedFiles": ["src/ai/config.rs", "src/ui/settings/"],
+  "notes": "依赖: ApiProviderConfig(现有). 为下游定义 ProviderSelector。",
+  "meta": {}
+}
