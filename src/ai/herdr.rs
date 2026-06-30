@@ -1217,16 +1217,20 @@ impl HerdrIpcClient {
 
 /// Parse a JSON-line response string into a typed `HerdrResponse`.
 fn parse_response(line: &str) -> Result<HerdrResponse, AiError> {
-    // First try success, then error, as both have an "id" field.
-    if let Ok(success) = serde_json::from_str::<SuccessResponse>(line) {
-        return Ok(HerdrResponse::Success(success));
-    }
-    if let Ok(error) = serde_json::from_str::<ErrorResponse>(line) {
+    // Check for error first: both SuccessResponse and ErrorResponse have an
+    // "id" field, so we must inspect the JSON structure before deserializing.
+    let value: serde_json::Value = serde_json::from_str(line)
+        .map_err(|e| AiError::SerializationError(format!("invalid JSON: {e}")))?;
+
+    if value.get("error").is_some() {
+        let error: ErrorResponse = serde_json::from_value(value)
+            .map_err(|e| AiError::SerializationError(format!("parse error response: {e}")))?;
         return Ok(HerdrResponse::Error(error));
     }
-    Err(AiError::SerializationError(format!(
-        "unable to parse response: {line}"
-    )))
+
+    let success: SuccessResponse = serde_json::from_value(value)
+        .map_err(|e| AiError::SerializationError(format!("parse success response: {e}")))?;
+    Ok(HerdrResponse::Success(success))
 }
 
 #[cfg(test)]
@@ -1515,7 +1519,7 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             AiError::SerializationError(msg) => {
-                assert!(msg.contains("unable to parse"));
+                assert!(msg.contains("invalid JSON"));
             }
             _ => panic!("expected serialization error"),
         }
@@ -1527,9 +1531,45 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             AiError::SerializationError(msg) => {
-                assert!(msg.contains("unable to parse"));
+                assert!(msg.contains("invalid JSON"));
             }
             _ => panic!("expected serialization error"),
+        }
+    }
+
+    #[test]
+    fn test_parse_response_error_response_is_not_success() {
+        // Error responses must be classified as Error, not Success.
+        // Previously, ErrorResponse was deserialized as SuccessResponse
+        // because both have an "id" field and SuccessResponse's result
+        // field has #[serde(default)].
+        let json = r#"{"id":"req-4","error":{"code":"agent_binary_not_found","message":"claude not found"}}"#;
+        let resp = parse_response(json).unwrap();
+        match resp {
+            HerdrResponse::Error(e) => {
+                assert_eq!(e.id, "req-4");
+                assert_eq!(e.error.code, "agent_binary_not_found");
+            }
+            _ => panic!("expected error response, got success"),
+        }
+    }
+
+    #[test]
+    fn test_parse_response_success_response() {
+        let json = r#"{"id":"req-1","result":{"type":"pong","version":"0.6.10","protocol":6}}"#;
+        let resp = parse_response(json).unwrap();
+        match resp {
+            HerdrResponse::Success(s) => {
+                assert_eq!(s.id, "req-1");
+                match s.result {
+                    ResponseResult::Pong { version, protocol, .. } => {
+                        assert_eq!(version, "0.6.10");
+                        assert_eq!(protocol, 6);
+                    }
+                    _ => panic!("expected pong"),
+                }
+            }
+            _ => panic!("expected success"),
         }
     }
 

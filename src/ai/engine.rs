@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 use crate::api_provider::ApiProviderConfig;
 use crate::ai::herdr::{HerdrIpcClient, ReadSource};
 
-use super::error::AiError;
+use super::error::{AiError, user_friendly};
 
 /// System prompt defining the orchestrator's role.
 pub const SYSTEM_PROMPT: &str =
@@ -197,7 +197,7 @@ impl OrchestratorEngine {
     /// `StreamEvent::Error(msg)` on failure, and `StreamEvent::Done` at completion.
     ///
     /// Uses `reqwest::bytes_stream()` to parse SSE "data: " lines.
-    pub async fn chat_stream(
+    async fn chat_stream(
         &self,
         messages: &[ChatMessageRef],
         on_event: impl Fn(StreamEvent) + Send + 'static,
@@ -480,8 +480,8 @@ fn parse_json_dispatch(json_text: &str) -> Option<DispatchDirective> {
     Some(DispatchDirective::Json { agents })
 }
 
-/// Parse text-formatted dispatch directive:
-/// ```
+/// Parse text-formatted dispatch directive (example):
+/// ```ignore
 /// Agent: claude
 /// Task: Implement JWT token refresh in src/auth/jwt.rs
 /// CWD: /home/user/project
@@ -528,6 +528,22 @@ fn find_pattern(text: &str, prefix: &str) -> Option<String> {
     None
 }
 
+// ── Agent Error Classification ──────────────────────────────────────────
+
+/// Classify an AiError from agent startup into a specific error variant
+/// for user-friendly display.
+fn classify_agent_error(err: &AiError) -> AiError {
+    match err {
+        AiError::IpcError(msg) if msg.contains("not found") || msg.contains("no such file") || msg.contains("executable") => {
+            AiError::AgentCliNotFound(msg.clone())
+        }
+        AiError::IpcError(msg) if msg.contains("connection refused") || msg.contains("connect") => {
+            AiError::AgentCliNotFound(format!("herdr not running: {msg}"))
+        }
+        _ => err.clone(),
+    }
+}
+
 // ── Agent Execution Helpers ─────────────────────────────────────────────
 
 /// Execute a single agent task via herdr IPC.
@@ -542,6 +558,7 @@ pub fn execute_agent_task(
     task: &AgentTask,
     workspace_id: &str,
     timeout_ms: u64,
+    on_event: impl Fn(DispatchStreamEvent),
 ) -> AgentResult {
     let agent_name = task.agent_name.clone();
     let instruction = task.instruction.clone();
@@ -568,13 +585,18 @@ pub fn execute_agent_task(
         Ok(info) => info,
         Err(e) => {
             tracing::error!("failed to start agent '{agent_name}': {e}");
-            let err_summary = format!("Failed to start agent: {e}");
+            // Classify the error for user-friendly display
+            let error_kind = classify_agent_error(&e);
+            on_event(DispatchStreamEvent::Error(format!(
+                "Failed to start agent '{agent_name}': {}",
+                user_friendly(&error_kind)
+            )));
             return AgentResult {
                 agent_name: agent_name.clone(),
                 pane_id: String::new(),
                 exit_status: "failed".into(),
                 output: format!("Agent start failed: {e}"),
-                summary: Some(err_summary),
+                summary: Some(format!("{error_kind}: {e}")),
             };
         }
     };
@@ -664,33 +686,36 @@ impl OrchestratorEngine {
         let mut loop_messages: Vec<ChatMessageRef> = messages.to_vec();
         let mut final_response;
 
-        // Wrap callback in Arc for Send + Sync + 'static sharing across iterations
-        let on_event_arc: Arc<dyn Fn(DispatchStreamEvent) + Send + Sync + 'static> =
+        // Arc the callback so it can be shared across loop iterations.
+        let on_event: Arc<dyn Fn(DispatchStreamEvent) + Send + Sync + 'static> =
             Arc::new(on_event);
 
         loop {
             // Phase 1: LLM call with streaming
+            let on_event_clone = Arc::clone(&on_event);
             let response_text = self
-                .call_llm_collect(&loop_messages, on_event_arc.clone())
+                .call_llm_collect(&loop_messages, move |ev| on_event_clone(ev))
                 .await?;
 
             // Phase 2: Parse dispatch
             if let Some(directive) = parse_dispatch_directive(&response_text) {
                 // Phase 3: Execute agents (sync herdr calls)
-                on_event_arc(DispatchStreamEvent::Dispatch(directive.clone()));
+                on_event(DispatchStreamEvent::Dispatch(directive.clone()));
 
                 let tasks = directive.to_tasks();
                 let mut agent_results = Vec::new();
 
                 for task in &tasks {
+                    let on_event_clone = Arc::clone(&on_event);
                     let result = execute_agent_task(
                         herdr_client,
                         task,
                         workspace_id,
                         DEFAULT_AGENT_TIMEOUT_MS,
+                        move |ev| on_event_clone(ev),
                     );
                     agent_results.push(result.clone());
-                    on_event_arc(DispatchStreamEvent::AgentComplete(result));
+                    on_event(DispatchStreamEvent::AgentComplete(result));
                 }
 
                 dispatch_count += 1;
@@ -741,11 +766,14 @@ impl OrchestratorEngine {
     ///
     /// This is used by `chat_and_dispatch` to gather the full response text
     /// before parsing dispatch directives.
-    async fn call_llm_collect(
+    async fn call_llm_collect<F>(
         &self,
         messages: &[ChatMessageRef],
-        on_event: Arc<dyn Fn(DispatchStreamEvent) + Send + Sync + 'static>,
-    ) -> Result<String, AiError> {
+        on_event: F,
+    ) -> Result<String, AiError>
+    where
+        F: Fn(DispatchStreamEvent) + Send + 'static,
+    {
         let collected: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
         let collected_clone = collected.clone();
 
