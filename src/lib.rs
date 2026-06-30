@@ -6,6 +6,7 @@
 rust_i18n::i18n!("locales");
 
 pub mod agent;
+pub mod ai;
 pub mod api_provider;
 pub mod config_adapters;
 pub mod i18n;

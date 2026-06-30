@@ -57,6 +57,25 @@ impl ThinkingLevel {
             ThinkingLevel::XHigh,
         ]
     }
+
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ThinkingLevel::Low => "low",
+            ThinkingLevel::Medium => "medium",
+            ThinkingLevel::High => "high",
+            ThinkingLevel::XHigh => "xhigh",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<ThinkingLevel> {
+        match s {
+            "low" => Some(ThinkingLevel::Low),
+            "medium" => Some(ThinkingLevel::Medium),
+            "high" => Some(ThinkingLevel::High),
+            "xhigh" => Some(ThinkingLevel::XHigh),
+            _ => None,
+        }
+    }
 }
 
 // ── API Format ──────────────────────────────────────────────────────
