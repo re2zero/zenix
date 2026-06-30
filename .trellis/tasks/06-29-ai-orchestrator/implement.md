@@ -16,6 +16,7 @@
 | 07 | Agent 输出 UI | P2 | 04, 06 | `ai/chat.rs`（AgentBlock 组件） | ✅ 已完成 (本次迭代) |
 | 09 | API 配置同步 | P3 | 无 | `api_provider/mod.rs`（批量 sync） | ✅ 已完成 (本次迭代) |
 | 08 | Agent 监控 UI | P3 | 05, 07 | `ai/chat.rs`（👤 浮层） | ✅ 已完成 (本次迭代) |
+| 11 | UI 修复 | P1 | 无 | 侧边栏布局 + AI 聊天面板重写 + ZenixAI 设置集成到 API 提供商 | ✅ 已完成 (本次迭代) |
 
 ## 依赖图
 
@@ -37,6 +38,14 @@ Phase 5:  04(Chat Panel UI) ←────────────────�
            ▼
 Phase 6:  07(Agent Output UI)   08(Agent Monitoring)
 ```
+
+**第四次迭代** ✅ 已完成 (本次 commit)
+- 侧边栏 AI 图标位置调整 — AI 图标紧邻设置按钮（底部集群）
+- AI 聊天面板 UI 重写 — 完整重构渲染函数，改进样式/间距/交互
+- 移除独立 ZenixAI 设置 Tab — 删除 config.rs，清理 app/settings/i18n 中的 zenix_ai 引用
+- 270 行净减少（从 465 删除 - 180 新增）
+- ✅ 编译 0 错误, clippy 无新增警告
+- ✅ 113/113 测试通过
 
 ## MVP 范围
 

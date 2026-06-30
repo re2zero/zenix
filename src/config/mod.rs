@@ -14,8 +14,6 @@ use std::{fs, path::PathBuf};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::ai::config::ZenixAIConfig;
-
 fn default_terminal_font_size() -> f32 {
     14.0
 }
@@ -57,8 +55,6 @@ pub struct ConfigFile {
     pub settings_window_size: Option<(f32, f32)>,
     #[serde(default)]
     pub active_settings_tab: usize,
-    #[serde(default)]
-    pub zenix_ai: Option<ZenixAIConfig>,
     #[serde(default = "default_terminal_cursor_style")]
     pub terminal_cursor_style: String,
     #[serde(default = "default_terminal_cursor_blink")]
@@ -79,7 +75,6 @@ impl Default for ConfigFile {
             locale: default_locale(),
             settings_window_size: None,
             active_settings_tab: 0,
-            zenix_ai: None,
             terminal_cursor_style: default_terminal_cursor_style(),
             terminal_cursor_blink: default_terminal_cursor_blink(),
             terminal_opacity: default_terminal_opacity(),
@@ -173,10 +168,6 @@ impl ConfigStore {
 
     pub fn set_active_settings_tab(&mut self, tab: usize) {
         self.data.active_settings_tab = tab;
-    }
-
-    pub fn set_zenixai_config(&mut self, config: crate::ai::config::ZenixAIConfig) {
-        self.data.zenix_ai = Some(config);
     }
 
     pub fn terminal_cursor_style(&self) -> &str {

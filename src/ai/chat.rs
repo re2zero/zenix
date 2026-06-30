@@ -202,6 +202,13 @@ pub fn render_ai_chat_panel(
     data: &AiChatPanelData,
     theme: &Theme,
 ) -> impl IntoElement {
+    let th = theme.clone();
+    let mu = th.muted_foreground;
+    let bg = th.background;
+    let border = th.border;
+    let _fg = th.foreground;
+
+    // Message area
     let message_elements: Vec<AnyElement> = data
         .messages
         .iter()
@@ -211,82 +218,83 @@ pub fn render_ai_chat_panel(
     let mut panel = h_flex()
         .w(px(AI_PANEL_WIDTH))
         .h_full()
-        .bg(theme.background)
-        .border_l_1()
-        .border_color(theme.border)
         .flex_col()
-        .overflow_y_scrollbar()
-        // Header
-        .child(render_header(data, theme));
+        .bg(bg)
+        .border_l_1()
+        .border_color(border)
+        .overflow_y_scrollbar();
 
-    // Config bar (model / thinking / workspace)
+    // ── Header ──────────────────────────────────────────────────────
+    panel = panel.child(render_header(data, theme));
+
+    // ── Config bar ──────────────────────────────────────────────────
     if data.config_bar_visible {
         panel = panel.child(render_config_bar(data, theme));
     }
 
-    // Search bar (shown when user types)
+    // ── Search bar ──────────────────────────────────────────────────
     if !data.search_query.is_empty() {
         panel = panel.child(render_search_bar(data, theme));
     }
 
-    // History panel (overlay)
+    // ── History panel ───────────────────────────────────────────────
     if data.show_history {
         panel = panel.child(render_history_panel(data, theme));
     }
 
-    // Agent monitoring floating layer
+    // ── Agent monitoring ────────────────────────────────────────────
     if data.show_agents {
         panel = panel.child(render_agent_monitor(data, theme));
     }
 
-    // Message area — scrollable
+    // ── Messages (scrollable) ───────────────────────────────────────
     panel = panel.child(
         div()
             .flex_grow(1.0)
             .min_h_0()
             .overflow_y_scrollbar()
             .p(px(12.))
-            .gap(px(8.))
+            .gap(px(10.))
             .children(message_elements),
     );
 
-    // Agent blocks (inline in chat)
+    // ── Agent blocks ────────────────────────────────────────────────
     if !data.agent_blocks.is_empty() {
         let block_elements: Vec<AnyElement> = data
             .agent_blocks
             .iter()
             .map(|block| render_agent_block(block, theme))
             .collect();
-        panel = panel.child(v_flex().gap(px(6.)).children(block_elements));
+        panel = panel.child(v_flex().gap(px(8.)).children(block_elements));
     }
 
-    // Streaming indicator (conditional — after messages)
+    // ── Streaming indicator ─────────────────────────────────────────
     if data.is_streaming {
         panel = panel.child(
             h_flex()
                 .items_center()
-                .gap(px(6.))
-                .p(px(8.))
+                .gap(px(8.))
+                .px(px(12.))
+                .py(px(6.))
                 .child(
                     div()
-                        .w(px(8.))
-                        .h(px(8.))
+                        .w(px(6.))
+                        .h(px(6.))
                         .rounded_full()
                         .bg(gpui::hsla(0.55, 0.8, 0.6, 1.0)),
                 )
                 .child(
-                    gpui::div()
-                        .text_size(px(11.))
-                        .text_color(gpui::rgba(0x888888FF))
+                    txt(px(11.))
+                        .text_color(mu)
                         .child(t("ai.chat.streaming")),
                 ),
         );
     }
 
-    // Input area
+    // ── Input area ──────────────────────────────────────────────────
     panel = panel.child(render_input_area(data, theme));
 
-    // Bottom bar
+    // ── Bottom bar ──────────────────────────────────────────────────
     panel = panel.child(render_bottom_bar(data, theme));
 
     panel
@@ -295,6 +303,11 @@ pub fn render_ai_chat_panel(
 // ── Header ──────────────────────────────────────────────────────────────
 
 fn render_header(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
+    let th = theme.clone();
+    let _mu = th.muted_foreground;
+    let fg = th.foreground;
+    let border = th.border;
+
     let title = if let Some(ref title) = data.current_session_title {
         title.clone()
     } else {
@@ -304,31 +317,34 @@ fn render_header(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
     v_flex()
         .gap(px(2.))
         .px(px(12.))
-        .py(px(8.))
+        .py(px(10.))
         .border_b_1()
-        .border_color(theme.border)
+        .border_color(border)
         .child(
             h_flex()
                 .justify_between()
                 .items_center()
                 .child(
-                    txt(px(13.))
+                    txt(px(14.))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(fg)
                         .child(title),
                 )
                 .child(
                     h_flex()
-                        .gap(px(4.))
+                        .gap(px(2.))
                         .child(
                             Button::new("ai-chat-search")
                                 .ghost()
                                 .label(t("ai.chat.search_btn"))
+                                .compact()
                                 .w(px(52.)),
                         )
                         .child(
                             Button::new("ai-chat-config")
                                 .ghost()
                                 .label(t("ai.chat.config_btn"))
+                                .compact()
                                 .w(px(52.)),
                         ),
                 ),
@@ -341,24 +357,28 @@ fn render_header(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
 fn render_config_bar(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
     let th = theme.clone();
     let mu = th.muted_foreground;
+    let _bg = th.background;
+    let border = th.border;
 
-    let model_btn = txt(px(11.))
-        .text_color(mu)
-        .bg(theme.muted_foreground.opacity(0.08))
-        .rounded_sm()
-        .px(px(6.))
-        .py(px(2.))
-        .cursor_pointer()
-        .child(data.selected_model.clone());
+    let pill = |text: &str| -> AnyElement {
+        txt(px(11.))
+            .text_color(mu)
+            .bg(gpui::rgba(0xFFFFFF08))
+            .rounded_full()
+            .px(px(8.))
+            .py(px(3.))
+            .cursor_pointer()
+            .hover(|st| st.bg(gpui::rgba(0xFFFFFF12)))
+            .child(text.to_string())
+            .into_any_element()
+    };
 
-    let thinking_btn = txt(px(11.))
-        .text_color(mu)
-        .bg(theme.muted_foreground.opacity(0.08))
-        .rounded_sm()
-        .px(px(6.))
-        .py(px(2.))
-        .cursor_pointer()
-        .child(data.thinking_level.clone());
+    let sep1 = txt(px(10.))
+        .text_color(gpui::rgba(0x555555FF))
+        .child("▏");
+    let sep2 = txt(px(10.))
+        .text_color(gpui::rgba(0x555555FF))
+        .child("▏");
 
     let ws_label = data
         .selected_workspace
@@ -372,27 +392,18 @@ fn render_config_bar(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
         })
         .unwrap_or_else(|| t("ai.config.no_workspace").to_string());
 
-    let ws_btn = txt(px(11.))
-        .text_color(mu)
-        .bg(theme.muted_foreground.opacity(0.08))
-        .rounded_sm()
-        .px(px(6.))
-        .py(px(2.))
-        .cursor_pointer()
-        .child(ws_label);
-
     h_flex()
-        .gap(px(4.))
+        .gap(px(6.))
         .px(px(12.))
-        .py(px(6.))
+        .py(px(5.))
         .border_b_1()
-        .border_color(theme.border)
+        .border_color(border)
         .items_center()
-        .child(model_btn)
-        .child(txt(px(10.)).text_color(mu).child("▏"))
-        .child(thinking_btn)
-        .child(txt(px(10.)).text_color(mu).child("▏"))
-        .child(ws_btn)
+        .child(pill(&data.selected_model))
+        .child(sep1)
+        .child(pill(&data.thinking_level))
+        .child(sep2)
+        .child(pill(&ws_label))
         .into_any_element()
 }
 
@@ -401,19 +412,22 @@ fn render_config_bar(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
 fn render_search_bar(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
     let th = theme.clone();
     let mu = th.muted_foreground;
+    let border = th.border;
+    let fg = th.foreground;
 
     let results_children: Vec<AnyElement> = data
         .search_results
         .iter()
         .map(|hit| {
-            let _content = hit.message.content.clone();
             let snippet = hit.snippet.clone();
             let session_title = hit.session_title.clone();
+            let role = hit.message.role.clone();
             h_flex()
                 .gap(px(6.))
-                .p(px(4.))
+                .p(px(5.))
                 .rounded_sm()
                 .hover(|st| st.bg(gpui::rgba(0xFFFFFF08)))
+                .cursor_pointer()
                 .child(
                     txt(px(10.))
                         .text_color(mu)
@@ -423,7 +437,7 @@ fn render_search_bar(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
                 .child(
                     txt(px(10.))
                         .text_color(mu)
-                        .child(format!("[{role}] {snippet}", role = hit.message.role)),
+                        .child(format!("[{role}] {snippet}",)),
                 )
                 .into_any_element()
         })
@@ -434,11 +448,11 @@ fn render_search_bar(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
         .px(px(12.))
         .py(px(6.))
         .border_b_1()
-        .border_color(theme.border)
+        .border_color(border)
         .child(
             h_flex()
                 .items_center()
-                .gap(px(4.))
+                .gap(px(6.))
                 .child(
                     txt(px(12.))
                         .text_color(mu)
@@ -446,14 +460,15 @@ fn render_search_bar(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
                 )
                 .child(
                     txt(px(12.))
-                        .text_color(theme.foreground)
+                        .text_color(fg)
                         .child(data.search_query.clone()),
                 )
                 .child(
                     Button::new("ai-search-clear")
                         .ghost()
                         .label("✕")
-                        .w(px(20.))
+                        .compact()
+                        .w(px(18.))
                         .h(px(16.)),
                 ),
         )
@@ -466,6 +481,8 @@ fn render_search_bar(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
 fn render_history_panel(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
     let th = theme.clone();
     let mu = th.muted_foreground;
+    let border = th.border;
+    let fg = th.foreground;
 
     let session_rows: Vec<AnyElement> = data
         .history_sessions
@@ -487,6 +504,7 @@ fn render_history_panel(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
                         .child(
                             txt(px(12.))
                                 .font_weight(gpui::FontWeight::MEDIUM)
+                                .text_color(fg)
                                 .child(title),
                         )
                         .child(txt(px(10.)).text_color(mu).child(time)),
@@ -496,10 +514,11 @@ fn render_history_panel(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
         .collect();
 
     v_flex()
-        .gap(px(6.))
-        .p(px(12.))
+        .gap(px(8.))
+        .px(px(12.))
+        .py(px(8.))
         .border_b_1()
-        .border_color(theme.border)
+        .border_color(border)
         .child(
             h_flex()
                 .justify_between()
@@ -507,13 +526,15 @@ fn render_history_panel(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
                 .child(
                     txt(px(13.))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(fg)
                         .child(t("ai.history.title")),
                 )
                 .child(
                     Button::new("ai-history-close")
                         .ghost()
                         .label("✕")
-                        .w(px(20.))
+                        .compact()
+                        .w(px(18.))
                         .h(px(16.)),
                 ),
         )
@@ -526,6 +547,8 @@ fn render_history_panel(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
 fn render_agent_monitor(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
     let th = theme.clone();
     let mu = th.muted_foreground;
+    let border = th.border;
+    let fg = th.foreground;
 
     let entries: Vec<AnyElement> = data
         .agent_statuses
@@ -540,9 +563,9 @@ fn render_agent_monitor(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
                 _ => "○",
             };
             let status_color = match entry.status.as_str() {
-                "working" => gpui::hsla(0.33, 0.7, 0.5, 1.0), // green
-                "blocked" => gpui::hsla(0.08, 0.9, 0.55, 1.0), // orange
-                "done" => gpui::hsla(0.0, 0.0, 0.5, 1.0),      // gray
+                "working" => gpui::hsla(0.33, 0.7, 0.5, 1.0),
+                "blocked" => gpui::hsla(0.08, 0.9, 0.55, 1.0),
+                "done" => gpui::hsla(0.0, 0.0, 0.5, 1.0),
                 _ => gpui::hsla(0.0, 0.0, 0.4, 1.0),
             };
 
@@ -568,6 +591,7 @@ fn render_agent_monitor(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
                                 .child(
                                     txt(px(11.))
                                         .font_weight(gpui::FontWeight::MEDIUM)
+                                        .text_color(fg)
                                         .child(agent_name),
                                 )
                                 .child(txt(px(10.)).text_color(mu).child(entry.status.clone())),
@@ -578,10 +602,11 @@ fn render_agent_monitor(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
         .collect();
 
     v_flex()
-        .gap(px(6.))
-        .p(px(12.))
+        .gap(px(8.))
+        .px(px(12.))
+        .py(px(8.))
         .border_b_1()
-        .border_color(theme.border)
+        .border_color(border)
         .child(
             h_flex()
                 .justify_between()
@@ -589,6 +614,7 @@ fn render_agent_monitor(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
                 .child(
                     txt(px(13.))
                         .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(fg)
                         .child(format!(
                             "{} ({})",
                             t("ai.agent.monitor_title"),
@@ -599,7 +625,8 @@ fn render_agent_monitor(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
                     Button::new("ai-monitor-close")
                         .ghost()
                         .label("✕")
-                        .w(px(20.))
+                        .compact()
+                        .w(px(18.))
                         .h(px(16.)),
                 ),
         )
@@ -610,17 +637,23 @@ fn render_agent_monitor(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
 // ── Input area ──────────────────────────────────────────────────────────
 
 fn render_input_area(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
+    let th = theme.clone();
+    let border = th.border;
+
     h_flex()
         .gap(px(8.))
-        .p(px(8.))
+        .px(px(10.))
+        .py(px(8.))
         .border_t_1()
-        .border_color(theme.border)
+        .border_color(border)
         .child(
             gpui::div()
                 .flex_grow(1.0)
                 .child(
                     gpui::div()
                         .text_size(px(13.))
+                        .line_height(px(20.))
+                        .min_h(px(36.))
                         .child(data.input_value.clone()),
                 ),
         )
@@ -632,7 +665,7 @@ fn render_input_area(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
                 } else {
                     t("ai.chat.send")
                 })
-                .w(px(60.))
+                .compact()
                 .primary(),
         )
         .into_any_element()
@@ -643,6 +676,9 @@ fn render_input_area(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
 fn render_bottom_bar(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
     let th = theme.clone();
     let mu = th.muted_foreground;
+    let border = th.border;
+    let bg = th.background;
+    let _fg = th.foreground;
     let active_count = data.count_active_agents();
 
     let agent_btn_label = if active_count > 0 {
@@ -657,7 +693,8 @@ fn render_bottom_bar(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
         .px(px(8.))
         .py(px(4.))
         .border_t_1()
-        .border_color(theme.border)
+        .border_color(border)
+        .bg(bg)
         .child(
             h_flex()
                 .gap(px(4.))
@@ -665,24 +702,28 @@ fn render_bottom_bar(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
                     Button::new("ai-chat-new")
                         .ghost()
                         .label(t("ai.chat.new_session"))
+                        .compact()
                         .w(px(72.)),
                 )
                 .child(
                     Button::new("ai-chat-history")
                         .ghost()
                         .label(t("ai.chat.history"))
+                        .compact()
                         .w(px(72.)),
                 )
                 .child(
                     Button::new("ai-chat-agents")
                         .ghost()
                         .label(agent_btn_label)
+                        .compact()
                         .w(px(96.)),
                 )
                 .child(
                     Button::new("ai-chat-settings")
                         .ghost()
                         .label(t("ai.chat.settings"))
+                        .compact()
                         .w(px(48.)),
                 ),
         )
@@ -703,6 +744,8 @@ fn render_bottom_bar(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
 fn render_agent_block(block: &AgentBlock, theme: &Theme) -> AnyElement {
     let th = theme.clone();
     let mu = th.muted_foreground;
+    let fg = th.foreground;
+    let _bg = th.background;
 
     let status_color = match block.status.as_str() {
         "completed" => gpui::hsla(0.33, 0.7, 0.5, 1.0),
@@ -717,7 +760,6 @@ fn render_agent_block(block: &AgentBlock, theme: &Theme) -> AnyElement {
         _ => "○",
     };
 
-    // Summary line (always shown)
     let summary = if let Some(ref s) = block.summary {
         s.clone()
     } else {
@@ -728,10 +770,12 @@ fn render_agent_block(block: &AgentBlock, theme: &Theme) -> AnyElement {
         .justify_between()
         .items_center()
         .gap(px(6.))
-        .p(px(8.))
+        .px(px(10.))
+        .py(px(6.))
         .rounded_t_md()
-        .bg(theme.muted_foreground.opacity(0.1))
+        .bg(gpui::rgba(0xFFFFFF08))
         .cursor_pointer()
+        .hover(|st| st.bg(gpui::rgba(0xFFFFFF12)))
         .child(
             h_flex()
                 .gap(px(6.))
@@ -739,6 +783,7 @@ fn render_agent_block(block: &AgentBlock, theme: &Theme) -> AnyElement {
                 .child(
                     txt(px(12.))
                         .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(fg)
                         .child(block.agent_name.clone()),
                 )
                 .child(
@@ -757,23 +802,22 @@ fn render_agent_block(block: &AgentBlock, theme: &Theme) -> AnyElement {
                 }),
         );
 
-    // Body (only when expanded)
     let body = if block.is_expanded {
         let output = block.output.clone();
         gpui::div()
             .rounded_b_md()
             .bg(gpui::rgba(0x00000008))
-            .p(px(8.))
+            .p(px(10.))
             .text_size(px(11.))
             .font_family("Lilex")
+            .line_height(px(16.))
             .child(output)
             .into_any_element()
     } else {
-        // Show truncated summary
         gpui::div()
             .rounded_b_md()
             .bg(gpui::rgba(0x00000008))
-            .p(px(8.))
+            .p(px(10.))
             .child(
                 txt(px(11.))
                     .text_color(mu)
@@ -784,6 +828,10 @@ fn render_agent_block(block: &AgentBlock, theme: &Theme) -> AnyElement {
 
     v_flex()
         .w_full()
+        .rounded_md()
+        .border_1()
+        .border_color(gpui::rgba(0xFFFFFF10))
+        .overflow_hidden()
         .child(header.into_any_element())
         .child(body)
         .into_any_element()
@@ -792,45 +840,50 @@ fn render_agent_block(block: &AgentBlock, theme: &Theme) -> AnyElement {
 // ── Message rendering ───────────────────────────────────────────────────
 
 fn render_message(msg: &ChatMessage, theme: &Theme) -> AnyElement {
+    let th = theme.clone();
+    let fg = th.foreground;
+    let _mu = th.muted_foreground;
     let is_user = msg.role == "user";
     let content = msg.content.clone();
     let time = msg.timestamp.clone();
 
     let bubble = if is_user {
-        // User message — right-aligned, primary color
+        // User message — right-aligned, primary color bg
         h_flex()
             .justify_end()
-            .max_w(px(320.))
+            .max_w(px(300.))
             .child(
                 div()
                     .rounded_lg()
                     .rounded_bl_md()
-                    .bg(theme.primary.opacity(0.2))
+                    .bg(gpui::rgba(0xFFFFFF12))
                     .p(px(10.))
-                    .pr(px(14.))
+                    .pr(px(12.))
                     .child(
                         gpui::div()
                             .text_size(px(13.))
-                            .text_color(theme.foreground)
+                            .text_color(fg)
+                            .line_height(px(18.))
                             .child(content),
                     ),
             )
     } else {
-        // Orchestrator message — left-aligned
+        // Orchestrator message — left-aligned, subtle bg
         h_flex()
             .justify_start()
-            .max_w(px(320.))
+            .max_w(px(300.))
             .child(
                 div()
                     .rounded_lg()
                     .rounded_br_md()
-                    .bg(theme.muted_foreground.opacity(0.08))
+                    .bg(gpui::rgba(0xFFFFFF06))
                     .p(px(10.))
-                    .pr(px(14.))
+                    .pr(px(12.))
                     .child(
                         gpui::div()
                             .text_size(px(13.))
-                            .text_color(theme.foreground)
+                            .text_color(fg)
+                            .line_height(px(18.))
                             .child(content),
                     ),
             )
@@ -841,7 +894,7 @@ fn render_message(msg: &ChatMessage, theme: &Theme) -> AnyElement {
         .child(bubble.into_any_element())
         .child(
             txt(px(9.))
-                .text_color(gpui::rgba(0x888888FF))
+                .text_color(gpui::rgba(0x666666FF))
                 .px(px(4.))
                 .child(time),
         )
@@ -861,7 +914,7 @@ mod tests {
     use super::*;
     use crate::ai::engine::AgentResult;
     use crate::ai::herdr::AgentStatus as HerdrAgentStatus;
-    use crate::ai::session::{ChatMessage, Session};
+    use crate::ai::session::Session;
 
     fn make_block(id: usize, name: &str, status: &str) -> AgentBlock {
         AgentBlock {

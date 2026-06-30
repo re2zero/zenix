@@ -292,56 +292,6 @@ settings:
       title_edit:
         en: "Edit MCP Server"
         zh-CN: "编辑 MCP 服务器"
-  zenix_ai:
-    tab:
-      en: "ZenixAI"
-      zh-CN: "ZenixAI"
-    title:
-      en: "ZenixAI Orchestration"
-      zh-CN: "ZenixAI 编排"
-    description:
-      en: "Configure the AI provider and model used by the AI orchestrator sidebar."
-      zh-CN: "配置 AI 编排侧边栏使用的 AI 提供商和模型。"
-    provider:
-      label:
-        en: "Provider"
-        zh-CN: "提供商"
-      hint:
-        en: "Select an API provider..."
-        zh-CN: "选择 API 提供商…"
-      no_providers:
-        en: "No API providers configured — add one in the API tab first."
-        zh-CN: "未配置 API 提供商 — 请先在 API 标签页中添加。"
-    model:
-      label:
-        en: "Model"
-        zh-CN: "模型"
-      hint:
-        en: "Select or enter a model name..."
-        zh-CN: "选择或输入模型名称…"
-      no_models:
-        en: "No models available — select a provider to see its models."
-        zh-CN: "暂无可用模型 — 请选择提供商以查看其模型。"
-      custom_hint:
-        en: "Enter a custom model name…"
-        zh-CN: "输入自定义模型名称…"
-    thinking:
-      label:
-        en: "Thinking Level"
-        zh-CN: "思考度"
-    save:
-      en: "Save"
-      zh-CN: "保存"
-    reset:
-      en: "Reset to Defaults"
-      zh-CN: "恢复默认"
-    status:
-      saved:
-        en: "Saved"
-        zh-CN: "已保存"
-      reset:
-        en: "Reset to defaults"
-        zh-CN: "已恢复默认值"
   api:
     title:
       en: "API Providers"
