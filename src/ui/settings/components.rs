@@ -1454,6 +1454,7 @@ pub fn api_provider_form(
     form: &super::ApiProviderFormState,
     on_action: &SharedActionCb<ApiProviderAction>,
 ) -> impl IntoElement {
+    let is_locked = form.locked_name.clone();
     let cancel_cb = {
         let on = on_action.clone();
         move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
@@ -1537,46 +1538,75 @@ pub fn api_provider_form(
                         })),
                 ),
         )
-        .child(
-            h_flex()
-                .gap(px(8.))
-                .items_center()
-                .child(
-                    txt(px(12.))
-                        .w(px(100.))
-                        .child(t("settings.api.form.suffix")),
-                )
-                .child(
-                    h_flex()
-                        .gap(px(4.))
-                        .children(form.format.suffix_options().iter().map(|suffix| {
-                            let s = suffix.to_string();
-                            let on = on_action.clone();
-                            Button::new(format!("suffix-{}", s.replace('/', "-")))
-                                .cursor_pointer()
-                                .ghost()
-                                .compact()
-                                .label(s.clone())
-                                .on_click(
-                                    move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
-                                        on(
-                                            ApiProviderAction::SetSuffix { suffix: s.clone() },
-                                            w,
-                                            a,
-                                        );
-                                    },
-                                )
-                        })),
-                ),
-        )
+        // Suffix field: show as locked text if a built-in preset is active
+        .child({
+            let label = t("settings.api.form.suffix");
+            if is_locked.is_some() {
+                h_flex()
+                    .gap(px(8.))
+                    .items_center()
+                    .child(txt(px(12.)).w(px(100.)).child(label.to_string()))
+                    .child(
+                        h_flex()
+                            .gap(px(4.))
+                            .items_center()
+                            .child(txt(px(12.)).child("/v1/chat/completions".to_string()))
+                            .child(txt(px(10.)).text_color(gpui::rgba(0x888888FF)).child("🔒")),
+                    )
+                    .into_any_element()
+            } else {
+                h_flex()
+                    .gap(px(8.))
+                    .items_center()
+                    .child(txt(px(12.)).w(px(100.)).child(label.to_string()))
+                    .child(
+                        h_flex()
+                            .gap(px(4.))
+                            .children(form.format.suffix_options().iter().map(|suffix| {
+                                let s = suffix.to_string();
+                                let on = on_action.clone();
+                                Button::new(format!("suffix-{}", s.replace('/', "-")))
+                                    .cursor_pointer()
+                                    .ghost()
+                                    .compact()
+                                    .label(s.clone())
+                                    .on_click(
+                                        move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                                            on(
+                                                ApiProviderAction::SetSuffix { suffix: s.clone() },
+                                                w, a,
+                                            );
+                                        },
+                                    )
+                            })),
+                    )
+                    .into_any_element()
+            }
+        })
         .child(form_field(
             t("settings.api.form.custom"),
             form.url_suffix.as_ref(),
         ))
-        .child(form_field(
-            t("settings.api.form.base_url"),
-            form.base_url.as_ref(),
-        ))
+        // Base URL field: show as locked text if a built-in preset is active
+        .child({
+            let label = t("settings.api.form.base_url");
+            if is_locked.is_some() {
+                h_flex()
+                    .gap(px(8.))
+                    .items_center()
+                    .child(txt(px(12.)).w(px(100.)).child(label.to_string()))
+                    .child(
+                        h_flex()
+                            .gap(px(4.))
+                            .items_center()
+                            .child(txt(px(12.)).child("https://ai.zenix.dev/v1".to_string()))
+                            .child(txt(px(10.)).text_color(gpui::rgba(0x888888FF)).child("🔒")),
+                    )
+                    .into_any_element()
+            } else {
+                form_field(label, form.base_url.as_ref()).into_any_element()
+            }
+        })
         .child(form_field(
             t("settings.api.form.api_key"),
             form.api_key.as_ref(),

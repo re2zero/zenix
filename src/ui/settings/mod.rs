@@ -195,6 +195,10 @@ pub struct ApiProviderFormState {
     pub available_models: Vec<String>,
     pub selected_model: String,
     pub model_search: String,
+    /// If set, the name field and URL fields (base_url, url_suffix) are locked
+    /// to the preset values and cannot be edited by the user.
+    /// This is used for built-in presets like "Zenix" where the endpoint is fixed.
+    pub locked_name: Option<String>,
 }
 
 /// Sub-tab for the Extensions tab.

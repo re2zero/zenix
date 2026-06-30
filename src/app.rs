@@ -1867,6 +1867,7 @@ impl Render for ZenixApp {
                                 available_models: vec![],
                                 selected_model: String::new(),
                                 model_search: String::new(),
+                                locked_name: None,
                             });
                             cx.notify();
                         }
@@ -2002,6 +2003,13 @@ impl Render for ZenixApp {
                                         state.set_value(preset.suffix, w, cx);
                                     });
                                 }
+                                // Lock name + URL fields for built-in presets (e.g. Zenix)
+                                // so users can only fill in the API key.
+                                if preset.name == "Zenix" {
+                                    form.locked_name = Some("Zenix".to_string());
+                                } else {
+                                    form.locked_name = None;
+                                }
                             }
                             cx.notify();
                         }
@@ -2044,6 +2052,7 @@ impl Render for ZenixApp {
                                     available_models: vec![],
                                     selected_model: cfg.model.clone(),
                                     model_search: String::new(),
+                                    locked_name: None,
                                 });
                             }
                             cx.notify();
