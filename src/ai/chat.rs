@@ -342,12 +342,6 @@ fn render_config_bar(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
     let th = theme.clone();
     let mu = th.muted_foreground;
 
-    let _workspace_options: Vec<(Option<&str>, &str)> = data
-        .workspaces
-        .iter()
-        .map(|w| (Some(w.id.as_str()), w.label.as_str()))
-        .collect();
-
     let model_btn = txt(px(11.))
         .text_color(mu)
         .bg(theme.muted_foreground.opacity(0.08))

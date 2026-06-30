@@ -67,6 +67,16 @@ impl ThinkingLevel {
         }
     }
 
+    /// Display label for UI rendering (e.g. "Medium", not "medium").
+    pub fn display_label(&self) -> &'static str {
+        match self {
+            ThinkingLevel::Low => "Low",
+            ThinkingLevel::Medium => "Medium",
+            ThinkingLevel::High => "High",
+            ThinkingLevel::XHigh => "X-High",
+        }
+    }
+
     pub fn from_str(s: &str) -> Option<ThinkingLevel> {
         match s {
             "low" => Some(ThinkingLevel::Low),
@@ -507,9 +517,18 @@ pub fn load_all() -> Vec<ApiProviderConfig> {
     }
     let content = match std::fs::read_to_string(&path) {
         Ok(c) => c,
-        Err(_) => return vec![],
+        Err(e) => {
+            tracing::warn!("failed to read api-providers config: {e}");
+            return vec![];
+        }
     };
-    serde_json::from_str(&content).unwrap_or_default()
+    match serde_json::from_str(&content) {
+        Ok(providers) => providers,
+        Err(e) => {
+            tracing::warn!("failed to parse api-providers config: {e}");
+            vec![]
+        }
+    }
 }
 
 /// Save all API providers to disk.

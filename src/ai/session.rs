@@ -430,7 +430,7 @@ fn sanitize_fts_query(query: &str) -> String {
         .map(|w| {
             let cleaned: String = w
                 .chars()
-                .filter(|c| c.is_alphanumeric() || c.is_whitespace() || *c == '_')
+                .filter(|c| c.is_alphanumeric() || *c == '_')
                 .collect();
             if cleaned.is_empty() {
                 "\"\"".to_string()

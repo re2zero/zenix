@@ -159,6 +159,35 @@ struct SseDelta {
     role: Option<String>,
 }
 
+/// Parse an Anthropic SSE event line into text content or a done marker.
+///
+/// Anthropic's `/v1/messages` SSE stream emits events like:
+///   `data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hello"}}`
+/// where `delta.text` holds the text content (NOT nested under `delta.text_delta.text`).
+/// Terminated by:
+///   `data: {"type":"message_stop"}`
+///
+/// Returns `Some("text")` for text deltas, `Some("__DONE__")` for message_stop,
+/// or `None` for non-text events (e.g. content_block_start, ping).
+fn parse_anthropic_sse_event(data: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(data).ok()?;
+    let event_type = value.get("type")?.as_str()?;
+
+    match event_type {
+        "message_stop" => Some("__DONE__".to_string()),
+        "content_block_delta" => {
+            // Anthropic format: delta.text contains the text directly
+            let delta = value.get("delta")?.as_object()?;
+            if let Some(text) = delta.get("text")?.as_str() {
+                Some(text.to_string())
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 impl OrchestratorEngine {
     /// Create a new engine from an API provider configuration.
     ///
@@ -248,7 +277,9 @@ impl OrchestratorEngine {
                 )));
             }
 
-            // Parse SSE stream line-by-line
+            // Parse SSE stream line-by-line.
+            // Supports both OpenAI format (choices[].delta.content, [DONE])
+            // and Anthropic format (type: "content_block_delta", text_delta.text, message_stop).
             let mut stream = resp.bytes_stream();
             let mut buffer = String::new();
             let mut done = false;
@@ -271,7 +302,7 @@ impl OrchestratorEngine {
                                 buffer.clear();
                                 continue;
                             }
-                            // Try to parse as SSE JSON
+                            // Try OpenAI format first (choices[].delta.content)
                             if let Ok(sse_chunk) =
                                 serde_json::from_str::<SseChunk>(data)
                             {
@@ -283,6 +314,14 @@ impl OrchestratorEngine {
                                             }
                                         }
                                     }
+                                }
+                            } else if let Some(text) =
+                                parse_anthropic_sse_event(data)
+                            {
+                                if text == "__DONE__" {
+                                    done = true;
+                                } else if !text.is_empty() {
+                                    on_event_clone(StreamEvent::Token(text));
                                 }
                             }
                         }
@@ -310,6 +349,12 @@ impl OrchestratorEngine {
                                 }
                             }
                         }
+                    }
+                } else if let Some(text) = parse_anthropic_sse_event(data) {
+                    if text == "__DONE__" {
+                        done = true;
+                    } else if !text.is_empty() {
+                        on_event_clone(StreamEvent::Token(text));
                     }
                 }
             }
@@ -1066,5 +1111,33 @@ expires before the access token refresh completes. Here's a suggested fix...
     fn test_constants() {
         assert_eq!(DEFAULT_AGENT_TIMEOUT_MS, 300_000);
         assert_eq!(AGENT_DONE_PATTERN, "[AGENT_DONE]");
+    }
+
+    #[test]
+    fn test_parse_anthropic_text_delta() {
+        let data = r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"hello world"}}"#;
+        assert_eq!(parse_anthropic_sse_event(data), Some("hello world".to_string()));
+    }
+
+    #[test]
+    fn test_parse_anthropic_message_stop() {
+        let data = r#"{"type":"message_stop"}"#;
+        assert_eq!(parse_anthropic_sse_event(data), Some("__DONE__".to_string()));
+    }
+
+    #[test]
+    fn test_parse_anthropic_content_block_start_ignored() {
+        let data = r#"{"type":"content_block_start","index":0}"#;
+        assert_eq!(parse_anthropic_sse_event(data), None);
+    }
+
+    #[test]
+    fn test_parse_anthropic_invalid_json() {
+        assert_eq!(parse_anthropic_sse_event("not json"), None);
+    }
+
+    #[test]
+    fn test_parse_anthropic_empty_data() {
+        assert_eq!(parse_anthropic_sse_event(""), None);
     }
 }
