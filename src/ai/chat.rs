@@ -161,7 +161,15 @@ impl Default for AiChatPanelData {
 
 impl AiChatPanelData {
     pub fn new() -> Self {
-        Self::default()
+        let mut data = Self::default();
+        // Auto-detect and load zenix provider config if available.
+        // Model fetching is handled in app.rs where cx.spawn() is available.
+        if let Some(zp) = crate::api_provider::zenix_provider() {
+            data.selected_provider_id = zp.name.clone();
+            data.selected_model = zp.model.clone();
+            data.thinking_level = zp.thinking_level.display_label().to_string();
+        }
+        data
     }
 
     /// Add an agent block from an agent result.

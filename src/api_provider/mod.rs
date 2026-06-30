@@ -183,6 +183,12 @@ impl ApiFormat {
                     suffix: "/v1/chat/completions",
                     format: ApiFormat::OpenAI,
                 },
+                ProviderPreset {
+                    name: "Zenix",
+                    base_url: "https://ai.zenix.dev/v1",
+                    suffix: "/v1/chat/completions",
+                    format: ApiFormat::OpenAI,
+                },
             ],
             ApiFormat::Anthropic => vec![ProviderPreset {
                 name: "Anthropic",
@@ -501,6 +507,21 @@ pub fn unsync_from_unused_agents(provider_name: &str) -> Vec<(String, Result<(),
     }
 
     results
+}
+
+// ── Zenix Provider ────────────────────────────────────────────────────
+
+/// Return the first configured "Zenix" provider, if any.
+///
+/// A Zenix provider is identified by name == "Zenix" (case-sensitive).
+/// If multiple Zenix providers exist, the first one is returned.
+pub fn zenix_provider() -> Option<ApiProviderConfig> {
+    load_all().into_iter().find(|p| p.name == "Zenix")
+}
+
+/// Return all configured "Zenix" providers.
+pub fn zenix_providers() -> Vec<ApiProviderConfig> {
+    load_all().into_iter().filter(|p| p.name == "Zenix").collect()
 }
 
 // ── Persistence ──────────────────────────────────────────────────────

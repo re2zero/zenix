@@ -1130,6 +1130,36 @@ impl Render for ZenixApp {
             }
             Panel::AiChat => {
                 let data = self.ai_chat_panel.get_or_insert_with(crate::ai::chat::AiChatPanelData::new);
+                // If zenix provider is configured, fetch available models in the background.
+                if data.selected_provider_id == "Zenix" && data.available_models.is_empty() {
+                    if let Some(zp) = crate::api_provider::zenix_provider() {
+                        let provider = zp.clone();
+                        let entity = cx.entity().clone();
+                        cx.spawn(async move |_this, cx| {
+                            let models = std::thread::spawn(move || {
+                                crate::api_provider::fetch_models(&provider)
+                            })
+                            .join()
+                            .unwrap_or_else(|_| Err("thread panic".into()));
+                            if let Ok(list) = models {
+                                let _ = entity.update(cx, |this, cx| {
+                                    if let Some(ref mut data) = this.ai_chat_panel {
+                                        data.available_models = list;
+                                        if data.selected_model.is_empty() {
+                                            data.selected_model = data
+                                                .available_models
+                                                .first()
+                                                .cloned()
+                                                .unwrap_or_default();
+                                        }
+                                    }
+                                    cx.notify();
+                                });
+                            }
+                        })
+                        .detach();
+                    }
+                }
                 Some(crate::ai::chat::render_ai_chat_panel(data, &theme).into_any_element())
             }
             _ => None,
