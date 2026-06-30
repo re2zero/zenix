@@ -802,4 +802,14 @@ mod tests {
             assert!(!agent.is_empty());
         }
     }
+
+    #[test]
+    fn test_zenix_presets_exist() {
+        // Verify that the Zenix preset is included in OpenAI presets.
+        let presets = ApiFormat::OpenAI.presets();
+        let names: Vec<&str> = presets.iter().map(|p| p.name).collect();
+        assert!(names.contains(&"Zenix"), "Zenix preset should exist in OpenAI presets");
+        assert!(names.contains(&"Ollama"), "Ollama preset should exist in OpenAI presets");
+        assert!(names.contains(&"OpenAI"), "OpenAI preset should exist in OpenAI presets");
+    }
 }
