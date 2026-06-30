@@ -144,6 +144,14 @@ fn main() {
         )
         .init();
 
+    // Initialize tokio runtime for async HTTP (reqwest SSE streaming).
+    // This must be done before any async operations that need a tokio context.
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("failed to build tokio runtime");
+    let _guard = rt.enter();
+
     // Ensure config dir exists for socket
     std::fs::create_dir_all(crate::platform::zenix_config_dir()).ok();
 

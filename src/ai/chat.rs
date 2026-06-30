@@ -4,8 +4,7 @@
 //! sidebar area. Users type messages, the orchestrator engine streams replies.
 
 use gpui::{
-    AnyElement, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _,
-    Window, div, px,
+    AnyElement, IntoElement, ParentElement as _, Styled as _, div, px,
 };
 use gpui_component::{
     Theme, button::{Button, ButtonVariants as _}, h_flex, scroll::ScrollableElement as _, v_flex,
@@ -16,9 +15,6 @@ use crate::i18n::t;
 
 /// Width of the AI chat panel (wider than SystemInfo for chat readability).
 pub const AI_PANEL_WIDTH: f32 = 400.0;
-
-/// Maximum number of messages kept in the local display buffer.
-const MAX_DISPLAY_MESSAGES: usize = 200;
 
 /// AI chat panel data (state only, no GPUI rendering logic).
 ///
@@ -40,29 +36,6 @@ impl AiChatPanelData {
             is_streaming: false,
             input_value: String::new(),
         }
-    }
-
-    /// Append a message to the display buffer.
-    pub fn append_message(&mut self, msg: ChatMessage) {
-        self.messages.push(msg);
-        if self.messages.len() > MAX_DISPLAY_MESSAGES {
-            self.messages = self.messages.split_off(self.messages.len() - MAX_DISPLAY_MESSAGES);
-        }
-    }
-
-    /// Clear all messages.
-    pub fn clear_messages(&mut self) {
-        self.messages.clear();
-    }
-
-    /// Set streaming state.
-    pub fn set_streaming(&mut self, streaming: bool) {
-        self.is_streaming = streaming;
-    }
-
-    /// Set input text.
-    pub fn set_input(&mut self, value: String) {
-        self.input_value = value;
     }
 }
 

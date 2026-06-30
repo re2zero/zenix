@@ -5,8 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::api_provider::{ApiProviderConfig, ThinkingLevel};
-use crate::config::ConfigFile;
+use crate::api_provider::ThinkingLevel;
 
 /// 编排器 AI 的配置（存储在 ConfigFile 的 zenix_ai 字段中）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,14 +28,4 @@ impl Default for ZenixAIConfig {
     }
 }
 
-/// 获取当前编排器配置的 ApiProviderConfig 实例。
-pub fn get_orchestrator_provider(config: &ConfigFile) -> Option<ApiProviderConfig> {
-    let ai_config = config.zenix_ai.as_ref()?;
-    let providers = crate::api_provider::load_all();
-    providers.into_iter().find(|p| p.name == ai_config.provider_id)
-}
 
-/// 获取所有可用的 API Provider 列表（供 UI 下拉使用）。
-pub fn get_available_providers() -> Vec<ApiProviderConfig> {
-    crate::api_provider::load_all()
-}
