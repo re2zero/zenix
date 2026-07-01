@@ -571,6 +571,12 @@ skills:
 # AI Orchestrator — multi-agent chat panel
 # ═══════════════════════════════════════════════════════════════════════
 ai:
+  config_empty:
+    en: "Please configure an API Provider first."
+    zh-CN: "请先配置一个 API 提供商。"
+  config_empty_hint:
+    en: "Go to Settings → Extensions → API Providers to add one."
+    zh-CN: "前往「设置 → 扩展 → API 提供商」添加一个。"
   chat:
     new_chat:
       en: "New Chat"

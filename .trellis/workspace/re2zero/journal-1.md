@@ -367,3 +367,16 @@ API 编辑时，编辑表单显示在卡片上方/下方，而不是在原有卡
 ### 提交
 - Commit: `c3fb805` (squash 3 commits)
 - 信息: `fix(settings): resolve API and MCP edit card issues`
+
+## 2026-06-30 ZenixAI 任务完成总结
+
+### 本次迭代完成
+- Zenix 内置 API Provider 预设（OpenAI 格式，baseURL 锁定为 `https://ai.zenix.dev/v1`）
+- AI 聊天面板自动检测 Zenix provider 并拉取可用模型
+- `locked_name` 机制：Zenix preset 选中后 name/base_url/suffix 只读，用户只需填 API Key
+
+### 记录为 TODO（待后续讨论/实现）
+1. AI 会话界面需要完整重构（当前为迭代式修补）
+2. AI 会话 API 配置隔离（无配置时 AI 不可用）
+3. Rust Agent CLI 开源库调查
+4. 编排功能 Tool 化（MCP Tool vs 硬编码调度）

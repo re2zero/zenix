@@ -6,21 +6,32 @@
 //! and dispatched agents show as inline collapsible blocks.
 
 use gpui::{
-    AnyElement, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _, div, px,
+    AnyElement, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _,
+    div, px,
 };
 use gpui_component::{
-    Theme, button::{Button, ButtonVariants as _}, h_flex, scroll::ScrollableElement as _, v_flex,
+    Theme, button::{Button, ButtonVariants as _}, h_flex, input::{Input, InputState},
+    scroll::ScrollableElement as _, v_flex,
 };
 
 use crate::ai::engine::AgentResult;
 use crate::ai::herdr::AgentStatus as HerdrAgentStatus;
+use crate::ai::markdown;
 use crate::ai::session::{ChatMessage, SearchHit, Session};
+use crate::api_provider::ThinkingLevel;
 use crate::i18n::t;
 
 /// Width of the AI chat panel.
 pub const AI_PANEL_WIDTH: f32 = 400.0;
 
 // ── Data types ─────────────────────────────────────────────────────────
+
+/// Target for config bar dropdown menus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigDropdownTarget {
+    Model,
+    Workspace,
+}
 
 /// A collapsible agent output block rendered inline in the chat stream.
 #[derive(Debug, Clone)]
@@ -33,6 +44,10 @@ pub struct AgentBlock {
     pub is_expanded: bool,
     /// Unique key to track collapse state across renders.
     pub block_id: usize,
+    /// Whether the agent is currently running.
+    pub is_running: bool,
+    /// Accumulated output history for real-time updates.
+    pub output_history: String,
 }
 
 /// A single entry in the agent monitoring floating layer.
@@ -72,7 +87,7 @@ pub struct AiChatPanelData {
     pub messages: Vec<ChatMessage>,
     /// Whether the orchestrator is currently streaming a reply.
     pub is_streaming: bool,
-    /// Input text value.
+    /// Input text value (synced with the InputState entity).
     pub input_value: String,
 
     // ── Session management ────────────────────────────────────────
@@ -90,12 +105,16 @@ pub struct AiChatPanelData {
     pub selected_model: String,
     /// Available models for the current provider.
     pub available_models: Vec<String>,
-    /// Selected thinking level label.
-    pub thinking_level: String,
+    /// Selected thinking level.
+    pub thinking_level: ThinkingLevel,
     /// Selected workspace ID (herdr workspace).
     pub selected_workspace: Option<String>,
     /// Available workspaces.
     pub workspaces: Vec<WorkspaceOption>,
+
+    // ── Dropdown state ────────────────────────────────────────────
+    /// Currently expanded dropdown target (if any).
+    pub config_dropdown: Option<ConfigDropdownTarget>,
 
     // ── History panel ─────────────────────────────────────────────
     /// Whether the history sidebar is shown.
@@ -143,9 +162,10 @@ impl Default for AiChatPanelData {
             selected_provider_id: String::new(),
             selected_model: String::new(),
             available_models: Vec::new(),
-            thinking_level: "Medium".to_string(),
+            thinking_level: ThinkingLevel::default(),
             selected_workspace: None,
             workspaces: Vec::new(),
+            config_dropdown: None,
             show_history: false,
             history_sessions: Vec::new(),
             agent_blocks: Vec::new(),
@@ -167,7 +187,7 @@ impl AiChatPanelData {
         if let Some(zp) = crate::api_provider::zenix_provider() {
             data.selected_provider_id = zp.name.clone();
             data.selected_model = zp.model.clone();
-            data.thinking_level = zp.thinking_level.display_label().to_string();
+            data.thinking_level = zp.thinking_level;
         }
         data
     }
@@ -184,7 +204,17 @@ impl AiChatPanelData {
             pane_id: result.pane_id.clone(),
             is_expanded: false,
             block_id: id,
+            is_running: false,
+            output_history: String::new(),
         });
+    }
+
+    /// Mark an agent block as running.
+    pub fn mark_agent_running(&mut self, block_id: usize) {
+        if let Some(block) = self.agent_blocks.iter_mut().find(|b| b.block_id == block_id) {
+            block.is_running = true;
+            block.status = "running".to_string();
+        }
     }
 
     /// Toggle the expanded state of an agent block by ID.
@@ -201,14 +231,29 @@ impl AiChatPanelData {
             .filter(|a| a.status != "done" && a.status != "idle")
             .count()
     }
+
+    /// Cycle the thinking level: Low → Medium → High → X-High → Low.
+    pub fn cycle_thinking_level(&mut self) {
+        self.thinking_level = match self.thinking_level {
+            ThinkingLevel::Low => ThinkingLevel::Medium,
+            ThinkingLevel::Medium => ThinkingLevel::High,
+            ThinkingLevel::High => ThinkingLevel::XHigh,
+            ThinkingLevel::XHigh => ThinkingLevel::Low,
+        };
+    }
 }
 
 // ── Render ──────────────────────────────────────────────────────────────
 
 /// Render the AI chat panel as a GPUI element.
+///
+/// The `input_entity` parameter provides the shared `InputState` entity managed
+/// by `ZenixApp` (for subscription to `PressEnter` events). `None` renders a
+/// placeholder-only input bar.
 pub fn render_ai_chat_panel(
     data: &AiChatPanelData,
     theme: &Theme,
+    input_entity: Option<&Entity<InputState>>,
 ) -> impl IntoElement {
     let th = theme.clone();
     let mu = th.muted_foreground;
@@ -238,6 +283,11 @@ pub fn render_ai_chat_panel(
     // ── Config bar ──────────────────────────────────────────────────
     if data.config_bar_visible {
         panel = panel.child(render_config_bar(data, theme));
+    }
+
+    // ── Dropdown overlay ────────────────────────────────────────────
+    if let Some(target) = data.config_dropdown {
+        panel = panel.child(render_dropdown(target, data, theme));
     }
 
     // ── Search bar ──────────────────────────────────────────────────
@@ -300,7 +350,7 @@ pub fn render_ai_chat_panel(
     }
 
     // ── Input area ──────────────────────────────────────────────────
-    panel = panel.child(render_input_area(data, theme));
+    panel = panel.child(render_input_area(data, theme, input_entity));
 
     // ── Bottom bar ──────────────────────────────────────────────────
     panel = panel.child(render_bottom_bar(data, theme));
@@ -312,7 +362,6 @@ pub fn render_ai_chat_panel(
 
 fn render_header(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
     let th = theme.clone();
-    let _mu = th.muted_foreground;
     let fg = th.foreground;
     let border = th.border;
 
@@ -367,6 +416,7 @@ fn render_config_bar(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
     let mu = th.muted_foreground;
     let _bg = th.background;
     let border = th.border;
+    let _fg = th.foreground;
 
     let pill = |text: &str| -> AnyElement {
         txt(px(11.))
@@ -409,10 +459,137 @@ fn render_config_bar(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
         .items_center()
         .child(pill(&data.selected_model))
         .child(sep1)
-        .child(pill(&data.thinking_level))
+        .child(pill(data.thinking_level.display_label()))
         .child(sep2)
         .child(pill(&ws_label))
         .into_any_element()
+}
+
+// ── Dropdown ────────────────────────────────────────────────────────────
+
+fn render_dropdown(
+    target: ConfigDropdownTarget,
+    data: &AiChatPanelData,
+    theme: &Theme,
+) -> AnyElement {
+    let th = theme.clone();
+    let mu = th.muted_foreground;
+    let fg = th.foreground;
+    let border = th.border;
+    let _bg = th.background;
+
+    match target {
+        ConfigDropdownTarget::Model => {
+            // Group models by provider if available
+            let model_items: Vec<AnyElement> = data
+                .available_models
+                .iter()
+                .map(|model| {
+                    let is_selected = model == &data.selected_model;
+                    let prefix = if is_selected { "✓ " } else { "  " };
+                    let style = if is_selected { fg } else { mu };
+                    h_flex()
+                        .gap(px(6.))
+                        .p(px(6.))
+                        .rounded_sm()
+                        .hover(|st| st.bg(gpui::rgba(0xFFFFFF08)))
+                        .cursor_pointer()
+                        .child(txt(px(11.)).text_color(style).child(format!("{prefix}{model}")))
+                        .into_any_element()
+                })
+                .collect();
+
+            v_flex()
+                .gap(px(4.))
+                .px(px(12.))
+                .py(px(6.))
+                .border_b_1()
+                .border_color(border)
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .items_center()
+                        .child(
+                            txt(px(12.))
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(fg)
+                                .child(t("ai.config.select_model")),
+                        )
+                        .child(
+                            Button::new("ai-dropdown-close")
+                                .ghost()
+                                .label("✕")
+                                .compact()
+                                .w(px(18.))
+                                .h(px(16.)),
+                        ),
+                )
+                .children(model_items)
+                .into_any_element()
+        }
+        ConfigDropdownTarget::Workspace => {
+            let ws_items: Vec<AnyElement> = data
+                .workspaces
+                .iter()
+                .map(|ws| {
+                    let is_selected = data.selected_workspace.as_deref() == Some(ws.id.as_str());
+                    let prefix = if is_selected { "✓ " } else { "  " };
+                    h_flex()
+                        .justify_between()
+                        .items_center()
+                        .gap(px(8.))
+                        .p(px(6.))
+                        .rounded_sm()
+                        .hover(|st| st.bg(gpui::rgba(0xFFFFFF08)))
+                        .cursor_pointer()
+                        .child(
+                            txt(px(11.))
+                                .text_color(mu)
+                                .child(format!("{prefix}{}", ws.label)),
+                        )
+                        .into_any_element()
+                })
+                .collect();
+
+            let empty_msg = if data.workspaces.is_empty() {
+                txt(px(11.))
+                    .text_color(mu)
+                    .child(t("ai.config.no_workspaces"))
+                    .into_any_element()
+            } else {
+                div().into_any_element()
+            };
+
+            v_flex()
+                .gap(px(4.))
+                .px(px(12.))
+                .py(px(6.))
+                .border_b_1()
+                .border_color(border)
+                .child(
+                    h_flex()
+                        .justify_between()
+                        .items_center()
+                        .child(
+                            txt(px(12.))
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(fg)
+                                .child(t("ai.config.select_workspace")),
+                        )
+                        .child(
+                            Button::new("ai-dropdown-close")
+                                .ghost()
+                                .label("✕")
+                                .compact()
+                                .w(px(18.))
+                                .h(px(16.)),
+                        ),
+                )
+                .children(ws_items)
+                .child(empty_msg)
+                .into_any_element()
+        }
+    }
 }
 
 // ── Search bar ──────────────────────────────────────────────────────────
@@ -644,9 +821,40 @@ fn render_agent_monitor(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
 
 // ── Input area ──────────────────────────────────────────────────────────
 
-fn render_input_area(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
+fn render_input_area(
+    data: &AiChatPanelData,
+    theme: &Theme,
+    input_entity: Option<&Entity<InputState>>,
+) -> AnyElement {
     let th = theme.clone();
     let border = th.border;
+
+    // Render the InputState if available, otherwise a plain text area
+    let input_child: AnyElement = match input_entity {
+        Some(entity) => {
+            let input = Input::new(entity).into_any_element();
+            h_flex()
+                .flex_grow(1.0)
+                .child(input)
+                .into_any_element()
+        }
+        None => h_flex()
+            .flex_grow(1.0)
+            .child(
+                div()
+                    .text_size(px(13.))
+                    .line_height(px(20.))
+                    .min_h(px(36.))
+                    .child(data.input_value.clone()),
+            )
+            .into_any_element(),
+    };
+
+    let send_label = if data.is_streaming {
+        t("ai.chat.stop")
+    } else {
+        t("ai.chat.send")
+    };
 
     h_flex()
         .gap(px(8.))
@@ -654,25 +862,11 @@ fn render_input_area(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
         .py(px(8.))
         .border_t_1()
         .border_color(border)
-        .child(
-            gpui::div()
-                .flex_grow(1.0)
-                .child(
-                    gpui::div()
-                        .text_size(px(13.))
-                        .line_height(px(20.))
-                        .min_h(px(36.))
-                        .child(data.input_value.clone()),
-                ),
-        )
+        .child(input_child)
         .child(
             Button::new("ai-chat-send")
                 .ghost()
-                .label(if data.is_streaming {
-                    t("ai.chat.stop")
-                } else {
-                    t("ai.chat.send")
-                })
+                .label(send_label)
                 .compact()
                 .primary(),
         )
@@ -758,6 +952,7 @@ fn render_agent_block(block: &AgentBlock, theme: &Theme) -> AnyElement {
     let status_color = match block.status.as_str() {
         "completed" => gpui::hsla(0.33, 0.7, 0.5, 1.0),
         "failed" => gpui::hsla(0.0, 0.8, 0.55, 1.0),
+        "running" => gpui::hsla(0.55, 0.8, 0.6, 1.0),
         _ => gpui::hsla(0.0, 0.0, 0.5, 1.0),
     };
 
@@ -768,8 +963,16 @@ fn render_agent_block(block: &AgentBlock, theme: &Theme) -> AnyElement {
         _ => "○",
     };
 
+    let status_text = if block.is_running {
+        format!("{status_icon} running...",)
+    } else {
+        format!("{status_icon} {}", block.status)
+    };
+
     let summary = if let Some(ref s) = block.summary {
         s.clone()
+    } else if block.is_running {
+        format!("{}: running...", block.agent_name)
     } else {
         format!("{}: {}", block.agent_name, block.status)
     };
@@ -797,7 +1000,7 @@ fn render_agent_block(block: &AgentBlock, theme: &Theme) -> AnyElement {
                 .child(
                     txt(px(11.))
                         .text_color(status_color)
-                        .child(format!("{status_icon} {}", block.status)),
+                        .child(status_text),
                 ),
         )
         .child(
@@ -810,8 +1013,24 @@ fn render_agent_block(block: &AgentBlock, theme: &Theme) -> AnyElement {
                 }),
         );
 
-    let body = if block.is_expanded {
-        let output = block.output.clone();
+    // Collect markdown segments from output
+    let output_segments = if block.is_expanded {
+        markdown::render_markdown(&block.output, theme)
+    } else {
+        Vec::new()
+    };
+
+    let body: AnyElement = if block.is_expanded && !output_segments.is_empty() {
+        // Show rendered markdown output
+        v_flex()
+            .rounded_b_md()
+            .bg(gpui::rgba(0x00000008))
+            .p(px(10.))
+            .gap(px(4.))
+            .children(output_segments)
+            .into_any_element()
+    } else if block.is_expanded {
+        // Show raw output
         gpui::div()
             .rounded_b_md()
             .bg(gpui::rgba(0x00000008))
@@ -819,7 +1038,25 @@ fn render_agent_block(block: &AgentBlock, theme: &Theme) -> AnyElement {
             .text_size(px(11.))
             .font_family("Lilex")
             .line_height(px(16.))
-            .child(output)
+            .child(block.output.clone())
+            .into_any_element()
+    } else if block.is_running {
+        // Running — show accumulated output preview
+        let preview: String = block
+            .output_history
+            .lines()
+            .take(5)
+            .collect::<Vec<_>>()
+            .join("\n");
+        gpui::div()
+            .rounded_b_md()
+            .bg(gpui::rgba(0x00000008))
+            .p(px(10.))
+            .child(
+                txt(px(11.))
+                    .text_color(mu)
+                    .child(format!("... {preview}")),
+            )
             .into_any_element()
     } else {
         gpui::div()
@@ -850,10 +1087,25 @@ fn render_agent_block(block: &AgentBlock, theme: &Theme) -> AnyElement {
 fn render_message(msg: &ChatMessage, theme: &Theme) -> AnyElement {
     let th = theme.clone();
     let fg = th.foreground;
-    let _mu = th.muted_foreground;
     let is_user = msg.role == "user";
     let content = msg.content.clone();
     let time = msg.timestamp.clone();
+
+    // Use markdown renderer for user messages, plain text for orchestrator
+    let bubble_content: AnyElement = if is_user {
+        let segments = markdown::render_markdown(&content, theme);
+        v_flex()
+            .gap(px(2.))
+            .children(segments)
+            .into_any_element()
+    } else {
+        div()
+            .text_size(px(13.))
+            .text_color(fg)
+            .line_height(px(18.))
+            .child(content)
+            .into_any_element()
+    };
 
     let bubble = if is_user {
         // User message — right-aligned, primary color bg
@@ -867,13 +1119,7 @@ fn render_message(msg: &ChatMessage, theme: &Theme) -> AnyElement {
                     .bg(gpui::rgba(0xFFFFFF12))
                     .p(px(10.))
                     .pr(px(12.))
-                    .child(
-                        gpui::div()
-                            .text_size(px(13.))
-                            .text_color(fg)
-                            .line_height(px(18.))
-                            .child(content),
-                    ),
+                    .child(bubble_content),
             )
     } else {
         // Orchestrator message — left-aligned, subtle bg
@@ -887,13 +1133,7 @@ fn render_message(msg: &ChatMessage, theme: &Theme) -> AnyElement {
                     .bg(gpui::rgba(0xFFFFFF06))
                     .p(px(10.))
                     .pr(px(12.))
-                    .child(
-                        gpui::div()
-                            .text_size(px(13.))
-                            .text_color(fg)
-                            .line_height(px(18.))
-                            .child(content),
-                    ),
+                    .child(bubble_content),
             )
     };
 
@@ -933,6 +1173,8 @@ mod tests {
             pane_id: format!("pane-{id}"),
             is_expanded: false,
             block_id: id,
+            is_running: false,
+            output_history: String::new(),
         }
     }
 
@@ -966,6 +1208,8 @@ mod tests {
         assert_eq!(block.status, "completed");
         assert!(!block.is_expanded);
         assert_eq!(block.block_id, 0);
+        assert!(!block.is_running);
+        assert!(block.output_history.is_empty());
     }
 
     #[test]
@@ -1030,6 +1274,8 @@ mod tests {
         assert_eq!(data.agent_blocks.len(), 1);
         assert_eq!(data.agent_blocks[0].agent_name, "claude");
         assert_eq!(data.next_block_id, 1);
+        assert!(!data.agent_blocks[0].is_running);
+        assert!(data.agent_blocks[0].output_history.is_empty());
     }
 
     #[test]
@@ -1062,6 +1308,8 @@ mod tests {
         assert!(!data.is_streaming);
         assert!(!data.show_history);
         assert!(!data.show_agents);
+        assert!(data.config_dropdown.is_none());
+        assert_eq!(data.thinking_level, ThinkingLevel::default());
     }
 
     #[test]
@@ -1072,5 +1320,42 @@ mod tests {
         };
         assert_eq!(ws.id, "w-1");
         assert_eq!(ws.label, "My Project");
+    }
+
+    #[test]
+    fn test_cycle_thinking_level() {
+        let mut data = AiChatPanelData::default();
+        data.thinking_level = ThinkingLevel::Low;
+        data.cycle_thinking_level();
+        assert_eq!(data.thinking_level, ThinkingLevel::Medium);
+        data.cycle_thinking_level();
+        assert_eq!(data.thinking_level, ThinkingLevel::High);
+        data.cycle_thinking_level();
+        assert_eq!(data.thinking_level, ThinkingLevel::XHigh);
+        data.cycle_thinking_level();
+        assert_eq!(data.thinking_level, ThinkingLevel::Low);
+    }
+
+    #[test]
+    fn test_mark_agent_running() {
+        let mut data = AiChatPanelData {
+            agent_blocks: vec![make_block(0, "claude", "completed")],
+            next_block_id: 1,
+            ..Default::default()
+        };
+        data.mark_agent_running(0);
+        assert!(data.agent_blocks[0].is_running);
+        assert_eq!(data.agent_blocks[0].status, "running");
+    }
+
+    #[test]
+    fn test_mark_agent_running_nonexistent() {
+        let mut data = AiChatPanelData {
+            agent_blocks: vec![make_block(0, "claude", "completed")],
+            next_block_id: 1,
+            ..Default::default()
+        };
+        data.mark_agent_running(99);
+        assert!(!data.agent_blocks[0].is_running);
     }
 }

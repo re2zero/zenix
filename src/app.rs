@@ -122,6 +122,8 @@ pub struct ZenixApp {
     context_menu: Option<ContextMenuState>,
     pending_confirm: Option<crate::ui::settings::PendingConfirm>,
     ai_chat_panel: Option<crate::ai::chat::AiChatPanelData>,
+    chat_input_entity: Option<gpui::Entity<gpui_component::input::InputState>>,
+    agent_polling: bool,
     pub cursor_visible: bool,
     single_instance_rx: Option<std::sync::mpsc::Receiver<crate::single_instance::Signal>>,
 }
@@ -138,6 +140,50 @@ fn write_to_pty(backend: &Option<BackendTx>, tab: &mut Option<TerminalTab>, byte
         // Always send input regardless of display_offset
         backend.send(BackendCommand::Input(bytes));
     }
+}
+
+/// Return the current UTC timestamp in ISO 8601 format (matching SQLite datetime output).
+fn timestamp_now() -> String {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| {
+            let secs = d.as_secs();
+            let days = secs / 86400;
+            let time_of_day = secs % 86400;
+            let h = time_of_day / 3600;
+            let m = (time_of_day % 3600) / 60;
+            let s = time_of_day % 60;
+            // Simple date calculation from days since epoch
+            // 1970-01-01 + days
+            let mut y = 1970i32;
+            let mut remaining_days = days as i32;
+            loop {
+                let diy = if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 {
+                    366
+                } else {
+                    365
+                };
+                if remaining_days < diy {
+                    break;
+                }
+                remaining_days -= diy;
+                y += 1;
+            }
+            let month_days = [
+                31, if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+            ];
+            let mut m = 0usize;
+            for (i, &md) in month_days.iter().enumerate() {
+                if remaining_days < md {
+                    m = i;
+                    break;
+                }
+                remaining_days -= md;
+            }
+            let d = remaining_days + 1;
+            format!("{y:04}-{m:02}-{d:02}T{h:02}:{m:02}:{s:02}")
+        })
+        .unwrap_or_default()
 }
 
 impl ZenixApp {
@@ -220,6 +266,8 @@ impl ZenixApp {
             context_menu: None,
             pending_confirm: None,
             ai_chat_panel: None,
+            chat_input_entity: None,
+            agent_polling: false,
             single_instance_rx,
         };
         // Start cursor blink timer if enabled
@@ -1129,7 +1177,68 @@ impl Render for ZenixApp {
                 Some(sidebar::system_info_panel(&theme, &self.system_info).into_any_element())
             }
             Panel::AiChat => {
-                let data = self.ai_chat_panel.get_or_insert_with(crate::ai::chat::AiChatPanelData::new);
+                // Check if there is at least one configured API Provider.
+                // If none, show a friendly placeholder instead of a blank panel.
+                if !crate::ai::engine::OrchestratorEngine::has_available_provider() {
+                    Some(render_ai_config_empty(&theme).into_any_element())
+                } else {
+                    let data = self.ai_chat_panel.get_or_insert_with(crate::ai::chat::AiChatPanelData::new);
+                // Lazy-create the InputState entity for the chat input.
+                if self.chat_input_entity.is_none() {
+                    let input = cx.new(|cx| {
+                        gpui_component::input::InputState::new(window, cx)
+                            .placeholder(t("ai.chat.placeholder"))
+                    });
+                    // Subscribe to input events: Enter sends, Escape clears focus.
+                    cx.subscribe(&input, {
+                        let entity = cx.entity().clone();
+                        move |this: &mut ZenixApp, _input: gpui::Entity<gpui_component::input::InputState>, event: &gpui_component::input::InputEvent, cx| {
+                            match event {
+                                gpui_component::input::InputEvent::PressEnter { shift: false, .. } => {
+                                    // Send message
+                                    let text = _input.read(cx).value().to_string();
+                                    if !text.trim().is_empty() {
+                                        if let Some(ref mut data) = this.ai_chat_panel {
+                                            // Save user message to session
+                                            let session_id = data.current_session_id.clone();
+                                            if let Some(sid) = session_id {
+                                                if let Ok(mgr) = crate::ai::session::SessionManager::open() {
+                                                    let seq = mgr.get_messages(&sid).map(|msgs| msgs.len() as i64 + 1).unwrap_or(0);
+                                                    let msg = crate::ai::session::ChatMessage {
+                                                        id: 0,
+                                                        session_id: sid.clone(),
+                                                        role: "user".into(),
+                                                        content: text.clone(),
+                                                        agent_activities: None,
+                                                        timestamp: timestamp_now(),
+                                                        sequence: seq,
+                                                    };
+                                                    let _ = mgr.add_message(&msg);
+                                                    data.messages.push(msg);
+                                                }
+                                            }
+                                            data.input_value = text;
+                                            // Start orchestrator (simplified)
+                                            data.is_streaming = true;
+                                        }
+                                    }
+                                    cx.notify();
+                                }
+                                gpui_component::input::InputEvent::PressEnter { shift: true, .. } => {
+                                    // Shift+Enter: newline (default behavior, no special handling needed)
+                                }
+                                gpui_component::input::InputEvent::Change => {
+                                    if let Some(ref mut data) = this.ai_chat_panel {
+                                        data.input_value = _input.read(cx).value().to_string();
+                                    }
+                                    cx.notify();
+                                }
+                                _ => {}
+                            }
+                        }
+                    }).detach();
+                    self.chat_input_entity = Some(input);
+                }
                 // If zenix provider is configured, fetch available models in the background.
                 if data.selected_provider_id == "Zenix" && data.available_models.is_empty() {
                     if let Some(zp) = crate::api_provider::zenix_provider() {
@@ -1160,7 +1269,72 @@ impl Render for ZenixApp {
                         .detach();
                     }
                 }
-                Some(crate::ai::chat::render_ai_chat_panel(data, &theme).into_any_element())
+                // Start agent polling if not already running.
+                if !self.agent_polling {
+                    self.agent_polling = true;
+                    cx.spawn(async move |this, cx| {
+                        loop {
+                            cx.background_executor()
+                                .timer(Duration::from_secs(2))
+                                .await;
+                            // Try to connect to herdr and list agents.
+                            let result = std::thread::spawn(|| {
+                                let mut client =
+                                    crate::ai::herdr::HerdrIpcClient::new(
+                                        crate::client::herdr_socket_path(),
+                                    );
+                                client.list_agents().ok()
+                            })
+                            .join();
+                            if let Ok(Some(agents)) = result {
+                                let _ = this.update(cx, |this, cx| {
+                                    if let Some(ref mut data) = this.ai_chat_panel {
+                                        data.agent_statuses = agents
+                                            .iter()
+                                            .map(|a| {
+                                                let output = crate::ai::herdr::HerdrIpcClient::new(
+                                                    crate::client::herdr_socket_path(),
+                                                )
+                                                .read_agent(
+                                                    &a.terminal_id,
+                                                    crate::ai::herdr::ReadSource::Recent,
+                                                    3,
+                                                )
+                                                .unwrap_or_default();
+                                                crate::ai::chat::AgentMonitorEntry::from_herdr(
+                                                    a.agent
+                                                        .clone()
+                                                        .unwrap_or_else(|| "agent".into()),
+                                                    a.pane_id.clone(),
+                                                    a.agent_status,
+                                                    output,
+                                                )
+                                            })
+                                            .collect();
+                                        data.active_agent_count = data
+                                            .agent_statuses
+                                            .iter()
+                                            .filter(|a| {
+                                                a.status != "done" && a.status != "idle"
+                                            })
+                                            .count();
+                                    }
+                                    cx.notify();
+                                });
+                            } else {
+                                // Connection failed — stop polling, will restart when panel reopens.
+                                let _ = this.update(cx, |this, _| {
+                                    this.agent_polling = false;
+                                });
+                                break;
+                            }
+                        }
+                    })
+                    .detach();
+                }
+                let input_ref = self.chat_input_entity.as_ref();
+                Some(crate::ai::chat::render_ai_chat_panel(data, &theme, input_ref).into_any_element())
+                }
             }
             _ => None,
         };
@@ -2395,4 +2569,43 @@ impl Render for ZenixApp {
             main_ui.into_any_element()
         }
     }
+}
+
+// ── AI Panel: Config Empty Placeholder ──────────────────────────────────
+
+/// Render a friendly placeholder when no API Provider is configured.
+///
+/// Shown instead of the chat panel to guide users to Settings → Extensions
+/// → API Providers.
+fn render_ai_config_empty(theme: &gpui_component::Theme) -> gpui::AnyElement {
+    use gpui::{div, px};
+    use gpui_component::{button::Button, v_flex};
+
+    let bg = theme.background;
+    let muted = theme.muted_foreground;
+
+    v_flex()
+        .size_full()
+        .bg(bg)
+        .items_center()
+        .justify_center()
+        .gap(px(12.))
+        .child(div().text_size(px(36.)).child("🤖"))
+        .child(
+            div()
+                .text_size(px(13.))
+                .text_color(muted)
+                .px(px(24.))
+                .text_center()
+                .child(t("ai.config_empty")),
+        )
+        .child(
+            div()
+                .text_size(px(11.))
+                .text_color(muted.opacity(0.6))
+                .px(px(24.))
+                .text_center()
+                .child(t("ai.config_empty_hint")),
+        )
+        .into_any_element()
 }

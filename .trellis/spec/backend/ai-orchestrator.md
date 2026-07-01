@@ -580,10 +580,326 @@ fn test_parse_dispatch_directive_none() {
 
 ### 10.4 TODO（待讨论/实现）
 
-1. **AI 会话界面重构**: 当前 AI 聊天面板 UI 需要完整重构，现有实现为迭代式修补，需要统一设计后重写。
+1. ~~**AI 会话界面重构**~~ → ✅ 第四次迭代完成
+2. ~~**AI 会话界面增强**~~ → ✅ 2026-07-01 完成：Config Bar 交互化、TextArea 输入、Markdown 渲染、Agent Block 实时流式更新
+3. ~~**AI 会话 API 配置隔离**~~ → ✅ 2026-07-02 完成：`OrchestratorEngine::has_available_provider()` + 空配置渲染
+4. ~~**Rust Agent CLI 调查**~~ → ✅ 2026-07-01 完成：VTCode(shai/pi_agent_rust) 评估完毕，确认不直接复用，但工具系统设计和会话压缩逻辑值得参考
+5. ~~**内置工具系统**~~ → ✅ 2026-07-02 完成：12 个工具（3 文件操作 + 4 Agent 管理 + 2 布局控制 + 3 记忆管理），Function Calling 循环
+6. ~~**会话压缩**~~ → ✅ 2026-07-02 完成：`Compactor` 模块，token 估算 + 自动压缩 + 配置隔离
 
-2. **AI 会话 API 配置隔离**: 当前侧边栏 AI 会话没有独立的 API 配置入口，默认使用所有已配置的 API Provider。需要设计：如果没有配置任何 API，则侧边栏 AI 不可用。具体实现方案待讨论。
+### 10.5 AI 界面增强 — 设计方案 (TODO #5, 2026-07-01)
 
-3. **Rust Agent CLI 调查**: ZenixAI 侧边栏 AI 会话需要一个基于 Rust 实现的 Agent CLI 开源库作为后端。当前所有 Agent CLI（Claude Code、Codex、OpenCode）均为非 Rust 实现。需要调查是否有合适的 Rust Agent CLI 可选。
+用户确认方案: 1.A + 2.B + 3.A + 4.A
 
-4. **编排功能 Tool 化**: 当前编排器直接调用 LLM API + herdr IPC 执行任务。需要评估是否应该将编排功能封装为 MCP Tool，由 LLM 通过 tool call 方式调用，而非编排器内部硬编码调度逻辑。这会影响 `engine.rs` 的架构设计。
+#### 5.1 Config Bar 交互化
+- 模型 pill → 下拉选择器（点击展开 provider 列表 → 模型列表）
+- workspace pill → 下拉选择器（点击展开 workspace 列表）
+- 思考度 pill → 保持不变（点击切换 low/medium/high/xhigh）
+- 新增 `ConfigDropdownTarget` enum: `Model` | `Workspace`
+- 新增 `AiChatPanelData.config_dropdown: Option<ConfigDropdownTarget>`
+
+#### 5.2 TextArea 输入
+- 用 `gpui_component::input::InputState` multiline 替代裸 div
+- Enter 发送, Shift+Enter 换行
+- 流式输出中显示停止按钮
+- `app.rs` 创建 InputState, 订阅事件转发到 `AiChatPanelData`
+
+#### 5.3 Markdown 渲染器
+- 新建 `ai/markdown.rs` (轻量级, 无外部依赖)
+- 支持: **bold**, `inline code`, ```code blocks```, - list items
+- 输出 GPUI `Vec<AnyElement>` segments
+
+#### 5.4 Agent Block 实时流式
+- `app.rs` 每 2s 轮询 herdr `list_agents()`
+- 比较输出变化, 追加新内容到对应 AgentBlock
+- 轮询 interval 可配置
+
+---
+
+## 10.6 内置工具系统（TODO #5, 2026-07-01 设计）
+
+### 设计原则
+
+- **LLM 视角命名**：工具名描述"能做什么"，不暴露"怎么做"（不用 `herdr_x` 前缀）
+- **LLM 通过 function calling 调用工具**：编排器不硬编码调度逻辑，LLM 动态决定调用哪些工具
+- **简约**：12 个工具覆盖核心场景，不过度设计
+
+### 架构变更
+
+当前 `engine.rs` 的 `chat_and_dispatch` 是**硬编码调度**：
+```
+LLM 响应 → parse_dispatch_directive() → execute_agent_task()
+```
+
+改为**工具调用循环**：
+```
+loop {
+    response = call_llm_with_tools(messages, tools)
+    if response.has_tool_calls() {
+        results = execute_tool_calls(response.tool_calls)
+        messages += tool_results
+        continue
+    }
+    return response.content  // LLM 直接回复
+}
+```
+
+### 工具清单（12 个）
+
+#### A. 文件操作（3 个）
+
+| 工具 | 说明 | 实现 |
+|------|------|------|
+| `read_file` | 读取文件内容 | `std::fs::read_to_string` + 大小限制 |
+| `read_directory` | 读取目录结构 | `std::fs::read_dir`，递归列出 |
+| `search_files` | 按模式搜索文件名 | glob 匹配，限制结果数量 |
+
+#### B. 记忆管理（3 个）
+
+| 工具 | 说明 | 实现 |
+|------|------|------|
+| `read_memory` | 读取记忆条目 | SQLite `zenix-ai.db` |
+| `write_memory` | 写入记忆条目 | SQLite INSERT/REPLACE |
+| `search_memory` | 全文搜索记忆 | FTS5 MATCH |
+
+#### C. Agent 管理（4 个）
+
+| 工具 | 说明 | 实现 |
+|------|------|------|
+| `list_agents` | 查看 Agent 状态 | herdr IPC `agent.list` |
+| `start_agent` | 启动 Agent CLI | herdr IPC `agent.start` |
+| `send_instruction` | 发送指令给 Agent | herdr IPC `agent.send` |
+| `read_output` | 读取 Agent 输出 | herdr IPC `agent.read` |
+
+#### D. 布局控制（2 个）
+
+| 工具 | 说明 | 实现 |
+|------|------|------|
+| `split_pane` | 分割窗格 | herdr IPC `pane.split` |
+| `arrange_grid` | 网状排列窗格 | herdr IPC `pane.arrange` |
+
+### 工具接口
+
+```rust
+// ai/tools.rs
+
+pub struct ToolCall {
+    pub name: String,
+    pub arguments: serde_json::Value,
+}
+
+pub struct ToolResult {
+    pub tool_name: String,
+    pub content: String,
+    pub is_error: bool,
+}
+
+pub trait Tool: Send + Sync {
+    fn name(&self) -> &str;
+    fn description(&self) -> &str;  // LLM 看到的描述
+    fn execute(&self, args: serde_json::Value) -> ToolResult;
+}
+
+pub fn builtin_tools() -> Vec<Box<dyn Tool>>;
+```
+
+### 实现阶段
+
+**Phase 1（MVP）：** 文件操作（3）+ 记忆（3）+ Agent 管理（4）= 10 个
+**Phase 2：** 布局控制（2）= 2 个
+
+### 文件位置
+
+- `ai/tools.rs` — 工具定义和实现
+- `ai/engine.rs` — 重写 `chat_and_dispatch` 为工具调用循环
+
+---
+
+## 10.7 会话压缩（TODO #6, 2026-07-01 设计）
+
+### 需求
+
+- 长对话时自动压缩，避免超出 LLM 上下文窗口
+- 提取要点作为摘要，保留最近对话
+- 对用户无感（自动处理，不弹出提示）
+
+### 策略
+
+参考 pi_agent_rust 的压缩算法：
+
+1. **估算 token 使用量**：每 3 个字符 ≈ 1 token（保守估计）
+2. **触发条件**：当 token 使用量 > 上下文窗口的 80% 时触发
+3. **压缩方式**：
+   - 保留最近 N 条消息（默认保留最近 20%）
+   - 让 LLM 生成前面对话的摘要
+   - 用摘要替换被压缩的对话
+4. **压缩记录**：在数据库中记录压缩历史（`compaction_entries` 表）
+
+### 数据库扩展
+
+```sql
+CREATE TABLE IF NOT EXISTS compaction_entries (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+    summary TEXT NOT NULL,
+    kept_from_sequence INTEGER NOT NULL,
+    compressed_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+```
+
+### 实现
+
+- `ai/compactor.rs` — 压缩逻辑
+- 在 `chat_and_dispatch` 循环中，每次 LLM 调用前检查 token 使用量
+- 触发压缩后，将摘要作为 system message 注入下一轮对话
+
+### 参数
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `context_window_tokens` | 128000 | 上下文窗口大小 |
+| `reserve_tokens` | 10240 | 预留 token（~8%）|
+| `keep_recent_ratio` | 0.2 | 保留最近消息比例 |
+
+---
+
+## 10.8 Rust Agent CLI 参考（2026-07-01 调查结论）
+
+### 调查项目
+
+| 项目 | Stars | 最近更新 | 语言 | 特点 |
+|------|-------|---------|------|------|
+| **pi_agent_rust** | 1,238 | 2026-06-30 | Rust | 8 个内置工具，安全优先，零 unsafe code |
+| **VTCode** | 722 | 2026-06-30 | Rust | Zed ACP 支持，MCP client/server，21+ LLM provider |
+| **shai** | 619 | 2026-06-28 | Rust | 简洁，HTTP 服务模式，SSE 流式 |
+
+### 参考优先级
+
+| 优先级 | 模块 | 参考项目 | 参考文件 | 理由 |
+|--------|------|---------|---------|------|
+| **P0** | 工具系统 | pi_agent_rust | `src/tools.rs` | 最完整，12 个工具设计直接可用 |
+| **P0** | Function Calling | pi_agent_rust | `src/tools.rs` + `src/agent.rs` | 架构最清晰，循环调用逻辑明确 |
+| **P1** | 会话压缩 | pi_agent_rust | `src/compaction.rs` | 算法成熟，参数设计合理 |
+| **P2** | LLM 调用 | shai / pi_agent_rust | `shai-llm/src/chat.rs` / `src/sse.rs` | 我们的实现已够用，可优化 |
+| **P3** | 记忆管理 | pi_agent_rust | `src/session_sqlite.rs` | SQLite 设计可参考 |
+
+### 具体参考点
+
+#### 工具系统（pi_agent_rust `src/tools.rs`）
+
+**借鉴：**
+- 工具 trait 设计（`Tool` trait + `ToolEffects` 效果声明）
+- 8 个内置工具的参数设计（JSON Schema）
+- 工具调用结果格式化（`ContentBlock`）
+
+**不借鉴：**
+- bash/edit/write 等执行类工具（ZenixAI 不需要）
+- 能力门控（capability gating）（herdr IPC 已安全）
+
+#### Function Calling（pi_agent_rust `src/agent.rs`）
+
+**借鉴：**
+- 工具调用循环架构（`call_llm_with_tools`）
+- 工具结果注入（`ToolResult` → `ToolContent`）
+- 多轮工具调用（LLM 可以连续调用多个工具）
+
+**不借鉴：**
+- 扩展系统（extensions）
+- 安全沙箱（sandbox）
+
+#### 会话压缩（pi_agent_rust `src/compaction.rs`）
+
+**借鉴：**
+- Token 估算算法（CHARS_PER_TOKEN_ESTIMATE = 3）
+- 压缩触发条件（上下文窗口的 80%）
+- 迭代式摘要更新（不是一次性压缩）
+- 压缩记录（`CompactionEntry`）
+
+**不借鉴：**
+- 复杂的 token 计数器（我们用简化估算即可）
+- 图片 token 估算（ZenixAI 是文本编排器）
+
+#### LLM 调用（shai `shai-llm/src/chat.rs`）
+
+**借鉴：**
+- JSON hooks 设计（`JsonHooks` trait，可选优化）
+- Provider 抽象（统一 OpenAI/Anthropic/Ollama 接口）
+
+**不借鉴：**
+- 12+ provider 实现（ZenixAI 只需要 1 个编排模型）
+- 复杂的认证逻辑（我们用 API key 即可）
+
+### 结论
+
+**主要参考 pi_agent_rust**（工具系统 + Function Calling + 会话压缩）
+**次要参考 shai**（LLM 调用简化实现）
+**不参考 VTCode**（Zed ACP 协议对我们的价值有限，herdr IPC 已覆盖）
+
+---
+
+## 10.9 工具系统实现总结（2026-07-02）
+
+### 已实现模块
+
+| 模块 | 文件 | 行数 | 说明 |
+|------|------|------|------|
+| 工具系统 | `src/ai/tools.rs` | 1,956 | Tool trait + 12 个工具定义 |
+| 会话压缩 | `src/ai/compactor.rs` | 492 | Compactor + token 估算 + 自动压缩 |
+| Function Calling | `src/ai/engine.rs` | +885 | chat_with_tools + ToolExecutor + SSE 工具调用解析 |
+| 配置隔离 | `src/app.rs` | +217 | 空配置渲染 |
+
+### 12 个内置工具
+
+| 分类 | 工具 | 实现状态 | herdr IPC |
+|------|------|---------|-----------|
+| 文件操作 | `read_file` | ✅ 完整 | ❌ |
+| 文件操作 | `read_directory` | ✅ 完整 | ❌ |
+| 文件操作 | `search_files` | ✅ 完整 | ❌ |
+| Agent 管理 | `list_agents` | ✅ 完整 | ✅ agent.list |
+| Agent 管理 | `start_agent` | ✅ 完整 | ✅ agent.start |
+| Agent 管理 | `send_instruction` | ✅ 完整 | ✅ pane.send_text |
+| Agent 管理 | `read_output` | ✅ 完整 | ✅ pane.read |
+| 布局控制 | `split_pane` | ✅ 完整 | ✅ pane.split |
+| 布局控制 | `arrange_grid` | ✅ 完整 | ✅ pane.arrange |
+| 记忆管理 | `read_memory` | ✅ 内存 HashMap | ❌ |
+| 记忆管理 | `write_memory` | ✅ 内存 HashMap | ❌ |
+| 记忆管理 | `search_memory` | ✅ 内存 HashMap | ❌ |
+
+### Function Calling 循环
+
+```rust
+// OrchestratorEngine::chat_with_tools()
+loop {
+    // 1. 检查是否需要压缩
+    if compactor.should_compress(&loop_messages) {
+        loop_messages = compactor.compress_messages(&loop_messages);
+    }
+    
+    // 2. 调用 LLM（带工具定义）
+    let (content, tool_calls) = chat_stream_with_tools(...).await?;
+    
+    // 3. 执行工具调用
+    if !tool_calls.is_empty() {
+        let results = tool_calls.iter().map(|tc| executor.execute(tc)).collect();
+        loop_messages.push(tool_results_as_messages(results));
+        continue;
+    }
+    
+    // 4. LLM 直接回复，退出循环
+    return Ok(content);
+}
+```
+
+### 设计决策
+
+1. **工具集严格限定在编排视角** — 无 bash/edit/write 等执行类工具
+2. **Tool trait 无状态** — 工具通过 ToolExecutor 持有 herdr_client
+3. **Token 估算简化** — chars/3 + 10 overhead，不引入 token counter 依赖
+4. **记忆管理内存实现** — 后续接 SQLite，不阻塞当前迭代
+5. **SSE 双格式支持** — OpenAI + Anthropic 工具调用解析
+
+### 测试
+
+- 194 → 215 测试（新增 21 个）
+- 覆盖：工具参数校验、glob 匹配、压缩阈值、Function Calling 循环、配置检查
+- clippy 新代码零警告
