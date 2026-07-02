@@ -10,8 +10,8 @@ pub mod tools;
 // Re-export compactor types for public API
 #[allow(unused_imports)]
 pub use compactor::{
-    CompactionConfig, CompactedMessages, Compactor, CHARS_PER_TOKEN_ESTIMATE, estimate_tokens,
-    MessageRef,
+    CHARS_PER_TOKEN_ESTIMATE, CompactedMessages, CompactionConfig, Compactor, MessageRef,
+    estimate_tokens,
 };
 // Re-export engine types for public API
 #[allow(unused_imports)]
@@ -21,4 +21,6 @@ pub use engine::*;
 pub use session::*;
 // Re-export tools types for public API
 #[allow(unused_imports)]
-pub use tools::{builtin_tools, execute_tool_call, find_tool, Tool, ToolCall, ToolContext, ToolResult};
+pub use tools::{
+    Tool, ToolCall, ToolContext, ToolResult, builtin_tools, execute_tool_call, find_tool,
+};

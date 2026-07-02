@@ -3,7 +3,7 @@
 //! Database location: `~/.config/zenix/ai/zenix-ai.db`
 
 use anyhow::{Context, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 
 use crate::platform;
 
@@ -155,15 +155,13 @@ pub struct SessionManager {
 
 impl SessionManager {
     pub fn open() -> Result<Self> {
-        let db_path = platform::zenix_config_dir()
-            .join("ai")
-            .join("zenix-ai.db");
+        let db_path = platform::zenix_config_dir().join("ai").join("zenix-ai.db");
         if let Some(parent) = db_path.parent() {
             std::fs::create_dir_all(parent)
                 .with_context(|| format!("create db dir {:?}", parent))?;
         }
-        let conn = Connection::open(&db_path)
-            .with_context(|| format!("open sqlite db {:?}", db_path))?;
+        let conn =
+            Connection::open(&db_path).with_context(|| format!("open sqlite db {:?}", db_path))?;
         Self::init(&conn)?;
         Ok(Self { conn })
     }
@@ -322,18 +320,15 @@ impl SessionManager {
     /// after stripping non-alphanumeric/underscore characters, making the
     /// search safe against FTS5 special characters. An optional `session_id`
     /// restricts the search to a single session.
-    pub fn search_messages(
-        &self,
-        query: &str,
-        session_id: Option<&str>,
-    ) -> Result<Vec<SearchHit>> {
+    pub fn search_messages(&self, query: &str, session_id: Option<&str>) -> Result<Vec<SearchHit>> {
         let safe_query = sanitize_fts_query(query);
         if safe_query.trim().is_empty() {
             return Ok(Vec::new());
         }
 
         let sql = match session_id {
-            Some(_) => "
+            Some(_) => {
+                "
                 SELECT m.id, m.session_id, m.role, m.content, m.agent_activities,
                        m.timestamp, m.sequence, s.title,
                        snippet(messages_fts, 0, '<b>', '</b>', '...', 32) AS snippet
@@ -343,8 +338,10 @@ impl SessionManager {
                 WHERE messages_fts MATCH ?1 AND m.session_id = ?2
                 ORDER BY rank
                 LIMIT 20
-            ",
-            None => "
+            "
+            }
+            None => {
+                "
                 SELECT m.id, m.session_id, m.role, m.content, m.agent_activities,
                        m.timestamp, m.sequence, s.title,
                        snippet(messages_fts, 0, '<b>', '</b>', '...', 32) AS snippet
@@ -354,13 +351,11 @@ impl SessionManager {
                 WHERE messages_fts MATCH ?1
                 ORDER BY rank
                 LIMIT 20
-            ",
+            "
+            }
         };
 
-        let mut stmt = self
-            .conn
-            .prepare(sql)
-            .context("prepare search_messages")?;
+        let mut stmt = self.conn.prepare(sql).context("prepare search_messages")?;
 
         let rows = if let Some(sid) = session_id {
             stmt.query_map(params![safe_query, sid], map_search_hit_row)
@@ -518,15 +513,20 @@ mod tests {
         let session = make_session("fts-session", "FTS Test");
         mgr.create_session(&session).unwrap();
 
-        mgr.add_message(&make_message("fts-session", "user", "The quick brown fox", 1))
-            .unwrap();
+        mgr.add_message(&make_message(
+            "fts-session",
+            "user",
+            "The quick brown fox",
+            1,
+        ))
+        .unwrap();
         mgr.add_message(&make_message(
             "fts-session",
             "orchestrator",
             "The lazy dog sleeps",
             2,
         ))
-            .unwrap();
+        .unwrap();
 
         let hits = mgr.search_messages("quick", None).unwrap();
         assert!(!hits.is_empty(), "should find 'quick'");
@@ -548,7 +548,7 @@ mod tests {
             "testing special characters here",
             1,
         ))
-            .unwrap();
+        .unwrap();
 
         let hits = mgr.search_messages("test!@#$", None).unwrap();
         let _ = hits;
@@ -584,8 +584,13 @@ mod tests {
         let session = make_session("scope-session", "Scope Test");
         mgr.create_session(&session).unwrap();
 
-        mgr.add_message(&make_message("scope-session", "user", "uniquekeyword here", 1))
-            .unwrap();
+        mgr.add_message(&make_message(
+            "scope-session",
+            "user",
+            "uniquekeyword here",
+            1,
+        ))
+        .unwrap();
         mgr.add_message(&make_message(
             "scope-session",
             "orchestrator",
@@ -619,7 +624,7 @@ mod tests {
             "shared keyword there",
             1,
         ))
-            .unwrap();
+        .unwrap();
 
         let all_hits = mgr.search_messages("shared", None).unwrap();
         assert_eq!(all_hits.len(), 2, "should find in both sessions");

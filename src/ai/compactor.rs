@@ -147,7 +147,10 @@ impl Compactor {
     ///
     /// Returns `true` if total tokens > (`context_window_tokens` - `reserve_tokens`).
     pub fn should_compress(&self, messages: &[MessageRef]) -> bool {
-        let threshold = self.config.context_window_tokens.saturating_sub(self.config.reserve_tokens);
+        let threshold = self
+            .config
+            .context_window_tokens
+            .saturating_sub(self.config.reserve_tokens);
         let total = self.estimate_messages_tokens(messages);
         total > threshold
     }
@@ -176,9 +179,8 @@ impl Compactor {
         }
 
         // Calculate how many messages to keep (at least 1)
-        let keep_recent_count = ((original_count as f32 * self.config.keep_recent_ratio)
-            .ceil() as usize)
-            .max(1);
+        let keep_recent_count =
+            ((original_count as f32 * self.config.keep_recent_ratio).ceil() as usize).max(1);
 
         let kept_count = keep_recent_count.min(original_count);
         let compressed_count = original_count - kept_count;
@@ -292,10 +294,7 @@ mod tests {
     #[test]
     fn test_estimate_messages_tokens_multiple() {
         let compactor = Compactor::default_compactor();
-        let messages = vec![
-            msg_ref("user", "hello"),
-            msg_ref("assistant", "world"),
-        ];
+        let messages = vec![msg_ref("user", "hello"), msg_ref("assistant", "world")];
         let single = compactor.estimate_messages_tokens(&vec![msg_ref("user", "hello")]);
         let multi = compactor.estimate_messages_tokens(&messages);
         // Multi should be more than single
@@ -333,12 +332,7 @@ mod tests {
         let compactor = Compactor::new(config);
         // Build messages that exceed threshold (90 tokens)
         let messages: Vec<MessageRef> = (0..20)
-            .map(|i| {
-                msg_ref(
-                    "user",
-                    &format!("message number {} with some content", i),
-                )
-            })
+            .map(|i| msg_ref("user", &format!("message number {} with some content", i)))
             .collect();
         assert!(compactor.should_compress(&messages));
     }
@@ -378,10 +372,18 @@ mod tests {
             compacted.compressed_count + compacted.kept_count
         );
         // Kept messages should be the most recent (last in the list)
-        let kept_texts: Vec<String> = compacted.kept_messages.iter().map(|m| m.content.clone()).collect();
+        let kept_texts: Vec<String> = compacted
+            .kept_messages
+            .iter()
+            .map(|m| m.content.clone())
+            .collect();
         assert!(kept_texts.contains(&"msg 9".to_string()));
         // Dropped messages should be the oldest
-        let dropped_texts: Vec<String> = compacted.dropped_messages.iter().map(|m| m.content.clone()).collect();
+        let dropped_texts: Vec<String> = compacted
+            .dropped_messages
+            .iter()
+            .map(|m| m.content.clone())
+            .collect();
         assert!(dropped_texts.contains(&"msg 0".to_string()));
     }
 
@@ -474,7 +476,15 @@ mod tests {
         let compactor = Compactor::new(config);
 
         let messages: Vec<MessageRef> = (0..15)
-            .map(|i| msg_ref("user", &format!("message number {} with extra content for token estimation", i)))
+            .map(|i| {
+                msg_ref(
+                    "user",
+                    &format!(
+                        "message number {} with extra content for token estimation",
+                        i
+                    ),
+                )
+            })
             .collect();
 
         // First verify compression is needed

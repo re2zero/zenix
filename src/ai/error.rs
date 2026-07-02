@@ -94,9 +94,7 @@ pub fn user_friendly(err: &AiError) -> String {
             }
         }
         AiError::AgentCliNotFound(agent) => {
-            format!(
-                "Agent CLI「{agent}」未安装。请在「设置 → 扩展 → Agent CLI」中安装该工具。",
-            )
+            format!("Agent CLI「{agent}」未安装。请在「设置 → 扩展 → Agent CLI」中安装该工具。",)
         }
         AiError::IpcError(msg) => {
             format!("herdr 通信失败：{}", truncate_err(msg, 60))

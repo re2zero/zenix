@@ -459,9 +459,7 @@ pub fn toggle_api_agent(provider: &mut ApiProviderConfig, agent_name: &str) -> R
 ///
 /// Returns a list of (agent_name, result) pairs so callers can report
 /// individual failures to the user.
-pub fn sync_to_all_agents(
-    provider: &ApiProviderConfig,
-) -> Vec<(String, Result<(), String>)> {
+pub fn sync_to_all_agents(provider: &ApiProviderConfig) -> Vec<(String, Result<(), String>)> {
     provider
         .enabled_agents
         .iter()
@@ -483,8 +481,7 @@ pub fn unsync_from_unused_agents(provider_name: &str) -> Vec<(String, Result<(),
     let mut results = Vec::new();
 
     // Collect all agents that appear in any other provider's enabled_agents
-    let mut agents_still_used: std::collections::HashSet<String> =
-        std::collections::HashSet::new();
+    let mut agents_still_used: std::collections::HashSet<String> = std::collections::HashSet::new();
     for p in &all_providers {
         if p.name == provider_name {
             continue;
@@ -496,7 +493,12 @@ pub fn unsync_from_unused_agents(provider_name: &str) -> Vec<(String, Result<(),
 
     // Check all known agents to see if this provider was their only source
     let known_agents = [
-        "claude", "codex", "opencode", "cursor", "aider", "gemini-cli",
+        "claude",
+        "codex",
+        "opencode",
+        "cursor",
+        "aider",
+        "gemini-cli",
     ];
 
     for agent in &known_agents {
@@ -521,7 +523,10 @@ pub fn zenix_provider() -> Option<ApiProviderConfig> {
 
 /// Return all configured "Zenix" providers.
 pub fn zenix_providers() -> Vec<ApiProviderConfig> {
-    load_all().into_iter().filter(|p| p.name == "Zenix").collect()
+    load_all()
+        .into_iter()
+        .filter(|p| p.name == "Zenix")
+        .collect()
 }
 
 // ── Persistence ──────────────────────────────────────────────────────
@@ -808,8 +813,17 @@ mod tests {
         // Verify that the Zenix preset is included in OpenAI presets.
         let presets = ApiFormat::OpenAI.presets();
         let names: Vec<&str> = presets.iter().map(|p| p.name).collect();
-        assert!(names.contains(&"Zenix"), "Zenix preset should exist in OpenAI presets");
-        assert!(names.contains(&"Ollama"), "Ollama preset should exist in OpenAI presets");
-        assert!(names.contains(&"OpenAI"), "OpenAI preset should exist in OpenAI presets");
+        assert!(
+            names.contains(&"Zenix"),
+            "Zenix preset should exist in OpenAI presets"
+        );
+        assert!(
+            names.contains(&"Ollama"),
+            "Ollama preset should exist in OpenAI presets"
+        );
+        assert!(
+            names.contains(&"OpenAI"),
+            "OpenAI preset should exist in OpenAI presets"
+        );
     }
 }

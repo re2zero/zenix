@@ -328,7 +328,9 @@ pub enum ResponseResult {
         capabilities: Option<ServerCapabilities>,
     },
 
-    WorkspaceInfo { workspace: WorkspaceInfo },
+    WorkspaceInfo {
+        workspace: WorkspaceInfo,
+    },
 
     WorkspaceCreated {
         workspace: WorkspaceInfo,
@@ -336,25 +338,47 @@ pub enum ResponseResult {
         root_pane: PaneInfo,
     },
 
-    WorkspaceList { workspaces: Vec<WorkspaceInfo> },
+    WorkspaceList {
+        workspaces: Vec<WorkspaceInfo>,
+    },
 
-    TabInfo { tab: TabInfo },
+    TabInfo {
+        tab: TabInfo,
+    },
 
-    TabCreated { tab: TabInfo, root_pane: PaneInfo },
+    TabCreated {
+        tab: TabInfo,
+        root_pane: PaneInfo,
+    },
 
-    TabList { tabs: Vec<TabInfo> },
+    TabList {
+        tabs: Vec<TabInfo>,
+    },
 
-    AgentInfo { agent: AgentInfo },
+    AgentInfo {
+        agent: AgentInfo,
+    },
 
-    AgentStarted { agent: AgentInfo, argv: Vec<String> },
+    AgentStarted {
+        agent: AgentInfo,
+        argv: Vec<String>,
+    },
 
-    AgentList { agents: Vec<AgentInfo> },
+    AgentList {
+        agents: Vec<AgentInfo>,
+    },
 
-    PaneInfo { pane: PaneInfo },
+    PaneInfo {
+        pane: PaneInfo,
+    },
 
-    PaneList { panes: Vec<PaneInfo> },
+    PaneList {
+        panes: Vec<PaneInfo>,
+    },
 
-    PaneRead { read: PaneReadResult },
+    PaneRead {
+        read: PaneReadResult,
+    },
 
     SubscriptionStarted {},
 
@@ -588,24 +612,58 @@ pub enum EventKind {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum EventData {
-    WorkspaceCreated { workspace: WorkspaceInfo },
-    WorkspaceUpdated { workspace: WorkspaceInfo },
-    WorkspaceClosed { workspace_id: String },
-    WorkspaceRenamed { workspace_id: String, label: String },
-    WorkspaceFocused { workspace_id: String },
-    TabCreated { tab: TabInfo },
-    TabClosed { tab_id: String, workspace_id: String },
-    TabRenamed { tab_id: String, workspace_id: String, label: String },
-    TabFocused { tab_id: String, workspace_id: String },
-    PaneCreated { pane: PaneInfo },
-    PaneClosed { pane_id: String, workspace_id: String },
-    PaneFocused { pane_id: String, workspace_id: String },
+    WorkspaceCreated {
+        workspace: WorkspaceInfo,
+    },
+    WorkspaceUpdated {
+        workspace: WorkspaceInfo,
+    },
+    WorkspaceClosed {
+        workspace_id: String,
+    },
+    WorkspaceRenamed {
+        workspace_id: String,
+        label: String,
+    },
+    WorkspaceFocused {
+        workspace_id: String,
+    },
+    TabCreated {
+        tab: TabInfo,
+    },
+    TabClosed {
+        tab_id: String,
+        workspace_id: String,
+    },
+    TabRenamed {
+        tab_id: String,
+        workspace_id: String,
+        label: String,
+    },
+    TabFocused {
+        tab_id: String,
+        workspace_id: String,
+    },
+    PaneCreated {
+        pane: PaneInfo,
+    },
+    PaneClosed {
+        pane_id: String,
+        workspace_id: String,
+    },
+    PaneFocused {
+        pane_id: String,
+        workspace_id: String,
+    },
     PaneOutputChanged {
         pane_id: String,
         workspace_id: String,
         revision: u64,
     },
-    PaneExited { pane_id: String, workspace_id: String },
+    PaneExited {
+        pane_id: String,
+        workspace_id: String,
+    },
     PaneAgentDetected {
         pane_id: String,
         workspace_id: String,
@@ -799,10 +857,7 @@ impl HerdrIpcClient {
     }
 
     /// List tabs, optionally filtered by workspace.
-    pub fn list_tabs(
-        &mut self,
-        workspace_id: Option<&str>,
-    ) -> Result<Vec<TabInfo>, AiError> {
+    pub fn list_tabs(&mut self, workspace_id: Option<&str>) -> Result<Vec<TabInfo>, AiError> {
         let request = HerdrRequest {
             id: self.next_id(),
             method: HerdrMethod::TabList(TabListParams {
@@ -977,10 +1032,7 @@ impl HerdrIpcClient {
     }
 
     /// List panes in a workspace.
-    pub fn list_panes(
-        &mut self,
-        workspace_id: Option<&str>,
-    ) -> Result<Vec<PaneInfo>, AiError> {
+    pub fn list_panes(&mut self, workspace_id: Option<&str>) -> Result<Vec<PaneInfo>, AiError> {
         let request = HerdrRequest {
             id: self.next_id(),
             method: HerdrMethod::PaneList(PaneListParams {
@@ -1150,10 +1202,7 @@ impl HerdrIpcClient {
     }
 
     /// Subscribe to herdr events.
-    pub fn subscribe_events(
-        &mut self,
-        subscriptions: Vec<Subscription>,
-    ) -> Result<(), AiError> {
+    pub fn subscribe_events(&mut self, subscriptions: Vec<Subscription>) -> Result<(), AiError> {
         let request = HerdrRequest {
             id: self.next_id(),
             method: HerdrMethod::EventsSubscribe(EventsSubscribeParams { subscriptions }),
@@ -1379,7 +1428,9 @@ mod tests {
             HerdrResponse::Success(s) => {
                 assert_eq!(s.id, "req_1");
                 match s.result {
-                    ResponseResult::Pong { version, protocol, .. } => {
+                    ResponseResult::Pong {
+                        version, protocol, ..
+                    } => {
                         assert_eq!(version, "0.6.10");
                         assert_eq!(protocol, 6);
                     }
@@ -1392,7 +1443,8 @@ mod tests {
 
     #[test]
     fn test_error_response_round_trips() {
-        let json = r#"{"id":"req_2","error":{"code":"pane_not_found","message":"pane p-1 not found"}}"#;
+        let json =
+            r#"{"id":"req_2","error":{"code":"pane_not_found","message":"pane p-1 not found"}}"#;
         let resp = parse_response(json).unwrap();
         match resp {
             HerdrResponse::Error(e) => {
@@ -1459,16 +1511,14 @@ mod tests {
         }"#;
         let resp = parse_response(json).unwrap();
         match resp {
-            HerdrResponse::Success(s) => {
-                match s.result {
-                    ResponseResult::AgentStarted { agent, argv } => {
-                        assert_eq!(agent.agent.as_deref(), Some("claude"));
-                        assert_eq!(agent.agent_status, AgentStatus::Working);
-                        assert_eq!(argv, vec!["claude", "-p", "task"]);
-                    }
-                    _ => panic!("expected agent_started"),
+            HerdrResponse::Success(s) => match s.result {
+                ResponseResult::AgentStarted { agent, argv } => {
+                    assert_eq!(agent.agent.as_deref(), Some("claude"));
+                    assert_eq!(agent.agent_status, AgentStatus::Working);
+                    assert_eq!(argv, vec!["claude", "-p", "task"]);
                 }
-            }
+                _ => panic!("expected agent_started"),
+            },
             _ => panic!("expected success"),
         }
     }
@@ -1496,19 +1546,15 @@ mod tests {
         }"#;
         let resp = parse_response(json).unwrap();
         match resp {
-            HerdrResponse::Success(s) => {
-                match s.result {
-                    ResponseResult::OutputMatched {
-                        matched_line,
-                        read,
-                        ..
-                    } => {
-                        assert_eq!(matched_line.as_deref(), Some("All tests passed!"));
-                        assert_eq!(read.text, "All tests passed!\n");
-                    }
-                    _ => panic!("expected output_matched"),
+            HerdrResponse::Success(s) => match s.result {
+                ResponseResult::OutputMatched {
+                    matched_line, read, ..
+                } => {
+                    assert_eq!(matched_line.as_deref(), Some("All tests passed!"));
+                    assert_eq!(read.text, "All tests passed!\n");
                 }
-            }
+                _ => panic!("expected output_matched"),
+            },
             _ => panic!("expected success"),
         }
     }
@@ -1562,7 +1608,9 @@ mod tests {
             HerdrResponse::Success(s) => {
                 assert_eq!(s.id, "req-1");
                 match s.result {
-                    ResponseResult::Pong { version, protocol, .. } => {
+                    ResponseResult::Pong {
+                        version, protocol, ..
+                    } => {
                         assert_eq!(version, "0.6.10");
                         assert_eq!(protocol, 6);
                     }

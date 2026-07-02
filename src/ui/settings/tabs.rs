@@ -1235,5 +1235,3 @@ fn tab_api_content(
                 .into_any_element()
         })
 }
-
-

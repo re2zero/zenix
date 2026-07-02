@@ -173,23 +173,17 @@ impl Tool for ReadFile {
                 return ToolResult::error(
                     "read_file",
                     "参数 \u{201C}path\u{201D} 必须是字符串类型",
-                )
+                );
             }
         };
 
         let path = std::path::Path::new(path_str);
         if !path.exists() {
-            return ToolResult::error(
-                "read_file",
-                format!("文件不存在: {}", path_str),
-            );
+            return ToolResult::error("read_file", format!("文件不存在: {}", path_str));
         }
 
         if !path.is_file() {
-            return ToolResult::error(
-                "read_file",
-                format!("路径不是文件: {}", path_str),
-            );
+            return ToolResult::error("read_file", format!("路径不是文件: {}", path_str));
         }
 
         match std::fs::read(path) {
@@ -214,10 +208,7 @@ impl Tool for ReadFile {
                     }
                 }
             }
-            Err(e) => ToolResult::error(
-                "read_file",
-                format!("读取文件失败: {e}"),
-            ),
+            Err(e) => ToolResult::error("read_file", format!("读取文件失败: {e}")),
         }
     }
 }
@@ -254,23 +245,17 @@ impl Tool for ReadDirectory {
                 return ToolResult::error(
                     "read_directory",
                     "参数 \u{201C}path\u{201D} 必须是字符串类型",
-                )
+                );
             }
         };
 
         let path = std::path::Path::new(path_str);
         if !path.exists() {
-            return ToolResult::error(
-                "read_directory",
-                format!("目录不存在: {}", path_str),
-            );
+            return ToolResult::error("read_directory", format!("目录不存在: {}", path_str));
         }
 
         if !path.is_dir() {
-            return ToolResult::error(
-                "read_directory",
-                format!("路径不是目录: {}", path_str),
-            );
+            return ToolResult::error("read_directory", format!("路径不是目录: {}", path_str));
         }
 
         let mut output = String::new();
@@ -374,9 +359,7 @@ fn list_dir_recursive(
         } else {
             if let Ok(meta) = std::fs::metadata(path) {
                 let size = meta.len();
-                output.push_str(&format!(
-                    "{prefix}{connector} {name} ({size} bytes)\n"
-                ));
+                output.push_str(&format!("{prefix}{connector} {name} ({size} bytes)\n"));
             } else {
                 output.push_str(&format!("{prefix}{connector} {name}\n"));
             }
@@ -425,7 +408,7 @@ impl Tool for SearchFiles {
                 return ToolResult::error(
                     "search_files",
                     "参数 \u{201C}path\u{201D} 必须是字符串类型",
-                )
+                );
             }
         };
 
@@ -435,7 +418,7 @@ impl Tool for SearchFiles {
                 return ToolResult::error(
                     "search_files",
                     "参数 \u{201C}pattern\u{201D} 必须是字符串类型",
-                )
+                );
             }
         };
 
@@ -446,20 +429,20 @@ impl Tool for SearchFiles {
 
         let search_path = std::path::Path::new(path_str);
         if !search_path.exists() {
-            return ToolResult::error(
-                "search_files",
-                format!("搜索路径不存在: {}", path_str),
-            );
+            return ToolResult::error("search_files", format!("搜索路径不存在: {}", path_str));
         }
         if !search_path.is_dir() {
-            return ToolResult::error(
-                "search_files",
-                format!("路径不是目录: {}", path_str),
-            );
+            return ToolResult::error("search_files", format!("路径不是目录: {}", path_str));
         }
 
         let mut results: Vec<String> = Vec::new();
-        search_files_recursive(search_path, pattern, &mut results, &mut 0, max_results as usize);
+        search_files_recursive(
+            search_path,
+            pattern,
+            &mut results,
+            &mut 0,
+            max_results as usize,
+        );
 
         if results.is_empty() {
             ToolResult::ok(
@@ -469,7 +452,11 @@ impl Tool for SearchFiles {
         } else {
             ToolResult::ok(
                 "search_files",
-                format!("找到 {} 个匹配文件:\n\n{}", results.len(), results.join("\n")),
+                format!(
+                    "找到 {} 个匹配文件:\n\n{}",
+                    results.len(),
+                    results.join("\n")
+                ),
             )
         }
     }
@@ -517,9 +504,7 @@ fn search_files_recursive(
 
         // Recurse into subdirectories
         if let Ok(ft) = entry.file_type() {
-            if ft.is_dir()
-                && (pattern == "**" || pattern == "**/*")
-            {
+            if ft.is_dir() && (pattern == "**" || pattern == "**/*") {
                 results.push(full_path.to_string_lossy().to_string());
                 *count += 1;
             }
@@ -565,10 +550,7 @@ fn matches_glob(file_name: &str, pattern: &str) -> bool {
 
             // Pattern: something/**/something_else
             return file_name.starts_with(prefix)
-                && matches_glob(
-                    file_name.strip_prefix(prefix).unwrap_or(""),
-                    suffix,
-                );
+                && matches_glob(file_name.strip_prefix(prefix).unwrap_or(""), suffix);
         }
     }
 
@@ -640,7 +622,7 @@ impl Tool for ListAgents {
                 return ToolResult::error(
                     "list_agents",
                     "herdr IPC 客户端未连接。请先启动 herdr 并连接。",
-                )
+                );
             }
         };
         let mut client = client.lock().unwrap();
@@ -657,10 +639,17 @@ impl Tool for ListAgents {
                     let workspace = &agent.workspace_id;
                     lines.push(format!(
                         "{}. {} | status={} | pane={} | workspace={}",
-                        i + 1, name, status, pane, workspace
+                        i + 1,
+                        name,
+                        status,
+                        pane,
+                        workspace
                     ));
                 }
-                ToolResult::ok("list_agents", format!("找到 {} 个 Agent:\n{}", agents.len(), lines.join("\n")))
+                ToolResult::ok(
+                    "list_agents",
+                    format!("找到 {} 个 Agent:\n{}", agents.len(), lines.join("\n")),
+                )
             }
             Err(e) => ToolResult::error("list_agents", format!("获取 Agent 列表失败: {e}")),
         }
@@ -721,18 +710,22 @@ impl Tool for StartAgent {
                 return ToolResult::error(
                     "start_agent",
                     "herdr IPC 客户端未连接。请先启动 herdr 并连接。",
-                )
+                );
             }
         };
         let mut client = client.lock().unwrap();
         match client.start_agent(agent_name, Some(workspace_id), cwd, vec![]) {
-            Ok(agent_info) => {
-                ToolResult::ok("start_agent", format!(
+            Ok(agent_info) => ToolResult::ok(
+                "start_agent",
+                format!(
                     "Agent '{}' 已启动：terminal_id={}, pane_id={}, workspace_id={}",
                     agent_name, agent_info.terminal_id, agent_info.pane_id, agent_info.workspace_id
-                ))
-            }
-            Err(e) => ToolResult::error("start_agent", format!("启动 Agent '{}' 失败: {e}", agent_name)),
+                ),
+            ),
+            Err(e) => ToolResult::error(
+                "start_agent",
+                format!("启动 Agent '{}' 失败: {e}", agent_name),
+            ),
         }
     }
 }
@@ -786,7 +779,7 @@ impl Tool for SendInstruction {
                 return ToolResult::error(
                     "send_instruction",
                     "herdr IPC 客户端未连接。请先启动 herdr 并连接。",
-                )
+                );
             }
         };
         let mut client = client.lock().unwrap();
@@ -834,7 +827,11 @@ impl Tool for ReadOutput {
                 return ToolResult::error("read_output", "参数 pane_id 是必需的字符串");
             }
         };
-        let lines: u32 = args.get("lines").and_then(|v| v.as_u64()).map(|n| n as u32).unwrap_or(100);
+        let lines: u32 = args
+            .get("lines")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as u32)
+            .unwrap_or(100);
 
         let client = match &ctx.herdr_client {
             Some(c) => c,
@@ -842,7 +839,7 @@ impl Tool for ReadOutput {
                 return ToolResult::error(
                     "read_output",
                     "herdr IPC 客户端未连接。请先启动 herdr 并连接。",
-                )
+                );
             }
         };
         let mut client = client.lock().unwrap();
@@ -914,7 +911,7 @@ impl Tool for SplitPane {
                 return ToolResult::error(
                     "split_pane",
                     "herdr IPC 客户端未连接。请先启动 herdr 并连接。",
-                )
+                );
             }
         };
 
@@ -923,7 +920,12 @@ impl Tool for SplitPane {
             "horizontal" | "right" => crate::ai::herdr::SplitDirection::Right,
             "vertical" | "down" => crate::ai::herdr::SplitDirection::Down,
             _ => {
-                return ToolResult::error("split_pane", format!("无效的方向: {direction}，应为 \"horizontal\"/\"vertical\"/\"right\"/\"down\""));
+                return ToolResult::error(
+                    "split_pane",
+                    format!(
+                        "无效的方向: {direction}，应为 \"horizontal\"/\"vertical\"/\"right\"/\"down\""
+                    ),
+                );
             }
         };
 
@@ -935,12 +937,13 @@ impl Tool for SplitPane {
             Some(ctx.workspace_id.as_str())
         };
         match client.split_pane(workspace_id, split_dir, None) {
-            Ok(pane) => {
-                ToolResult::ok("split_pane", format!(
+            Ok(pane) => ToolResult::ok(
+                "split_pane",
+                format!(
                     "窗格已分割：新 pane_id={}, terminal_id={}, direction={}",
                     pane.pane_id, pane.terminal_id, direction
-                ))
-            }
+                ),
+            ),
             Err(e) => ToolResult::error("split_pane", format!("分割窗格失败: {e}")),
         }
     }
@@ -1001,7 +1004,7 @@ impl Tool for ArrangeGrid {
                 return ToolResult::error(
                     "arrange_grid",
                     "herdr IPC 客户端未连接。请先启动 herdr 并连接。",
-                )
+                );
             }
         };
 
@@ -1019,10 +1022,13 @@ impl Tool for ArrangeGrid {
 
         if current_count >= target_count {
             // Already enough panes — just report
-            return ToolResult::ok("arrange_grid", format!(
-                "标签页 {} 当前有 {} 个窗格，目标 {}×{} = {} 个。窗格数量已足够。",
-                tab_id, current_count, rows, cols, target_count
-            ));
+            return ToolResult::ok(
+                "arrange_grid",
+                format!(
+                    "标签页 {} 当前有 {} 个窗格，目标 {}×{} = {} 个。窗格数量已足够。",
+                    tab_id, current_count, rows, cols, target_count
+                ),
+            );
         }
 
         // Need to create more panes by splitting
@@ -1056,15 +1062,25 @@ impl Tool for ArrangeGrid {
                     }
                 }
                 Err(e) => {
-                    return ToolResult::error("arrange_grid", format!("创建窗格失败 (第 {} 个): {e}", created + 1));
+                    return ToolResult::error(
+                        "arrange_grid",
+                        format!("创建窗格失败 (第 {} 个): {e}", created + 1),
+                    );
                 }
             }
         }
 
-        ToolResult::ok("arrange_grid", format!(
-            "已将标签页 {} 的窗格重排为 {}×{} 网格（共 {} 个窗格），新创建了 {} 个窗格。",
-            tab_id, rows, cols, current_count + created, created
-        ))
+        ToolResult::ok(
+            "arrange_grid",
+            format!(
+                "已将标签页 {} 的窗格重排为 {}×{} 网格（共 {} 个窗格），新创建了 {} 个窗格。",
+                tab_id,
+                rows,
+                cols,
+                current_count + created,
+                created
+            ),
+        )
     }
 }
 
@@ -1204,7 +1220,11 @@ impl Tool for SearchMemory {
                 return ToolResult::error("search_memory", "参数 \"query\" 是必需的非空字符串");
             }
         };
-        let limit: usize = args.get("limit").and_then(|v| v.as_u64()).map(|n| n as usize).unwrap_or(10);
+        let limit: usize = args
+            .get("limit")
+            .and_then(|v| v.as_u64())
+            .map(|n| n as usize)
+            .unwrap_or(10);
 
         let memory = ctx.memory.lock().unwrap();
         let query_lower = query.to_lowercase();
@@ -1222,7 +1242,14 @@ impl Tool for SearchMemory {
         if results.is_empty() {
             ToolResult::ok("search_memory", format!("未找到匹配 \"{}\" 的记忆", query))
         } else {
-            ToolResult::ok("search_memory", format!("找到 {} 条匹配记忆:\n\n{}", results.len(), results.join("\n")))
+            ToolResult::ok(
+                "search_memory",
+                format!(
+                    "找到 {} 条匹配记忆:\n\n{}",
+                    results.len(),
+                    results.join("\n")
+                ),
+            )
         }
     }
 }
@@ -1265,10 +1292,7 @@ pub fn find_tool(name: &str) -> Option<Box<dyn Tool>> {
 pub fn execute_tool_call_with_ctx(call: &ToolCall, ctx: &ToolContext) -> ToolResult {
     match find_tool(&call.name) {
         Some(tool) => tool.execute(ctx, call.arguments.clone()),
-        None => ToolResult::error(
-            "tool_dispatch",
-            format!("未知工具: {}", call.name),
-        ),
+        None => ToolResult::error("tool_dispatch", format!("未知工具: {}", call.name)),
     }
 }
 
@@ -1290,7 +1314,10 @@ mod tests {
 
     /// Helper: get all built-in tool names.
     fn tool_names() -> Vec<String> {
-        builtin_tools().iter().map(|t| t.name().to_string()).collect()
+        builtin_tools()
+            .iter()
+            .map(|t| t.name().to_string())
+            .collect()
     }
 
     /// Default context for file-only tool tests (no herdr client).
@@ -1307,7 +1334,10 @@ mod tests {
         let file_path = dir.join("test_read.txt");
         std::fs::write(&file_path, "Hello, World!").unwrap();
 
-        let result = ReadFile.execute(&default_ctx(), serde_json::json!({ "path": file_path.to_str().unwrap() }));
+        let result = ReadFile.execute(
+            &default_ctx(),
+            serde_json::json!({ "path": file_path.to_str().unwrap() }),
+        );
         assert!(!result.is_error);
         assert_eq!(result.content, "Hello, World!");
 
@@ -1316,7 +1346,10 @@ mod tests {
 
     #[test]
     fn test_read_file_not_exists() {
-        let result = ReadFile.execute(&default_ctx(), serde_json::json!({ "path": "/nonexistent/file.txt" }));
+        let result = ReadFile.execute(
+            &default_ctx(),
+            serde_json::json!({ "path": "/nonexistent/file.txt" }),
+        );
         assert!(result.is_error);
         assert!(result.content.contains("不存在"));
     }
@@ -1329,7 +1362,10 @@ mod tests {
         let content = "x".repeat(MAX_FILE_READ_BYTES + 1000);
         std::fs::write(&file_path, &content).unwrap();
 
-        let result = ReadFile.execute(&default_ctx(), serde_json::json!({ "path": file_path.to_str().unwrap() }));
+        let result = ReadFile.execute(
+            &default_ctx(),
+            serde_json::json!({ "path": file_path.to_str().unwrap() }),
+        );
         assert!(!result.is_error);
         assert!(result.content.contains("[TRUNCATED"));
         assert!(result.content.starts_with("x"));
@@ -1349,7 +1385,10 @@ mod tests {
         std::fs::write(dir.join("b.rs"), "b").unwrap();
         std::fs::write(sub.join("c.toml"), "c").unwrap();
 
-        let result = ReadDirectory.execute(&default_ctx(), serde_json::json!({ "path": dir.to_str().unwrap() }));
+        let result = ReadDirectory.execute(
+            &default_ctx(),
+            serde_json::json!({ "path": dir.to_str().unwrap() }),
+        );
         assert!(!result.is_error);
         assert!(result.content.contains("a.txt"));
         assert!(result.content.contains("b.rs"));
@@ -1360,7 +1399,10 @@ mod tests {
 
     #[test]
     fn test_read_directory_not_exists() {
-        let result = ReadDirectory.execute(&default_ctx(), serde_json::json!({ "path": "/nonexistent/dir" }));
+        let result = ReadDirectory.execute(
+            &default_ctx(),
+            serde_json::json!({ "path": "/nonexistent/dir" }),
+        );
         assert!(result.is_error);
         assert!(result.content.contains("不存在"));
     }
@@ -1376,11 +1418,14 @@ mod tests {
         std::fs::write(dir.join("config.toml"), "").unwrap();
         std::fs::write(dir.join("README.md"), "").unwrap();
 
-        let result = SearchFiles.execute(&default_ctx(), serde_json::json!({
-            "path": dir.to_str().unwrap(),
-            "pattern": "*.rs",
-            "max_results": 50
-        }));
+        let result = SearchFiles.execute(
+            &default_ctx(),
+            serde_json::json!({
+                "path": dir.to_str().unwrap(),
+                "pattern": "*.rs",
+                "max_results": 50
+            }),
+        );
         assert!(!result.is_error);
         assert!(result.content.contains("main.rs"));
         assert!(result.content.contains("lib.rs"));
@@ -1398,11 +1443,14 @@ mod tests {
             std::fs::write(dir.join(format!("file_{i}.rs")), "").unwrap();
         }
 
-        let result = SearchFiles.execute(&default_ctx(), serde_json::json!({
-            "path": dir.to_str().unwrap(),
-            "pattern": "*.rs",
-            "max_results": 3
-        }));
+        let result = SearchFiles.execute(
+            &default_ctx(),
+            serde_json::json!({
+                "path": dir.to_str().unwrap(),
+                "pattern": "*.rs",
+                "max_results": 3
+            }),
+        );
         assert!(!result.is_error);
         let count = result.content.matches("file_").count();
         assert_eq!(count, 3);
@@ -1432,7 +1480,8 @@ mod tests {
     #[test]
     fn test_start_agent_param_validation() {
         // Missing agent field
-        let result = StartAgent.execute(&default_ctx(), serde_json::json!({ "workspace_id": "w1" }));
+        let result =
+            StartAgent.execute(&default_ctx(), serde_json::json!({ "workspace_id": "w1" }));
         assert!(result.is_error);
         assert!(result.content.contains("agent"));
 
@@ -1446,8 +1495,12 @@ mod tests {
     fn test_start_agent_param_schema() {
         let params = StartAgent.parameters();
         assert_eq!(params["type"].as_str().unwrap(), "object");
-        let required: Vec<String> = params["required"].as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap().to_string()).collect();
+        let required: Vec<String> = params["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
         assert!(required.contains(&"agent".to_string()));
         assert!(required.contains(&"workspace_id".to_string()));
     }
@@ -1458,7 +1511,8 @@ mod tests {
         assert!(result.is_error);
         assert!(result.content.contains("pane_id"));
 
-        let result = SendInstruction.execute(&default_ctx(), serde_json::json!({ "pane_id": "p-1" }));
+        let result =
+            SendInstruction.execute(&default_ctx(), serde_json::json!({ "pane_id": "p-1" }));
         assert!(result.is_error);
         assert!(result.content.contains("text"));
     }
@@ -1489,8 +1543,12 @@ mod tests {
     fn test_split_pane_param_schema() {
         let params = SplitPane.parameters();
         assert_eq!(params["type"].as_str().unwrap(), "object");
-        let required: Vec<String> = params["required"].as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap().to_string()).collect();
+        let required: Vec<String> = params["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
         assert!(required.contains(&"pane_id".to_string()));
         assert!(required.contains(&"direction".to_string()));
     }
@@ -1507,8 +1565,12 @@ mod tests {
     fn test_arrange_grid_param_schema() {
         let params = ArrangeGrid.parameters();
         assert_eq!(params["type"].as_str().unwrap(), "object");
-        let required: Vec<String> = params["required"].as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap().to_string()).collect();
+        let required: Vec<String> = params["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
         assert!(required.contains(&"tab_id".to_string()));
     }
 
@@ -1521,17 +1583,23 @@ mod tests {
         let ctx = ToolContext::new("ws".into());
 
         // Write a memory entry
-        let result = WriteMemory.execute(&ctx, serde_json::json!({
-            "key": "architecture",
-            "value": "Use microservices"
-        }));
+        let result = WriteMemory.execute(
+            &ctx,
+            serde_json::json!({
+                "key": "architecture",
+                "value": "Use microservices"
+            }),
+        );
         assert!(!result.is_error);
         assert!(result.content.contains("已保存"));
 
         // Read it back
-        let result = ReadMemory.execute(&ctx, serde_json::json!({
-            "key": "architecture"
-        }));
+        let result = ReadMemory.execute(
+            &ctx,
+            serde_json::json!({
+                "key": "architecture"
+            }),
+        );
         assert!(!result.is_error);
         assert_eq!(result.content, "Use microservices");
     }
@@ -1540,30 +1608,42 @@ mod tests {
     fn test_write_memory_update_existing() {
         let ctx = ToolContext::new("ws".into());
 
-        let _ = WriteMemory.execute(&ctx, serde_json::json!({
-            "key": "config",
-            "value": "v1"
-        }));
+        let _ = WriteMemory.execute(
+            &ctx,
+            serde_json::json!({
+                "key": "config",
+                "value": "v1"
+            }),
+        );
 
-        let result = WriteMemory.execute(&ctx, serde_json::json!({
-            "key": "config",
-            "value": "v2"
-        }));
+        let result = WriteMemory.execute(
+            &ctx,
+            serde_json::json!({
+                "key": "config",
+                "value": "v2"
+            }),
+        );
         assert!(!result.is_error);
         assert!(result.content.contains("已更新"));
 
-        let result = ReadMemory.execute(&ctx, serde_json::json!({
-            "key": "config"
-        }));
+        let result = ReadMemory.execute(
+            &ctx,
+            serde_json::json!({
+                "key": "config"
+            }),
+        );
         assert_eq!(result.content, "v2");
     }
 
     #[test]
     fn test_read_memory_not_found() {
         let ctx = ToolContext::new("ws".into());
-        let result = ReadMemory.execute(&ctx, serde_json::json!({
-            "key": "nonexistent"
-        }));
+        let result = ReadMemory.execute(
+            &ctx,
+            serde_json::json!({
+                "key": "nonexistent"
+            }),
+        );
         assert!(!result.is_error); // returns OK with "not found" message
         assert!(result.content.contains("不存在"));
     }
@@ -1592,22 +1672,34 @@ mod tests {
     fn test_search_memory() {
         let ctx = ToolContext::new("ws".into());
 
-        let _ = WriteMemory.execute(&ctx, serde_json::json!({
-            "key": "arch",
-            "value": "microservices architecture"
-        }));
-        let _ = WriteMemory.execute(&ctx, serde_json::json!({
-            "key": "db",
-            "value": "use PostgreSQL"
-        }));
-        let _ = WriteMemory.execute(&ctx, serde_json::json!({
-            "key": "auth",
-            "value": "JWT token based auth"
-        }));
+        let _ = WriteMemory.execute(
+            &ctx,
+            serde_json::json!({
+                "key": "arch",
+                "value": "microservices architecture"
+            }),
+        );
+        let _ = WriteMemory.execute(
+            &ctx,
+            serde_json::json!({
+                "key": "db",
+                "value": "use PostgreSQL"
+            }),
+        );
+        let _ = WriteMemory.execute(
+            &ctx,
+            serde_json::json!({
+                "key": "auth",
+                "value": "JWT token based auth"
+            }),
+        );
 
-        let result = SearchMemory.execute(&ctx, serde_json::json!({
-            "query": "architecture"
-        }));
+        let result = SearchMemory.execute(
+            &ctx,
+            serde_json::json!({
+                "query": "architecture"
+            }),
+        );
         assert!(!result.is_error);
         assert!(result.content.contains("arch"));
         assert!(result.content.contains("microservices"));
@@ -1617,14 +1709,20 @@ mod tests {
     fn test_search_memory_case_insensitive() {
         let ctx = ToolContext::new("ws".into());
 
-        let _ = WriteMemory.execute(&ctx, serde_json::json!({
-            "key": "k1",
-            "value": "Hello World"
-        }));
+        let _ = WriteMemory.execute(
+            &ctx,
+            serde_json::json!({
+                "key": "k1",
+                "value": "Hello World"
+            }),
+        );
 
-        let result = SearchMemory.execute(&ctx, serde_json::json!({
-            "query": "hello"
-        }));
+        let result = SearchMemory.execute(
+            &ctx,
+            serde_json::json!({
+                "query": "hello"
+            }),
+        );
         assert!(!result.is_error);
         assert!(result.content.contains("k1"));
     }
@@ -1633,9 +1731,12 @@ mod tests {
     fn test_search_memory_no_results() {
         let ctx = ToolContext::new("ws".into());
 
-        let result = SearchMemory.execute(&ctx, serde_json::json!({
-            "query": "nonexistent_key_value"
-        }));
+        let result = SearchMemory.execute(
+            &ctx,
+            serde_json::json!({
+                "query": "nonexistent_key_value"
+            }),
+        );
         assert!(!result.is_error);
         assert!(result.content.contains("未找到"));
     }
@@ -1645,16 +1746,22 @@ mod tests {
         let ctx = ToolContext::new("ws".into());
 
         for i in 0..5 {
-            let _ = WriteMemory.execute(&ctx, serde_json::json!({
-                "key": format!("item_{i}"),
-                "value": format!("shared keyword {}", i)
-            }));
+            let _ = WriteMemory.execute(
+                &ctx,
+                serde_json::json!({
+                    "key": format!("item_{i}"),
+                    "value": format!("shared keyword {}", i)
+                }),
+            );
         }
 
-        let result = SearchMemory.execute(&ctx, serde_json::json!({
-            "query": "shared",
-            "limit": 2
-        }));
+        let result = SearchMemory.execute(
+            &ctx,
+            serde_json::json!({
+                "query": "shared",
+                "limit": 2
+            }),
+        );
         assert!(!result.is_error);
         // Should contain at most 2 results
         let count = result.content.matches("item_").count();
@@ -1817,8 +1924,16 @@ mod tests {
     fn test_read_file_parameters() {
         let params = ReadFile.parameters();
         assert_eq!(params["type"].as_str().unwrap(), "object");
-        assert_eq!(params["properties"]["path"]["type"].as_str().unwrap(), "string");
-        assert!(params["required"].as_array().unwrap().contains(&serde_json::json!("path")));
+        assert_eq!(
+            params["properties"]["path"]["type"].as_str().unwrap(),
+            "string"
+        );
+        assert!(
+            params["required"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!("path"))
+        );
     }
 
     #[test]
@@ -1832,16 +1947,24 @@ mod tests {
     #[test]
     fn test_list_agents_no_required_params() {
         let params = ListAgents.parameters();
-        let required: Vec<String> = params["required"].as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap().to_string()).collect();
+        let required: Vec<String> = params["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
         assert!(required.is_empty());
     }
 
     #[test]
     fn test_start_agent_required_params() {
         let params = StartAgent.parameters();
-        let required: Vec<String> = params["required"].as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap().to_string()).collect();
+        let required: Vec<String> = params["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
         assert!(required.contains(&"agent".to_string()));
         assert!(required.contains(&"workspace_id".to_string()));
     }
@@ -1849,8 +1972,12 @@ mod tests {
     #[test]
     fn test_send_instruction_required_params() {
         let params = SendInstruction.parameters();
-        let required: Vec<String> = params["required"].as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap().to_string()).collect();
+        let required: Vec<String> = params["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
         assert!(required.contains(&"pane_id".to_string()));
         assert!(required.contains(&"text".to_string()));
     }
@@ -1858,8 +1985,12 @@ mod tests {
     #[test]
     fn test_read_output_optional_lines() {
         let params = ReadOutput.parameters();
-        let required: Vec<String> = params["required"].as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap().to_string()).collect();
+        let required: Vec<String> = params["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
         assert!(required.contains(&"pane_id".to_string()));
         assert!(!required.contains(&"lines".to_string()));
     }
@@ -1868,8 +1999,11 @@ mod tests {
     fn test_split_pane_direction_enum() {
         let params = SplitPane.parameters();
         let enum_values: Vec<String> = params["properties"]["direction"]["enum"]
-            .as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap().to_string()).collect();
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
         assert!(enum_values.contains(&"horizontal".to_string()));
         assert!(enum_values.contains(&"vertical".to_string()));
     }
@@ -1886,13 +2020,21 @@ mod tests {
     #[test]
     fn test_memory_tools_required_params() {
         let read_params = ReadMemory.parameters();
-        let read_required: Vec<String> = read_params["required"].as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap().to_string()).collect();
+        let read_required: Vec<String> = read_params["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
         assert_eq!(read_required, vec!["key"]);
 
         let write_params = WriteMemory.parameters();
-        let write_required: Vec<String> = write_params["required"].as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap().to_string()).collect();
+        let write_required: Vec<String> = write_params["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
         assert!(write_required.contains(&"key".to_string()));
         assert!(write_required.contains(&"value".to_string()));
     }
@@ -1937,7 +2079,8 @@ mod tests {
 
     #[test]
     fn test_tool_context_with_herdr() {
-        let herdr = crate::ai::herdr::HerdrIpcClient::new(std::path::PathBuf::from("/tmp/test.sock"));
+        let herdr =
+            crate::ai::herdr::HerdrIpcClient::new(std::path::PathBuf::from("/tmp/test.sock"));
         let ctx = ToolContext::with_herdr("ws-2".into(), herdr);
         assert_eq!(ctx.workspace_id, "ws-2");
         assert!(ctx.herdr_client.is_some());

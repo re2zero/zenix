@@ -10,10 +10,7 @@
 //! Output is a `Vec<AnyElement>` (GPUI segments) suitable for rendering
 //! inside a chat bubble.
 
-use gpui::{
-    AnyElement, FontWeight, IntoElement, ParentElement as _, Styled as _,
-    div, px,
-};
+use gpui::{AnyElement, FontWeight, IntoElement, ParentElement as _, Styled as _, div, px};
 use gpui_component::{Theme, h_flex, v_flex};
 
 // ── Segment types ───────────────────────────────────────────────────────
@@ -119,9 +116,7 @@ fn parse_markdown(text: &str) -> Vec<MdSegment> {
 
         // Flush remaining plain text at end of line
         if !current_plain.is_empty() {
-            if !segments.is_empty()
-                && !matches!(segments.last(), Some(MdSegment::ListItem(_)))
-            {
+            if !segments.is_empty() && !matches!(segments.last(), Some(MdSegment::ListItem(_))) {
                 segments.push(MdSegment::Plain(String::new())); // newline spacer
             }
             segments.push(MdSegment::Plain(current_plain.clone()));
@@ -314,14 +309,12 @@ fn render_segments(segments: &[MdSegment], theme: &Theme) -> Vec<AnyElement> {
                     .child(s.clone())
                     .into_any_element()
             }
-            MdSegment::Bold(s) => {
-                txt(px(13.))
-                    .font_weight(FontWeight::BOLD)
-                    .text_color(fg)
-                    .line_height(px(18.))
-                    .child(s.clone())
-                    .into_any_element()
-            }
+            MdSegment::Bold(s) => txt(px(13.))
+                .font_weight(FontWeight::BOLD)
+                .text_color(fg)
+                .line_height(px(18.))
+                .child(s.clone())
+                .into_any_element(),
             MdSegment::Italic(s) => {
                 let italic = s.clone();
                 txt(px(13.))
@@ -376,11 +369,7 @@ fn render_segments(segments: &[MdSegment], theme: &Theme) -> Vec<AnyElement> {
                 h_flex()
                     .gap(px(8.))
                     .items_start()
-                    .child(
-                        txt(px(13.))
-                            .text_color(list_prefix)
-                            .child("•".to_string()),
-                    )
+                    .child(txt(px(13.)).text_color(list_prefix).child("•".to_string()))
                     .child(
                         txt(px(13.))
                             .text_color(fg)
@@ -409,8 +398,15 @@ mod tests {
     fn test_plain_text() {
         let segments = parse_markdown("Hello world");
         assert!(!segments.is_empty());
-        let plain_segments: Vec<&MdSegment> = segments.iter().filter(|s| matches!(s, MdSegment::Plain(_))).collect();
-        assert!(plain_segments.iter().any(|s| matches!(s, MdSegment::Plain(s) if s == "Hello world")));
+        let plain_segments: Vec<&MdSegment> = segments
+            .iter()
+            .filter(|s| matches!(s, MdSegment::Plain(_)))
+            .collect();
+        assert!(
+            plain_segments
+                .iter()
+                .any(|s| matches!(s, MdSegment::Plain(s) if s == "Hello world"))
+        );
     }
 
     #[test]
@@ -426,7 +422,9 @@ mod tests {
     #[test]
     fn test_italic() {
         let segments = parse_markdown("*italic text*");
-        let italic = segments.iter().find(|s| matches!(s, MdSegment::Italic(s) if s == "italic text"));
+        let italic = segments
+            .iter()
+            .find(|s| matches!(s, MdSegment::Italic(s) if s == "italic text"));
         assert!(italic.is_some(), "should find italic, got {:?}", segments);
     }
 
@@ -434,7 +432,9 @@ mod tests {
     fn test_inline_code() {
         let segments = parse_markdown("Use `fn main` in Rust");
         assert!(!segments.is_empty());
-        let has_code = segments.iter().any(|s| matches!(s, MdSegment::InlineCode(c) if c == "fn main"));
+        let has_code = segments
+            .iter()
+            .any(|s| matches!(s, MdSegment::InlineCode(c) if c == "fn main"));
         assert!(has_code, "should find inline code, got {:?}", segments);
     }
 
@@ -442,14 +442,19 @@ mod tests {
     fn test_code_block() {
         let text = "```rust\nfn main() {}\n```";
         let segments = parse_markdown(text);
-        let has_code = segments.iter().any(|s| matches!(s, MdSegment::CodeBlock(c) if c.contains("fn main")));
+        let has_code = segments
+            .iter()
+            .any(|s| matches!(s, MdSegment::CodeBlock(c) if c.contains("fn main")));
         assert!(has_code, "should find code block, got {:?}", segments);
     }
 
     #[test]
     fn test_list_item_dash() {
         let segments = parse_markdown("- item one\n- item two");
-        let list_items: Vec<&MdSegment> = segments.iter().filter(|s| matches!(s, MdSegment::ListItem(_))).collect();
+        let list_items: Vec<&MdSegment> = segments
+            .iter()
+            .filter(|s| matches!(s, MdSegment::ListItem(_)))
+            .collect();
         assert_eq!(list_items.len(), 2);
         match &list_items[0] {
             MdSegment::ListItem(s) => assert_eq!(s, "item one"),
@@ -460,7 +465,10 @@ mod tests {
     #[test]
     fn test_list_item_numbered() {
         let segments = parse_markdown("1. first\n2. second");
-        let list_items: Vec<&MdSegment> = segments.iter().filter(|s| matches!(s, MdSegment::ListItem(_))).collect();
+        let list_items: Vec<&MdSegment> = segments
+            .iter()
+            .filter(|s| matches!(s, MdSegment::ListItem(_)))
+            .collect();
         assert_eq!(list_items.len(), 2);
         match &list_items[0] {
             MdSegment::ListItem(s) => assert_eq!(s, "first"),
@@ -471,7 +479,10 @@ mod tests {
     #[test]
     fn test_list_item_star() {
         let segments = parse_markdown("* star item");
-        let list_items: Vec<&MdSegment> = segments.iter().filter(|s| matches!(s, MdSegment::ListItem(_))).collect();
+        let list_items: Vec<&MdSegment> = segments
+            .iter()
+            .filter(|s| matches!(s, MdSegment::ListItem(_)))
+            .collect();
         assert_eq!(list_items.len(), 1);
         match &list_items[0] {
             MdSegment::ListItem(s) => assert_eq!(s, "star item"),
@@ -483,42 +494,84 @@ mod tests {
     fn test_mixed_inline() {
         let text = "Use **bold** and *italic* and `code`";
         let segments = parse_markdown(text);
-        assert!(segments.iter().any(|s| matches!(s, MdSegment::Bold(s) if s == "bold")));
-        assert!(segments.iter().any(|s| matches!(s, MdSegment::Italic(s) if s == "italic")));
-        assert!(segments.iter().any(|s| matches!(s, MdSegment::InlineCode(s) if s == "code")));
+        assert!(
+            segments
+                .iter()
+                .any(|s| matches!(s, MdSegment::Bold(s) if s == "bold"))
+        );
+        assert!(
+            segments
+                .iter()
+                .any(|s| matches!(s, MdSegment::Italic(s) if s == "italic"))
+        );
+        assert!(
+            segments
+                .iter()
+                .any(|s| matches!(s, MdSegment::InlineCode(s) if s == "code"))
+        );
     }
 
     #[test]
     fn test_empty_string() {
         let segments = parse_markdown("");
-        assert!(segments.is_empty() || segments.iter().all(|s| matches!(s, MdSegment::Plain(s) if s.is_empty())));
+        assert!(
+            segments.is_empty()
+                || segments
+                    .iter()
+                    .all(|s| matches!(s, MdSegment::Plain(s) if s.is_empty()))
+        );
     }
 
     #[test]
     fn test_multiline_plain() {
         let segments = parse_markdown("line one\nline two");
-        let plain_segments: Vec<&MdSegment> = segments.iter().filter(|s| matches!(s, MdSegment::Plain(s) if !s.is_empty())).collect();
-        assert!(plain_segments.len() >= 2, "should have at least 2 non-empty plain segments, got {:?}", segments);
+        let plain_segments: Vec<&MdSegment> = segments
+            .iter()
+            .filter(|s| matches!(s, MdSegment::Plain(s) if !s.is_empty()))
+            .collect();
+        assert!(
+            plain_segments.len() >= 2,
+            "should have at least 2 non-empty plain segments, got {:?}",
+            segments
+        );
     }
 
     #[test]
     fn test_unmatched_backtick_kept_as_plain() {
         let segments = parse_markdown("no closing ` backtick");
-        let has_plain = segments.iter().any(|s| matches!(s, MdSegment::Plain(s) if s.contains('`')));
-        assert!(has_plain, "should keep unmatched backtick as plain text, got {:?}", segments);
+        let has_plain = segments
+            .iter()
+            .any(|s| matches!(s, MdSegment::Plain(s) if s.contains('`')));
+        assert!(
+            has_plain,
+            "should keep unmatched backtick as plain text, got {:?}",
+            segments
+        );
     }
 
     #[test]
     fn test_unmatched_star_kept_as_plain() {
         let segments = parse_markdown("no closing * star");
-        let has_plain = segments.iter().any(|s| matches!(s, MdSegment::Plain(s) if s.contains('*')));
-        assert!(has_plain, "should keep unmatched star as plain text, got {:?}", segments);
+        let has_plain = segments
+            .iter()
+            .any(|s| matches!(s, MdSegment::Plain(s) if s.contains('*')));
+        assert!(
+            has_plain,
+            "should keep unmatched star as plain text, got {:?}",
+            segments
+        );
     }
 
     #[test]
     fn test_double_backtick_inline_code() {
         let segments = parse_markdown("``fn main() {}``");
-        let has_code = segments.iter().any(|s| matches!(s, MdSegment::InlineCode(s) if s == "fn main() {}"));
-        assert!(has_code, "should parse double-backtick code, got {:?}", segments);
+        let has_code = segments
+            .iter()
+            .any(|s| matches!(s, MdSegment::InlineCode(s) if s == "fn main() {}"));
+        assert!(
+            has_code,
+            "should parse double-backtick code, got {:?}",
+            segments
+        );
     }
 }

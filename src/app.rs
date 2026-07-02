@@ -170,7 +170,22 @@ fn timestamp_now() -> String {
                 y += 1;
             }
             let month_days = [
-                31, if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 { 29 } else { 28 }, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31,
+                31,
+                if (y % 4 == 0 && y % 100 != 0) || y % 400 == 0 {
+                    29
+                } else {
+                    28
+                },
+                31,
+                30,
+                31,
+                30,
+                31,
+                31,
+                30,
+                31,
+                30,
+                31,
             ];
             let mut m = 0usize;
             for (i, &md) in month_days.iter().enumerate() {
@@ -1182,158 +1197,176 @@ impl Render for ZenixApp {
                 if !crate::ai::engine::OrchestratorEngine::has_available_provider() {
                     Some(render_ai_config_empty(&theme).into_any_element())
                 } else {
-                    let data = self.ai_chat_panel.get_or_insert_with(crate::ai::chat::AiChatPanelData::new);
-                // Lazy-create the InputState entity for the chat input.
-                if self.chat_input_entity.is_none() {
-                    let input = cx.new(|cx| {
-                        gpui_component::input::InputState::new(window, cx)
-                            .placeholder(t("ai.chat.placeholder"))
-                    });
-                    // Subscribe to input events: Enter sends, Escape clears focus.
-                    cx.subscribe(&input, {
-                        let _entity = cx.entity().clone();
-                        move |this: &mut ZenixApp, _input: gpui::Entity<gpui_component::input::InputState>, event: &gpui_component::input::InputEvent, cx| {
-                            match event {
-                                gpui_component::input::InputEvent::PressEnter { shift: false, .. } => {
-                                    // Send message
-                                    let text = _input.read(cx).value().to_string();
-                                    if !text.trim().is_empty() {
-                                        if let Some(ref mut data) = this.ai_chat_panel {
-                                            // Save user message to session
-                                            let session_id = data.current_session_id.clone();
-                                            if let Some(sid) = session_id {
-                                                if let Ok(mgr) = crate::ai::session::SessionManager::open() {
-                                                    let seq = mgr.get_messages(&sid).map(|msgs| msgs.len() as i64 + 1).unwrap_or(0);
-                                                    let msg = crate::ai::session::ChatMessage {
-                                                        id: 0,
-                                                        session_id: sid.clone(),
-                                                        role: "user".into(),
-                                                        content: text.clone(),
-                                                        agent_activities: None,
-                                                        timestamp: timestamp_now(),
-                                                        sequence: seq,
-                                                    };
-                                                    let _ = mgr.add_message(&msg);
-                                                    data.messages.push(msg);
+                    let data = self
+                        .ai_chat_panel
+                        .get_or_insert_with(crate::ai::chat::AiChatPanelData::new);
+                    // Lazy-create the InputState entity for the chat input.
+                    if self.chat_input_entity.is_none() {
+                        let input = cx.new(|cx| {
+                            gpui_component::input::InputState::new(window, cx)
+                                .placeholder(t("ai.chat.placeholder"))
+                        });
+                        // Subscribe to input events: Enter sends, Escape clears focus.
+                        cx.subscribe(&input, {
+                            let _entity = cx.entity().clone();
+                            move |this: &mut ZenixApp,
+                                  _input: gpui::Entity<gpui_component::input::InputState>,
+                                  event: &gpui_component::input::InputEvent,
+                                  cx| {
+                                match event {
+                                    gpui_component::input::InputEvent::PressEnter {
+                                        shift: false,
+                                        ..
+                                    } => {
+                                        // Send message
+                                        let text = _input.read(cx).value().to_string();
+                                        if !text.trim().is_empty() {
+                                            if let Some(ref mut data) = this.ai_chat_panel {
+                                                // Save user message to session
+                                                let session_id = data.current_session_id.clone();
+                                                if let Some(sid) = session_id {
+                                                    if let Ok(mgr) =
+                                                        crate::ai::session::SessionManager::open()
+                                                    {
+                                                        let seq = mgr
+                                                            .get_messages(&sid)
+                                                            .map(|msgs| msgs.len() as i64 + 1)
+                                                            .unwrap_or(0);
+                                                        let msg = crate::ai::session::ChatMessage {
+                                                            id: 0,
+                                                            session_id: sid.clone(),
+                                                            role: "user".into(),
+                                                            content: text.clone(),
+                                                            agent_activities: None,
+                                                            timestamp: timestamp_now(),
+                                                            sequence: seq,
+                                                        };
+                                                        let _ = mgr.add_message(&msg);
+                                                        data.messages.push(msg);
+                                                    }
                                                 }
+                                                data.input_value = text;
+                                                // Start orchestrator (simplified)
+                                                data.is_streaming = true;
                                             }
-                                            data.input_value = text;
-                                            // Start orchestrator (simplified)
-                                            data.is_streaming = true;
                                         }
+                                        cx.notify();
                                     }
-                                    cx.notify();
-                                }
-                                gpui_component::input::InputEvent::PressEnter { shift: true, .. } => {
-                                    // Shift+Enter: newline (default behavior, no special handling needed)
-                                }
-                                gpui_component::input::InputEvent::Change => {
-                                    if let Some(ref mut data) = this.ai_chat_panel {
-                                        data.input_value = _input.read(cx).value().to_string();
+                                    gpui_component::input::InputEvent::PressEnter {
+                                        shift: true,
+                                        ..
+                                    } => {
+                                        // Shift+Enter: newline (default behavior, no special handling needed)
                                     }
-                                    cx.notify();
+                                    gpui_component::input::InputEvent::Change => {
+                                        if let Some(ref mut data) = this.ai_chat_panel {
+                                            data.input_value = _input.read(cx).value().to_string();
+                                        }
+                                        cx.notify();
+                                    }
+                                    _ => {}
                                 }
-                                _ => {}
                             }
-                        }
-                    }).detach();
-                    self.chat_input_entity = Some(input);
-                }
-                // If zenix provider is configured, fetch available models in the background.
-                if data.selected_provider_id == "Zenix" && data.available_models.is_empty() {
-                    if let Some(zp) = crate::api_provider::zenix_provider() {
-                        let provider = zp.clone();
-                        let entity = cx.entity().clone();
-                        cx.spawn(async move |_this, cx| {
-                            let models = std::thread::spawn(move || {
-                                crate::api_provider::fetch_models(&provider)
-                            })
-                            .join()
-                            .unwrap_or_else(|_| Err("thread panic".into()));
-                            if let Ok(list) = models {
-                                let _ = entity.update(cx, |this, cx| {
-                                    if let Some(ref mut data) = this.ai_chat_panel {
-                                        data.available_models = list;
-                                        if data.selected_model.is_empty() {
-                                            data.selected_model = data
-                                                .available_models
-                                                .first()
-                                                .cloned()
-                                                .unwrap_or_default();
+                        })
+                        .detach();
+                        self.chat_input_entity = Some(input);
+                    }
+                    // If zenix provider is configured, fetch available models in the background.
+                    if data.selected_provider_id == "Zenix" && data.available_models.is_empty() {
+                        if let Some(zp) = crate::api_provider::zenix_provider() {
+                            let provider = zp.clone();
+                            let entity = cx.entity().clone();
+                            cx.spawn(async move |_this, cx| {
+                                let models = std::thread::spawn(move || {
+                                    crate::api_provider::fetch_models(&provider)
+                                })
+                                .join()
+                                .unwrap_or_else(|_| Err("thread panic".into()));
+                                if let Ok(list) = models {
+                                    let _ = entity.update(cx, |this, cx| {
+                                        if let Some(ref mut data) = this.ai_chat_panel {
+                                            data.available_models = list;
+                                            if data.selected_model.is_empty() {
+                                                data.selected_model = data
+                                                    .available_models
+                                                    .first()
+                                                    .cloned()
+                                                    .unwrap_or_default();
+                                            }
                                         }
-                                    }
-                                    cx.notify();
-                                });
+                                        cx.notify();
+                                    });
+                                }
+                            })
+                            .detach();
+                        }
+                    }
+                    // Start agent polling if not already running.
+                    if !self.agent_polling {
+                        self.agent_polling = true;
+                        cx.spawn(async move |this, cx| {
+                            loop {
+                                cx.background_executor().timer(Duration::from_secs(2)).await;
+                                // Try to connect to herdr and list agents.
+                                let result = std::thread::spawn(|| {
+                                    let mut client = crate::ai::herdr::HerdrIpcClient::new(
+                                        crate::client::herdr_socket_path(),
+                                    );
+                                    client.list_agents().ok()
+                                })
+                                .join();
+                                if let Ok(Some(agents)) = result {
+                                    let _ = this.update(cx, |this, cx| {
+                                        if let Some(ref mut data) = this.ai_chat_panel {
+                                            data.agent_statuses = agents
+                                                .iter()
+                                                .map(|a| {
+                                                    let output =
+                                                        crate::ai::herdr::HerdrIpcClient::new(
+                                                            crate::client::herdr_socket_path(),
+                                                        )
+                                                        .read_agent(
+                                                            &a.terminal_id,
+                                                            crate::ai::herdr::ReadSource::Recent,
+                                                            3,
+                                                        )
+                                                        .unwrap_or_default();
+                                                    crate::ai::chat::AgentMonitorEntry::from_herdr(
+                                                        a.agent
+                                                            .clone()
+                                                            .unwrap_or_else(|| "agent".into()),
+                                                        a.pane_id.clone(),
+                                                        a.agent_status,
+                                                        output,
+                                                    )
+                                                })
+                                                .collect();
+                                            data.active_agent_count = data
+                                                .agent_statuses
+                                                .iter()
+                                                .filter(|a| {
+                                                    a.status != "done" && a.status != "idle"
+                                                })
+                                                .count();
+                                        }
+                                        cx.notify();
+                                    });
+                                } else {
+                                    // Connection failed — stop polling, will restart when panel reopens.
+                                    let _ = this.update(cx, |this, _| {
+                                        this.agent_polling = false;
+                                    });
+                                    break;
+                                }
                             }
                         })
                         .detach();
                     }
-                }
-                // Start agent polling if not already running.
-                if !self.agent_polling {
-                    self.agent_polling = true;
-                    cx.spawn(async move |this, cx| {
-                        loop {
-                            cx.background_executor()
-                                .timer(Duration::from_secs(2))
-                                .await;
-                            // Try to connect to herdr and list agents.
-                            let result = std::thread::spawn(|| {
-                                let mut client =
-                                    crate::ai::herdr::HerdrIpcClient::new(
-                                        crate::client::herdr_socket_path(),
-                                    );
-                                client.list_agents().ok()
-                            })
-                            .join();
-                            if let Ok(Some(agents)) = result {
-                                let _ = this.update(cx, |this, cx| {
-                                    if let Some(ref mut data) = this.ai_chat_panel {
-                                        data.agent_statuses = agents
-                                            .iter()
-                                            .map(|a| {
-                                                let output = crate::ai::herdr::HerdrIpcClient::new(
-                                                    crate::client::herdr_socket_path(),
-                                                )
-                                                .read_agent(
-                                                    &a.terminal_id,
-                                                    crate::ai::herdr::ReadSource::Recent,
-                                                    3,
-                                                )
-                                                .unwrap_or_default();
-                                                crate::ai::chat::AgentMonitorEntry::from_herdr(
-                                                    a.agent
-                                                        .clone()
-                                                        .unwrap_or_else(|| "agent".into()),
-                                                    a.pane_id.clone(),
-                                                    a.agent_status,
-                                                    output,
-                                                )
-                                            })
-                                            .collect();
-                                        data.active_agent_count = data
-                                            .agent_statuses
-                                            .iter()
-                                            .filter(|a| {
-                                                a.status != "done" && a.status != "idle"
-                                            })
-                                            .count();
-                                    }
-                                    cx.notify();
-                                });
-                            } else {
-                                // Connection failed — stop polling, will restart when panel reopens.
-                                let _ = this.update(cx, |this, _| {
-                                    this.agent_polling = false;
-                                });
-                                break;
-                            }
-                        }
-                    })
-                    .detach();
-                }
-                let input_ref = self.chat_input_entity.as_ref();
-                Some(crate::ai::chat::render_ai_chat_panel(data, &theme, input_ref).into_any_element())
+                    let input_ref = self.chat_input_entity.as_ref();
+                    Some(
+                        crate::ai::chat::render_ai_chat_panel(data, &theme, input_ref)
+                            .into_any_element(),
+                    )
                 }
             }
             _ => None,
@@ -2330,7 +2363,10 @@ impl Render for ZenixApp {
             // Subscribe to scrollback input for Enter/blur handling
             cx.subscribe(&scrollback_input, {
                 let _entity = entity.clone();
-                move |this: &mut ZenixApp, _input: gpui::Entity<gpui_component::input::InputState>, event: &gpui_component::input::InputEvent, cx| {
+                move |this: &mut ZenixApp,
+                      _input: gpui::Entity<gpui_component::input::InputState>,
+                      event: &gpui_component::input::InputEvent,
+                      cx| {
                     let save_value = match event {
                         gpui_component::input::InputEvent::PressEnter { shift: false, .. } => true,
                         gpui_component::input::InputEvent::Blur => true,
@@ -2348,7 +2384,8 @@ impl Render for ZenixApp {
                         }
                     }
                 }
-            }).detach();
+            })
+            .detach();
 
             div()
                 .relative()

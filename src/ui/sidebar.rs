@@ -58,12 +58,7 @@ pub fn sidebar(
                     v_flex()
                         .gap_1()
                         .px(px(4.))
-                        .child(icon_btn(
-                            "ai",
-                            "\u{1F916}",
-                            active == Panel::AiChat,
-                            on_ai,
-                        ))
+                        .child(icon_btn("ai", "\u{1F916}", active == Panel::AiChat, on_ai))
                         .child(icon_btn(
                             "settings",
                             "\u{2699}\u{FE0F}",

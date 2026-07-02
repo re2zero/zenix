@@ -18,14 +18,13 @@ use futures::StreamExt as _;
 use serde::{Deserialize, Serialize};
 
 use crate::ai::compactor::Compactor;
-use crate::ai::error::{user_friendly, AiError};
+use crate::ai::error::{AiError, user_friendly};
 use crate::ai::herdr::{HerdrIpcClient, ReadSource};
 use crate::ai::tools::{Tool, ToolCall, ToolResult};
 use crate::api_provider::ApiProviderConfig;
 
 /// System prompt defining the orchestrator's role.
-pub const SYSTEM_PROMPT: &str =
-    "你是 ZenixAI 编排器。你负责理解用户需求、规划任务分解、将具体执行工作分配给专业 Agent CLI（如 Claude Code、Codex、OpenCode 等）。你不直接写代码或运行命令，只负责规划、调度和结果汇总。用中文回复。";
+pub const SYSTEM_PROMPT: &str = "你是 ZenixAI 编排器。你负责理解用户需求、规划任务分解、将具体执行工作分配给专业 Agent CLI（如 Claude Code、Codex、OpenCode 等）。你不直接写代码或运行命令，只负责规划、调度和结果汇总。用中文回复。";
 
 /// Lightweight chat message reference for the engine (no session/sequence).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -89,9 +88,7 @@ pub struct AgentResult {
 #[derive(Debug, Clone)]
 pub enum DispatchDirective {
     /// JSON-formatted dispatch (preferred format).
-    Json {
-        agents: Vec<AgentTask>,
-    },
+    Json { agents: Vec<AgentTask> },
     /// Text-formatted dispatch (fallback).
     Text {
         agent_name: String,
@@ -142,10 +139,7 @@ pub enum DispatchStreamEvent {
     /// The orchestrator decided to dispatch one or more agents.
     Dispatch(DispatchDirective),
     /// Agent output chunk (streamed in real-time).
-    AgentOutput {
-        agent_name: String,
-        text: String,
-    },
+    AgentOutput { agent_name: String, text: String },
     /// An agent has completed.
     AgentComplete(AgentResult),
     /// A tool was called by the LLM (tool_name, arguments JSON).
@@ -259,18 +253,17 @@ impl OrchestratorEngine {
         on_event: impl Fn(StreamEvent) + Send + 'static,
     ) -> Result<(), AiError> {
         // Ensure system prompt is first
-        let effective_messages = if messages.is_empty()
-            || messages.first().map(|m| m.role.as_str()) != Some("system")
-        {
-            let mut prefixed = vec![ChatMessageRef {
-                role: "system".into(),
-                content: SYSTEM_PROMPT.into(),
-            }];
-            prefixed.extend(messages.iter().cloned());
-            prefixed
-        } else {
-            messages.to_vec()
-        };
+        let effective_messages =
+            if messages.is_empty() || messages.first().map(|m| m.role.as_str()) != Some("system") {
+                let mut prefixed = vec![ChatMessageRef {
+                    role: "system".into(),
+                    content: SYSTEM_PROMPT.into(),
+                }];
+                prefixed.extend(messages.iter().cloned());
+                prefixed
+            } else {
+                messages.to_vec()
+            };
 
         // Build the request payload
         let payload = serde_json::json!({
@@ -299,9 +292,7 @@ impl OrchestratorEngine {
             if !resp.status().is_success() {
                 let status = resp.status();
                 let text = resp.text().await.unwrap_or_default();
-                return Err(AiError::ApiError(format!(
-                    "HTTP {status}: {text}"
-                )));
+                return Err(AiError::ApiError(format!("HTTP {status}: {text}")));
             }
 
             // Parse SSE stream line-by-line.
@@ -330,9 +321,7 @@ impl OrchestratorEngine {
                                 continue;
                             }
                             // Try OpenAI format first (choices[].delta.content)
-                            if let Ok(sse_chunk) =
-                                serde_json::from_str::<SseChunk>(data)
-                            {
+                            if let Ok(sse_chunk) = serde_json::from_str::<SseChunk>(data) {
                                 if let Some(choices) = sse_chunk.choices {
                                     for choice in choices {
                                         if let Some(delta) = choice.delta {
@@ -342,9 +331,7 @@ impl OrchestratorEngine {
                                         }
                                     }
                                 }
-                            } else if let Some(text) =
-                                parse_anthropic_sse_event(data)
-                            {
+                            } else if let Some(text) = parse_anthropic_sse_event(data) {
                                 if text == "__DONE__" {
                                     done = true;
                                 } else if !text.is_empty() {
@@ -405,18 +392,17 @@ impl OrchestratorEngine {
     /// Useful for simple Q&A without real-time rendering.
     pub fn chat_simple(&self, messages: &[ChatMessageRef]) -> Result<String, AiError> {
         // Ensure system prompt is first
-        let effective_messages = if messages.is_empty()
-            || messages.first().map(|m| m.role.as_str()) != Some("system")
-        {
-            let mut prefixed = vec![ChatMessageRef {
-                role: "system".into(),
-                content: SYSTEM_PROMPT.into(),
-            }];
-            prefixed.extend(messages.iter().cloned());
-            prefixed
-        } else {
-            messages.to_vec()
-        };
+        let effective_messages =
+            if messages.is_empty() || messages.first().map(|m| m.role.as_str()) != Some("system") {
+                let mut prefixed = vec![ChatMessageRef {
+                    role: "system".into(),
+                    content: SYSTEM_PROMPT.into(),
+                }];
+                prefixed.extend(messages.iter().cloned());
+                prefixed
+            } else {
+                messages.to_vec()
+            };
 
         let url = self.endpoint_url();
         let api_key = self.api_key.clone();
@@ -645,9 +631,7 @@ impl OrchestratorEngine {
             if !resp.status().is_success() {
                 let status = resp.status();
                 let text = resp.text().await.unwrap_or_default();
-                return Err(AiError::ApiError(format!(
-                    "HTTP {status}: {text}"
-                )));
+                return Err(AiError::ApiError(format!("HTTP {status}: {text}")));
             }
 
             let mut stream = resp.bytes_stream();
@@ -673,9 +657,7 @@ impl OrchestratorEngine {
                                 buffer.clear();
                                 continue;
                             }
-                            if let Ok(sse_chunk) =
-                                serde_json::from_str::<SseChunkWithTools>(data)
-                            {
+                            if let Ok(sse_chunk) = serde_json::from_str::<SseChunkWithTools>(data) {
                                 if let Some(choices) = sse_chunk.choices {
                                     for choice in choices {
                                         if let Some(ref delta) = choice.delta {
@@ -684,20 +666,17 @@ impl OrchestratorEngine {
                                                 on_event_clone(StreamEvent::Token(text.clone()));
                                             }
                                             // Tool calls
-                                            for (name, args) in
-                                                parse_sse_tool_calls(delta)
-                                            {
+                                            for (name, args) in parse_sse_tool_calls(delta) {
                                                 on_event_clone(StreamEvent::ToolCall(
-                                                    name.clone(), args.clone(),
+                                                    name.clone(),
+                                                    args.clone(),
                                                 ));
                                                 tool_calls.push((name, args));
                                             }
                                         }
                                     }
                                 }
-                            } else if let Some(text) =
-                                parse_anthropic_sse_event(data)
-                            {
+                            } else if let Some(text) = parse_anthropic_sse_event(data) {
                                 if text == "__DONE__" {
                                     done = true;
                                 } else if !text.is_empty() {
@@ -720,9 +699,7 @@ impl OrchestratorEngine {
                 let data = &buffer[6..];
                 if data.trim() == "[DONE]" {
                     done = true;
-                } else if let Ok(sse_chunk) =
-                    serde_json::from_str::<SseChunkWithTools>(data)
-                {
+                } else if let Ok(sse_chunk) = serde_json::from_str::<SseChunkWithTools>(data) {
                     if let Some(choices) = sse_chunk.choices {
                         for choice in choices {
                             if let Some(ref delta) = choice.delta {
@@ -731,7 +708,8 @@ impl OrchestratorEngine {
                                 }
                                 for (name, args) in parse_sse_tool_calls(delta) {
                                     on_event_clone(StreamEvent::ToolCall(
-                                        name.clone(), args.clone(),
+                                        name.clone(),
+                                        args.clone(),
                                     ));
                                     tool_calls.push((name, args));
                                 }
@@ -772,29 +750,24 @@ impl OrchestratorEngine {
         executor: &ToolExecutor,
     ) -> Result<String, AiError> {
         // Ensure system prompt is first
-        let effective_messages = if messages.is_empty()
-            || messages.first().map(|m| m.role.as_str()) != Some("system")
-        {
-            let mut prefixed = vec![ChatMessageRef {
-                role: "system".into(),
-                content: SYSTEM_PROMPT.into(),
-            }];
-            prefixed.extend(messages.iter().cloned());
-            prefixed
-        } else {
-            messages.to_vec()
-        };
+        let effective_messages =
+            if messages.is_empty() || messages.first().map(|m| m.role.as_str()) != Some("system") {
+                let mut prefixed = vec![ChatMessageRef {
+                    role: "system".into(),
+                    content: SYSTEM_PROMPT.into(),
+                }];
+                prefixed.extend(messages.iter().cloned());
+                prefixed
+            } else {
+                messages.to_vec()
+            };
 
         let mut loop_messages = effective_messages;
         let mut tool_round = 0;
 
         loop {
             // Build the request payload with tools
-            let payload = build_tool_call_payload(
-                &loop_messages,
-                tools,
-                &self.current_model(),
-            );
+            let payload = build_tool_call_payload(&loop_messages, tools, &self.current_model());
 
             let http_client = self.http_client.clone();
             let endpoint = self.endpoint_url().to_string();
@@ -820,10 +793,7 @@ impl OrchestratorEngine {
 
                     // Extract tool calls from choices[0].message.tool_calls
                     let mut tc = Vec::new();
-                    if let Some(choice) = parsed
-                        .get("choices")
-                        .and_then(|c| c.get(0))
-                    {
+                    if let Some(choice) = parsed.get("choices").and_then(|c| c.get(0)) {
                         if let Some(msg) = choice.get("message") {
                             if let Some(tcs) = msg.get("tool_calls").and_then(|v| v.as_array()) {
                                 for t in tcs {
@@ -875,10 +845,8 @@ impl OrchestratorEngine {
             }
 
             // Execute all tool calls
-            let results: Vec<ToolResult> = tool_calls
-                .iter()
-                .map(|tc| executor.execute(tc))
-                .collect();
+            let results: Vec<ToolResult> =
+                tool_calls.iter().map(|tc| executor.execute(tc)).collect();
 
             // Add tool results as messages
             for result in &results {
@@ -887,11 +855,7 @@ impl OrchestratorEngine {
                     content: format!(
                         "Tool '{}' returned: {}{}",
                         result.tool_name,
-                        if result.is_error {
-                            "ERROR: "
-                        } else {
-                            ""
-                        },
+                        if result.is_error { "ERROR: " } else { "" },
                         result.content
                     ),
                 });
@@ -936,22 +900,25 @@ impl OrchestratorEngine {
         let mut tool_round = 0;
 
         // Arc the callback so it can be shared across loop iterations.
-        let on_event: Arc<dyn Fn(DispatchStreamEvent) + Send + Sync + 'static> =
-            Arc::new(on_event);
+        let on_event: Arc<dyn Fn(DispatchStreamEvent) + Send + Sync + 'static> = Arc::new(on_event);
 
         loop {
             // Check whether the message list needs compaction.
-            let refs: Vec<crate::ai::compactor::MessageRef> =
-                loop_messages.iter().map(crate::ai::compactor::MessageRef::from).collect();
+            let refs: Vec<crate::ai::compactor::MessageRef> = loop_messages
+                .iter()
+                .map(crate::ai::compactor::MessageRef::from)
+                .collect();
             if compactor.should_compress(&refs) {
                 let compacted = compactor.compress_messages(&refs);
-                on_event(DispatchStreamEvent::Compacted(crate::ai::engine::CompactionInfo {
-                    original_count: compacted.original_count,
-                    compressed_count: compacted.compressed_count,
-                    kept_count: compacted.kept_count,
-                    before_tokens: compacted.before_tokens,
-                    after_tokens: compacted.after_tokens,
-                }));
+                on_event(DispatchStreamEvent::Compacted(
+                    crate::ai::engine::CompactionInfo {
+                        original_count: compacted.original_count,
+                        compressed_count: compacted.compressed_count,
+                        kept_count: compacted.kept_count,
+                        before_tokens: compacted.before_tokens,
+                        after_tokens: compacted.after_tokens,
+                    },
+                ));
                 loop_messages = compacted
                     .kept_messages
                     .iter()
@@ -968,33 +935,29 @@ impl OrchestratorEngine {
             let on_event_clone = Arc::clone(&on_event);
 
             let raw_calls = self
-                .chat_stream_with_tools(
-                    &loop_messages,
-                    move |event| {
-                        match event {
-                            StreamEvent::Token(text) => {
-                                collected_clone.lock().unwrap().push_str(&text);
-                                on_event_clone(DispatchStreamEvent::Token(text));
-                            }
-                            StreamEvent::ToolCall(name, args) => {
-                                collected_clone.lock().unwrap().push_str(&format!(
-                                    "[TOOL_CALL: {}({})]",
-                                    name,
-                                    args
-                                ));
-                                on_event_clone(DispatchStreamEvent::ToolCall(name, args));
-                            }
-                            StreamEvent::Error(err) => {
-                                on_event_clone(DispatchStreamEvent::Error(err));
-                            }
-                            StreamEvent::Done => {
-                                on_event_clone(DispatchStreamEvent::Done);
-                            }
-                            // ToolResult events are forwarded via on_event only.
-                            StreamEvent::ToolResult(_, _, _) => {}
+                .chat_stream_with_tools(&loop_messages, move |event| {
+                    match event {
+                        StreamEvent::Token(text) => {
+                            collected_clone.lock().unwrap().push_str(&text);
+                            on_event_clone(DispatchStreamEvent::Token(text));
                         }
-                    },
-                )
+                        StreamEvent::ToolCall(name, args) => {
+                            collected_clone
+                                .lock()
+                                .unwrap()
+                                .push_str(&format!("[TOOL_CALL: {}({})]", name, args));
+                            on_event_clone(DispatchStreamEvent::ToolCall(name, args));
+                        }
+                        StreamEvent::Error(err) => {
+                            on_event_clone(DispatchStreamEvent::Error(err));
+                        }
+                        StreamEvent::Done => {
+                            on_event_clone(DispatchStreamEvent::Done);
+                        }
+                        // ToolResult events are forwarded via on_event only.
+                        StreamEvent::ToolResult(_, _, _) => {}
+                    }
+                })
                 .await?;
 
             // Convert (name, args) pairs to ToolCall objects
@@ -1013,10 +976,8 @@ impl OrchestratorEngine {
             }
 
             // Execute all tool calls (single-threaded, errors don't stop loop)
-            let results: Vec<ToolResult> = tool_calls
-                .iter()
-                .map(|tc| executor.execute(tc))
-                .collect();
+            let results: Vec<ToolResult> =
+                tool_calls.iter().map(|tc| executor.execute(tc)).collect();
 
             // Report results via callback
             for result in &results {
@@ -1034,11 +995,7 @@ impl OrchestratorEngine {
                     content: format!(
                         "Tool '{}' returned: {}{}",
                         result.tool_name,
-                        if result.is_error {
-                            "ERROR: "
-                        } else {
-                            ""
-                        },
+                        if result.is_error { "ERROR: " } else { "" },
                         result.content
                     ),
                 });
@@ -1160,13 +1117,9 @@ fn parse_text_dispatch(text: &str) -> Option<DispatchDirective> {
         return None;
     }
 
-    let instruction = task_line
-        .map(|l| l.trim().to_string())
-        .unwrap_or_default();
+    let instruction = task_line.map(|l| l.trim().to_string()).unwrap_or_default();
 
-    let cwd = cwd_line
-        .map(|l| l.trim().to_string())
-        .unwrap_or_default();
+    let cwd = cwd_line.map(|l| l.trim().to_string()).unwrap_or_default();
 
     if instruction.is_empty() {
         return None;
@@ -1197,7 +1150,11 @@ fn find_pattern(text: &str, prefix: &str) -> Option<String> {
 /// for user-friendly display.
 fn classify_agent_error(err: &AiError) -> AiError {
     match err {
-        AiError::IpcError(msg) if msg.contains("not found") || msg.contains("no such file") || msg.contains("executable") => {
+        AiError::IpcError(msg)
+            if msg.contains("not found")
+                || msg.contains("no such file")
+                || msg.contains("executable") =>
+        {
             AiError::AgentCliNotFound(msg.clone())
         }
         AiError::IpcError(msg) if msg.contains("connection refused") || msg.contains("connect") => {
@@ -1238,11 +1195,7 @@ pub fn execute_agent_task(
     let agent_info = match herdr_client.start_agent(
         &agent_name,
         Some(workspace_id),
-        if cwd.is_empty() {
-            None
-        } else {
-            Some(&cwd)
-        },
+        if cwd.is_empty() { None } else { Some(&cwd) },
         vec![],
     ) {
         Ok(info) => info,
@@ -1308,13 +1261,7 @@ pub fn execute_agent_task(
         summary: if trimmed.is_empty() {
             None
         } else {
-            Some(
-                trimmed
-                    .lines()
-                    .take(5)
-                    .collect::<Vec<_>>()
-                    .join("\n"),
-            )
+            Some(trimmed.lines().take(5).collect::<Vec<_>>().join("\n"))
         },
     }
 }
@@ -1350,8 +1297,7 @@ impl OrchestratorEngine {
         let final_response;
 
         // Arc the callback so it can be shared across loop iterations.
-        let on_event: Arc<dyn Fn(DispatchStreamEvent) + Send + Sync + 'static> =
-            Arc::new(on_event);
+        let on_event: Arc<dyn Fn(DispatchStreamEvent) + Send + Sync + 'static> = Arc::new(on_event);
 
         loop {
             // Phase 1: LLM call with streaming
@@ -1623,7 +1569,10 @@ expires before the access token refresh completes. Here's a suggested fix...
 "#;
 
         let directive = parse_dispatch_directive(response);
-        assert!(directive.is_none(), "regular response should not parse as dispatch");
+        assert!(
+            directive.is_none(),
+            "regular response should not parse as dispatch"
+        );
     }
 
     #[test]
@@ -1757,14 +1706,21 @@ expires before the access token refresh completes. Here's a suggested fix...
 
     #[test]
     fn test_parse_anthropic_text_delta() {
-        let data = r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"hello world"}}"#;
-        assert_eq!(parse_anthropic_sse_event(data), Some("hello world".to_string()));
+        let data =
+            r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"hello world"}}"#;
+        assert_eq!(
+            parse_anthropic_sse_event(data),
+            Some("hello world".to_string())
+        );
     }
 
     #[test]
     fn test_parse_anthropic_message_stop() {
         let data = r#"{"type":"message_stop"}"#;
-        assert_eq!(parse_anthropic_sse_event(data), Some("__DONE__".to_string()));
+        assert_eq!(
+            parse_anthropic_sse_event(data),
+            Some("__DONE__".to_string())
+        );
     }
 
     #[test]
@@ -1800,7 +1756,11 @@ expires before the access token refresh completes. Here's a suggested fix...
             arguments: serde_json::json!({ "path": file_path.to_str().unwrap() }),
         };
         let result = executor.execute(&call);
-        assert!(!result.is_error, "read_file should succeed: {}", result.content);
+        assert!(
+            !result.is_error,
+            "read_file should succeed: {}",
+            result.content
+        );
         assert_eq!(result.content, "test content");
 
         let _ = std::fs::remove_dir_all(&dir);

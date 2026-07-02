@@ -8,12 +8,16 @@
 #![allow(dead_code)]
 
 use gpui::{
-    AnyElement, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _,
-    div, px,
+    AnyElement, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _, div,
+    px,
 };
 use gpui_component::{
-    Theme, button::{Button, ButtonVariants as _}, h_flex, input::{Input, InputState},
-    scroll::ScrollableElement as _, v_flex,
+    Theme,
+    button::{Button, ButtonVariants as _},
+    h_flex,
+    input::{Input, InputState},
+    scroll::ScrollableElement as _,
+    v_flex,
 };
 
 use crate::ai::engine::AgentResult;
@@ -39,8 +43,8 @@ pub enum ConfigDropdownTarget {
 #[derive(Debug, Clone)]
 pub struct AgentBlock {
     pub agent_name: String,
-    pub status: String,       // "running" | "completed" | "failed"
-    pub output: String,       // Full output
+    pub status: String, // "running" | "completed" | "failed"
+    pub output: String, // Full output
     pub summary: Option<String>,
     pub pane_id: String,
     pub is_expanded: bool,
@@ -57,7 +61,7 @@ pub struct AgentBlock {
 pub struct AgentMonitorEntry {
     pub agent_name: String,
     pub pane_id: String,
-    pub status: String,       // "idle" | "working" | "blocked" | "done"
+    pub status: String, // "idle" | "working" | "blocked" | "done"
     pub recent_output: String,
     pub is_expanded: bool,
 }
@@ -213,7 +217,11 @@ impl AiChatPanelData {
 
     /// Mark an agent block as running.
     pub fn mark_agent_running(&mut self, block_id: usize) {
-        if let Some(block) = self.agent_blocks.iter_mut().find(|b| b.block_id == block_id) {
+        if let Some(block) = self
+            .agent_blocks
+            .iter_mut()
+            .find(|b| b.block_id == block_id)
+        {
             block.is_running = true;
             block.status = "running".to_string();
         }
@@ -221,7 +229,11 @@ impl AiChatPanelData {
 
     /// Toggle the expanded state of an agent block by ID.
     pub fn toggle_agent_block(&mut self, block_id: usize) {
-        if let Some(block) = self.agent_blocks.iter_mut().find(|b| b.block_id == block_id) {
+        if let Some(block) = self
+            .agent_blocks
+            .iter_mut()
+            .find(|b| b.block_id == block_id)
+        {
             block.is_expanded = !block.is_expanded;
         }
     }
@@ -343,11 +355,7 @@ pub fn render_ai_chat_panel(
                         .rounded_full()
                         .bg(gpui::hsla(0.55, 0.8, 0.6, 1.0)),
                 )
-                .child(
-                    txt(px(11.))
-                        .text_color(mu)
-                        .child(t("ai.chat.streaming")),
-                ),
+                .child(txt(px(11.)).text_color(mu).child(t("ai.chat.streaming"))),
         );
     }
 
@@ -433,12 +441,8 @@ fn render_config_bar(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
             .into_any_element()
     };
 
-    let sep1 = txt(px(10.))
-        .text_color(gpui::rgba(0x555555FF))
-        .child("▏");
-    let sep2 = txt(px(10.))
-        .text_color(gpui::rgba(0x555555FF))
-        .child("▏");
+    let sep1 = txt(px(10.)).text_color(gpui::rgba(0x555555FF)).child("▏");
+    let sep2 = txt(px(10.)).text_color(gpui::rgba(0x555555FF)).child("▏");
 
     let ws_label = data
         .selected_workspace
@@ -496,7 +500,11 @@ fn render_dropdown(
                         .rounded_sm()
                         .hover(|st| st.bg(gpui::rgba(0xFFFFFF08)))
                         .cursor_pointer()
-                        .child(txt(px(11.)).text_color(style).child(format!("{prefix}{model}")))
+                        .child(
+                            txt(px(11.))
+                                .text_color(style)
+                                .child(format!("{prefix}{model}")),
+                        )
                         .into_any_element()
                 })
                 .collect();
@@ -615,12 +623,7 @@ fn render_search_bar(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
                 .rounded_sm()
                 .hover(|st| st.bg(gpui::rgba(0xFFFFFF08)))
                 .cursor_pointer()
-                .child(
-                    txt(px(10.))
-                        .text_color(mu)
-                        .w(px(80.))
-                        .child(session_title),
-                )
+                .child(txt(px(10.)).text_color(mu).w(px(80.)).child(session_title))
                 .child(
                     txt(px(10.))
                         .text_color(mu)
@@ -640,16 +643,8 @@ fn render_search_bar(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
             h_flex()
                 .items_center()
                 .gap(px(6.))
-                .child(
-                    txt(px(12.))
-                        .text_color(mu)
-                        .child(t("ai.search.icon")),
-                )
-                .child(
-                    txt(px(12.))
-                        .text_color(fg)
-                        .child(data.search_query.clone()),
-                )
+                .child(txt(px(12.)).text_color(mu).child(t("ai.search.icon")))
+                .child(txt(px(12.)).text_color(fg).child(data.search_query.clone()))
                 .child(
                     Button::new("ai-search-clear")
                         .ghost()
@@ -835,10 +830,7 @@ fn render_input_area(
     let input_child: AnyElement = match input_entity {
         Some(entity) => {
             let input = Input::new(entity).into_any_element();
-            h_flex()
-                .flex_grow(1.0)
-                .child(input)
-                .into_any_element()
+            h_flex().flex_grow(1.0).child(input).into_any_element()
         }
         None => h_flex()
             .flex_grow(1.0)
@@ -886,7 +878,10 @@ fn render_bottom_bar(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
     let active_count = data.count_active_agents();
 
     let agent_btn_label = if active_count > 0 {
-        format!("👤 {}", t("ai.agent.running").replace("%{n}", &active_count.to_string()))
+        format!(
+            "👤 {}",
+            t("ai.agent.running").replace("%{n}", &active_count.to_string())
+        )
     } else {
         "👤".to_string()
     };
@@ -931,15 +926,11 @@ fn render_bottom_bar(data: &AiChatPanelData, theme: &Theme) -> AnyElement {
                         .w(px(48.)),
                 ),
         )
-        .child(
-            txt(px(10.))
-                .text_color(mu)
-                .child(format!(
-                    "{} {}",
-                    data.messages.len(),
-                    t("ai.chat.messages")
-                )),
-        )
+        .child(txt(px(10.)).text_color(mu).child(format!(
+            "{} {}",
+            data.messages.len(),
+            t("ai.chat.messages")
+        )))
         .into_any_element()
 }
 
@@ -999,21 +990,13 @@ fn render_agent_block(block: &AgentBlock, theme: &Theme) -> AnyElement {
                         .text_color(fg)
                         .child(block.agent_name.clone()),
                 )
-                .child(
-                    txt(px(11.))
-                        .text_color(status_color)
-                        .child(status_text),
-                ),
+                .child(txt(px(11.)).text_color(status_color).child(status_text)),
         )
-        .child(
-            txt(px(10.))
-                .text_color(mu)
-                .child(if block.is_expanded {
-                    t("ai.agent.collapse")
-                } else {
-                    t("ai.agent.expand")
-                }),
-        );
+        .child(txt(px(10.)).text_color(mu).child(if block.is_expanded {
+            t("ai.agent.collapse")
+        } else {
+            t("ai.agent.expand")
+        }));
 
     // Collect markdown segments from output
     let output_segments = if block.is_expanded {
@@ -1054,22 +1037,14 @@ fn render_agent_block(block: &AgentBlock, theme: &Theme) -> AnyElement {
             .rounded_b_md()
             .bg(gpui::rgba(0x00000008))
             .p(px(10.))
-            .child(
-                txt(px(11.))
-                    .text_color(mu)
-                    .child(format!("... {preview}")),
-            )
+            .child(txt(px(11.)).text_color(mu).child(format!("... {preview}")))
             .into_any_element()
     } else {
         gpui::div()
             .rounded_b_md()
             .bg(gpui::rgba(0x00000008))
             .p(px(10.))
-            .child(
-                txt(px(11.))
-                    .text_color(mu)
-                    .child(format!("... {summary}")),
-            )
+            .child(txt(px(11.)).text_color(mu).child(format!("... {summary}")))
             .into_any_element()
     };
 
@@ -1096,10 +1071,7 @@ fn render_message(msg: &ChatMessage, theme: &Theme) -> AnyElement {
     // Use markdown renderer for user messages, plain text for orchestrator
     let bubble_content: AnyElement = if is_user {
         let segments = markdown::render_markdown(&content, theme);
-        v_flex()
-            .gap(px(2.))
-            .children(segments)
-            .into_any_element()
+        v_flex().gap(px(2.)).children(segments).into_any_element()
     } else {
         div()
             .text_size(px(13.))
@@ -1111,32 +1083,26 @@ fn render_message(msg: &ChatMessage, theme: &Theme) -> AnyElement {
 
     let bubble = if is_user {
         // User message — right-aligned, primary color bg
-        h_flex()
-            .justify_end()
-            .max_w(px(300.))
-            .child(
-                div()
-                    .rounded_lg()
-                    .rounded_bl_md()
-                    .bg(gpui::rgba(0xFFFFFF12))
-                    .p(px(10.))
-                    .pr(px(12.))
-                    .child(bubble_content),
-            )
+        h_flex().justify_end().max_w(px(300.)).child(
+            div()
+                .rounded_lg()
+                .rounded_bl_md()
+                .bg(gpui::rgba(0xFFFFFF12))
+                .p(px(10.))
+                .pr(px(12.))
+                .child(bubble_content),
+        )
     } else {
         // Orchestrator message — left-aligned, subtle bg
-        h_flex()
-            .justify_start()
-            .max_w(px(300.))
-            .child(
-                div()
-                    .rounded_lg()
-                    .rounded_br_md()
-                    .bg(gpui::rgba(0xFFFFFF06))
-                    .p(px(10.))
-                    .pr(px(12.))
-                    .child(bubble_content),
-            )
+        h_flex().justify_start().max_w(px(300.)).child(
+            div()
+                .rounded_lg()
+                .rounded_br_md()
+                .bg(gpui::rgba(0xFFFFFF06))
+                .p(px(10.))
+                .pr(px(12.))
+                .child(bubble_content),
+        )
     };
 
     v_flex()

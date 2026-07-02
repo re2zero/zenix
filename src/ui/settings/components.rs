@@ -1574,7 +1574,8 @@ pub fn api_provider_form(
                                         move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
                                             on(
                                                 ApiProviderAction::SetSuffix { suffix: s.clone() },
-                                                w, a,
+                                                w,
+                                                a,
                                             );
                                         },
                                     )
