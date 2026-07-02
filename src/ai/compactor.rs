@@ -12,6 +12,8 @@
 //! placeholder. Future iterations may replace the placeholder with a real
 //! LLM-generated summary.
 
+#![allow(dead_code)]
+
 use crate::ai::ChatMessageRef;
 
 /// Average characters per token (conservative estimate).
@@ -33,6 +35,7 @@ pub const DEFAULT_KEEP_RECENT_RATIO: f32 = 0.2;
 ///
 /// Tune these to match the context window of the model you are using.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct CompactionConfig {
     /// Maximum token count for the context window.
     pub context_window_tokens: usize,

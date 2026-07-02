@@ -10,6 +10,8 @@
 //!   - Layout control: `split_pane`, `arrange_grid`
 //!   - Memory management: `read_memory`, `write_memory`, `search_memory`
 
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

@@ -1,6 +1,8 @@
 //! Agent CLI detection — checks local filesystem for installed agent CLIs.
 //! Uses the ProviderRegistry for agent definitions.
 
+#![allow(dead_code)]
+
 use std::process::Command;
 
 use std::path::PathBuf;

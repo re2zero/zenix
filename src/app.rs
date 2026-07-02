@@ -11,7 +11,7 @@ use gpui::{
     App, AppContext, Bounds, ClickEvent, ClipboardItem, Context, FocusHandle,
     InteractiveElement as _, IntoElement, KeyBinding, KeyDownEvent, MouseButton, MouseDownEvent,
     MouseMoveEvent, MouseUpEvent, ParentElement as _, Pixels, Point, Render, ScrollWheelEvent,
-    Styled as _, Window, actions, div, point, px,
+    Styled as _, Window, actions, div, px,
 };
 use gpui_component::{
     ActiveTheme as _, ElementExt, Theme, ThemeRegistry,
@@ -151,7 +151,7 @@ fn timestamp_now() -> String {
             let days = secs / 86400;
             let time_of_day = secs % 86400;
             let h = time_of_day / 3600;
-            let m = (time_of_day % 3600) / 60;
+            let min = (time_of_day % 3600) / 60;
             let s = time_of_day % 60;
             // Simple date calculation from days since epoch
             // 1970-01-01 + days
@@ -181,7 +181,7 @@ fn timestamp_now() -> String {
                 remaining_days -= md;
             }
             let d = remaining_days + 1;
-            format!("{y:04}-{m:02}-{d:02}T{h:02}:{m:02}:{s:02}")
+            format!("{y:04}-{m:02}-{d:02}T{h:02}:{min:02}:{s:02}")
         })
         .unwrap_or_default()
 }
@@ -200,7 +200,7 @@ impl ZenixApp {
         let cursor_style = config.terminal_cursor_style().to_string();
         let opacity = config.terminal_opacity();
         let scrollback = config.terminal_scrollback();
-        let mut result = Self {
+        let result = Self {
             focus_handle,
             backend: None,
             tab: None,
@@ -557,7 +557,7 @@ impl ZenixApp {
         })
         .detach();
     }
-    fn on_key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_key_down(&mut self, event: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let modifiers = event.keystroke.modifiers;
         let key = &event.keystroke.key;
 
@@ -1191,7 +1191,7 @@ impl Render for ZenixApp {
                     });
                     // Subscribe to input events: Enter sends, Escape clears focus.
                     cx.subscribe(&input, {
-                        let entity = cx.entity().clone();
+                        let _entity = cx.entity().clone();
                         move |this: &mut ZenixApp, _input: gpui::Entity<gpui_component::input::InputState>, event: &gpui_component::input::InputEvent, cx| {
                             match event {
                                 gpui_component::input::InputEvent::PressEnter { shift: false, .. } => {
@@ -2329,7 +2329,7 @@ impl Render for ZenixApp {
             });
             // Subscribe to scrollback input for Enter/blur handling
             cx.subscribe(&scrollback_input, {
-                let entity = entity.clone();
+                let _entity = entity.clone();
                 move |this: &mut ZenixApp, _input: gpui::Entity<gpui_component::input::InputState>, event: &gpui_component::input::InputEvent, cx| {
                     let save_value = match event {
                         gpui_component::input::InputEvent::PressEnter { shift: false, .. } => true,
@@ -2579,7 +2579,7 @@ impl Render for ZenixApp {
 /// → API Providers.
 fn render_ai_config_empty(theme: &gpui_component::Theme) -> gpui::AnyElement {
     use gpui::{div, px};
-    use gpui_component::{button::Button, v_flex};
+    use gpui_component::v_flex;
 
     let bg = theme.background;
     let muted = theme.muted_foreground;

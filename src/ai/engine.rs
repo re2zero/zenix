@@ -8,6 +8,8 @@
 //! client, collecting real-time output and looping until the orchestrator
 //! produces a final response without dispatch directives.
 
+#![allow(dead_code)]
+
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -619,7 +621,7 @@ impl OrchestratorEngine {
     /// returns. Content tokens are emitted as before.
     async fn chat_stream_with_tools(
         &self,
-        messages: &[ChatMessageRef],
+        _messages: &[ChatMessageRef],
         on_event: impl Fn(StreamEvent) + Send + 'static,
     ) -> Result<Vec<(String, serde_json::Value)>, AiError> {
         // Tools are passed via chat_with_tools() caller, not in this stream path.

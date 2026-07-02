@@ -5,6 +5,8 @@
 //! sidebar area. Users type messages, the orchestrator engine streams replies,
 //! and dispatched agents show as inline collapsible blocks.
 
+#![allow(dead_code)]
+
 use gpui::{
     AnyElement, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Styled as _,
     div, px,

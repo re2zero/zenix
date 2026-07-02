@@ -265,7 +265,7 @@ fn tab_terminal(
     cursor_style: &str,
     opacity: f32,
     scrollback: u32,
-    scrollback_input: Option<&Entity<gpui_component::input::InputState>>,
+    _scrollback_input: Option<&Entity<gpui_component::input::InputState>>,
     ota: &SharedActionCb<TerminalAction>,
 ) -> impl IntoElement {
     let style_btn = |style: &'static str, current: &str| {
