@@ -682,6 +682,17 @@ impl ZenixApp {
         if self.show_settings {
             return;
         }
+        // Only route clicks to the terminal when they actually land inside the
+        // terminal area. Without this guard, every click anywhere in the
+        // window (including the chat panel) calls `window.focus(&self.focus_handle)`,
+        // which steals focus from chat input / sidebar search fields and prevents
+        // them from ever receiving keyboard input.
+        let in_terminal = self
+            .terminal_bounds
+            .is_some_and(|b| b.contains(&event.position));
+        if !in_terminal {
+            return;
+        }
         window.focus(&self.focus_handle, cx);
         if self.tab.as_ref().is_some_and(|t| t.mouse_mode()) {
             self.send_mouse_to_pty(event.position, event.button, true, cx);
@@ -1204,7 +1215,7 @@ impl Render for ZenixApp {
                     if self.chat_input_entity.is_none() {
                         let input = cx.new(|cx| {
                             gpui_component::input::InputState::new(window, cx)
-                                .placeholder(t("ai.chat.placeholder"))
+                                .placeholder("Ask anything, dispatch agents, or type / for commands")
                         });
                         // Subscribe to input events: Enter sends, Escape clears focus.
                         cx.subscribe(&input, {
@@ -1218,37 +1229,9 @@ impl Render for ZenixApp {
                                         shift: false,
                                         ..
                                     } => {
-                                        // Send message
                                         let text = _input.read(cx).value().to_string();
                                         if !text.trim().is_empty() {
-                                            if let Some(ref mut data) = this.ai_chat_panel {
-                                                // Save user message to session
-                                                let session_id = data.current_session_id.clone();
-                                                if let Some(sid) = session_id {
-                                                    if let Ok(mgr) =
-                                                        crate::ai::session::SessionManager::open()
-                                                    {
-                                                        let seq = mgr
-                                                            .get_messages(&sid)
-                                                            .map(|msgs| msgs.len() as i64 + 1)
-                                                            .unwrap_or(0);
-                                                        let msg = crate::ai::session::ChatMessage {
-                                                            id: 0,
-                                                            session_id: sid.clone(),
-                                                            role: "user".into(),
-                                                            content: text.clone(),
-                                                            agent_activities: None,
-                                                            timestamp: timestamp_now(),
-                                                            sequence: seq,
-                                                        };
-                                                        let _ = mgr.add_message(&msg);
-                                                        data.messages.push(msg);
-                                                    }
-                                                }
-                                                data.input_value = text;
-                                                // Start orchestrator (simplified)
-                                                data.is_streaming = true;
-                                            }
+                                            start_chat_streaming(this, text, cx);
                                         }
                                         cx.notify();
                                     }
@@ -1271,21 +1254,62 @@ impl Render for ZenixApp {
                         .detach();
                         self.chat_input_entity = Some(input);
                     }
-                    // If zenix provider is configured, fetch available models in the background.
-                    if data.selected_provider_id == "Zenix" && data.available_models.is_empty() {
-                        if let Some(zp) = crate::api_provider::zenix_provider() {
-                            let provider = zp.clone();
+                    if data.available_providers.is_empty() {
+                        data.available_providers = crate::api_provider::load_all()
+                            .into_iter()
+                            .map(|p| p.name)
+                            .collect();
+                    }
+                    // Fetch available models from the selected provider (or first
+                    // provider with an api_key) when the list is empty and we
+                    // haven't already attempted a fetch this session.
+                    if data.available_models.is_empty() && !data.models_fetch_attempted {
+                        data.models_fetch_attempted = true;
+                        let providers = crate::api_provider::load_all();
+                        let provider = providers
+                            .iter()
+                            .find(|p| {
+                                !data.selected_provider_id.is_empty()
+                                    && p.name == data.selected_provider_id
+                            })
+                            .or_else(|| {
+                                providers
+                                    .iter()
+                                    .find(|p| !p.api_key.trim().is_empty())
+                            })
+                            .filter(|p| !p.api_key.trim().is_empty())
+                            .cloned();
+                        if let Some(provider) = provider {
+                            let provider_name = provider.name.clone();
                             let entity = cx.entity().clone();
                             cx.spawn(async move |_this, cx| {
+                                let provider_for_fetch = provider.clone();
                                 let models = std::thread::spawn(move || {
-                                    crate::api_provider::fetch_models(&provider)
+                                    crate::api_provider::fetch_models(&provider_for_fetch)
                                 })
                                 .join()
                                 .unwrap_or_else(|_| Err("thread panic".into()));
-                                if let Ok(list) = models {
-                                    let _ = entity.update(cx, |this, cx| {
-                                        if let Some(ref mut data) = this.ai_chat_panel {
-                                            data.available_models = list;
+                                match &models {
+                                    Ok(list) => tracing::info!(
+                                        target: "zenixai",
+                                        provider = %provider.name,
+                                        count = list.len(),
+                                        "fetched models"
+                                    ),
+                                    Err(e) => tracing::warn!(
+                                        target: "zenixai",
+                                        provider = %provider.name,
+                                        error = %e,
+                                        "fetch models failed"
+                                    ),
+                                }
+                                let _ = entity.update(cx, |this, cx| {
+                                    if let Some(ref mut data) = this.ai_chat_panel {
+                                        if data.selected_provider_id.is_empty() {
+                                            data.selected_provider_id = provider_name;
+                                        }
+                                        if let Ok(list) = &models {
+                                            data.available_models = list.clone();
                                             if data.selected_model.is_empty() {
                                                 data.selected_model = data
                                                     .available_models
@@ -1294,9 +1318,9 @@ impl Render for ZenixApp {
                                                     .unwrap_or_default();
                                             }
                                         }
-                                        cx.notify();
-                                    });
-                                }
+                                    }
+                                    cx.notify();
+                                });
                             })
                             .detach();
                         }
@@ -1363,8 +1387,16 @@ impl Render for ZenixApp {
                         .detach();
                     }
                     let input_ref = self.chat_input_entity.as_ref();
+                    let entity = cx.entity();
+                    let on_action: crate::ai::chat::AiChatActionHandler =
+                        std::rc::Rc::new(move |action, window, cx| {
+                            let entity = entity.clone();
+                            let _ = entity.update(cx, |this, cx| {
+                                handle_ai_chat_action(this, action, window, cx);
+                            });
+                        });
                     Some(
-                        crate::ai::chat::render_ai_chat_panel(data, &theme, input_ref)
+                        crate::ai::chat::render_ai_chat_panel(data, &theme, input_ref, on_action)
                             .into_any_element(),
                     )
                 }
@@ -2409,6 +2441,8 @@ impl Render for ZenixApp {
                         Box::new(move |_w: &mut Window, app: &mut gpui::App| {
                             entity.update(app, |this: &mut ZenixApp, cx| {
                                 this.show_settings = false;
+                                this.toast = None; // Clear toast when settings dialog closes
+                                this.pending_confirm = None; // Also clear pending confirm
                                 cx.notify();
                             });
                         })
@@ -2440,30 +2474,14 @@ impl Render for ZenixApp {
                                 cx.notify();
                             });
                         }
-                    }),
-                    mcp_servers: mcp_ref,
-                    mcp_test_results: &self.mcp_test_results,
-                    api_test_results: &self.api_test_results,
-                    agent_search: &self.agent_search,
-                    agent_search_input: self.agent_search_input.as_ref(),
-                    on_agent_toggle_installed: Box::new({
-                        let entity = entity.clone();
-                        move |_val: bool, _w: &mut Window, app: &mut gpui::App| {
-                            entity.update(app, |this: &mut ZenixApp, cx| {
-                                this.agent_installed_only = !this.agent_installed_only;
-                                cx.notify();
-                            });
-                        }
-                    }),
-                    agent_installed_only: self.agent_installed_only,
-                    active_skills_subtab: self.active_skills_subtab,
-                    skill_search: &self.skill_search,
-                    mcp_search: &self.mcp_search,
-                    mcp_search_input: self.mcp_search_input.as_ref(),
-                    api_search: &self.api_search,
-                    api_search_input: self.api_search_input.as_ref(),
-                    skill_search_input: self.skill_search_input.as_ref(),
-                    market_skills: &self.market_skills,
+                     }),
+                     mcp_servers: mcp_ref,
+                     mcp_test_results: &self.mcp_test_results,
+                     api_test_results: &self.api_test_results,
+                     active_skills_subtab: self.active_skills_subtab,
+                     skill_search: &self.skill_search,
+                     skill_search_input: self.skill_search_input.as_ref(),
+                     market_skills: &self.market_skills,
                     market_loading: self.market_loading,
                     market_error: self.market_error.as_deref(),
                     terminal_cursor_blink: self.terminal_cursor_blink,
@@ -2600,6 +2618,7 @@ impl Render for ZenixApp {
                     font_family: self.config.font_family(),
                     win_w: f32::from(w),
                     win_h: f32::from(h),
+                    theme: &theme,
                 }))
                 .into_any_element()
         } else {
@@ -2609,6 +2628,495 @@ impl Render for ZenixApp {
 }
 
 // ── AI Panel: Config Empty Placeholder ──────────────────────────────────
+
+// ── Chat streaming control (Phase 2 of ZenixAI structural redesign) ────────
+//
+// These three free functions are wired into the chat panel from
+// `ZenixApp::render` (send_click_cb) and the InputState subscribe closure
+// (PressEnter). They own the entire chat-stream lifecycle: pushing the user
+// message, spawning the engine task, processing stream events, and aborting.
+
+/// Begin a streaming chat turn.
+///
+/// Synchronously pushes the user message + an empty assistant placeholder into
+/// `data.messages`, sets streaming state, then spawns an async task that calls
+/// `OrchestratorEngine::chat_and_dispatch`. Stream events arrive via a tokio
+/// mpsc channel and are folded back into `data.messages[streaming_msg_idx]`.
+fn start_chat_streaming(
+    this: &mut ZenixApp,
+    text: String,
+    cx: &mut gpui::Context<'_, ZenixApp>,
+) {
+    use crate::ai::engine::{ChatMessageRef, DispatchStreamEvent, OrchestratorEngine};
+    use crate::ai::herdr::HerdrIpcClient;
+
+    if this
+        .ai_chat_panel
+        .as_ref()
+        .map_or(false, |d| d.is_streaming)
+    {
+        return;
+    }
+
+    // 1. Push user message + empty assistant placeholder.
+    let streaming_msg_idx = {
+        let Some(ref mut data) = this.ai_chat_panel else {
+            return;
+        };
+
+        // Auto-create a session on first message — current_session_id is None
+        // on panel open and was never set, so without this the entire user
+        // message push (including the visible `data.messages.push`) was
+        // skipped, leaving the user with a blank panel after pressing Enter.
+        if data.current_session_id.is_none() {
+            if let Ok(mgr) = crate::ai::session::SessionManager::open() {
+                let now = timestamp_now();
+                let session_id = uuid::Uuid::new_v4().to_string();
+                let title: String = text.chars().take(40).collect();
+                let session = crate::ai::session::Session {
+                    id: session_id.clone(),
+                    title: title.clone(),
+                    created_at: now.clone(),
+                    updated_at: now,
+                    workspace: data.selected_workspace.clone(),
+                    provider_id: data.selected_provider_id.clone(),
+                    model: data.selected_model.clone(),
+                    thinking_level: format!("{:?}", data.thinking_level).to_lowercase(),
+                };
+                if mgr.create_session(&session).is_ok() {
+                    tracing::info!(
+                        target: "zenixai",
+                        session_id = %session_id,
+                        "auto-created session"
+                    );
+                    data.current_session_id = Some(session_id);
+                    data.current_session_title = Some(title);
+                    data.history_sessions.insert(0, session);
+                }
+            }
+        }
+
+        let session_id = data.current_session_id.clone().unwrap_or_default();
+        let next_seq: i64 = {
+            crate::ai::session::SessionManager::open()
+                .ok()
+                .and_then(|mgr| mgr.get_messages(&session_id).ok())
+                .map(|msgs| msgs.len() as i64 + 1)
+                .unwrap_or(0)
+        };
+
+        let user_msg = crate::ai::session::ChatMessage {
+            id: 0,
+            session_id: session_id.clone(),
+            role: "user".into(),
+            content: text.clone(),
+            agent_activities: None,
+            timestamp: timestamp_now(),
+            sequence: next_seq,
+        };
+        if !session_id.is_empty() {
+            if let Ok(mgr) = crate::ai::session::SessionManager::open() {
+                let _ = mgr.add_message(&user_msg);
+            }
+        }
+        data.push_message(user_msg);
+
+        data.input_value = text;
+        data.last_user_prompt = Some(data.input_value.clone());
+        data.is_streaming = true;
+
+        // Empty assistant message — tokens will append into `content`.
+        let assistant_msg = crate::ai::session::ChatMessage {
+            id: 0,
+            session_id,
+            role: "assistant".into(),
+            content: String::new(),
+            agent_activities: None,
+            timestamp: timestamp_now(),
+            sequence: next_seq + 1,
+        };
+        let streaming_idx = data.push_message(assistant_msg);
+        streaming_idx
+    };
+
+    // 2. Snapshot data needed by the async task before yielding.
+    let selected_provider_id = this
+        .ai_chat_panel
+        .as_ref()
+        .map(|d| d.selected_provider_id.clone())
+        .unwrap_or_default();
+    let selected_model = this
+        .ai_chat_panel
+        .as_ref()
+        .map(|d| d.selected_model.clone())
+        .unwrap_or_default();
+    let providers = crate::api_provider::load_all();
+    let provider = providers
+        .iter()
+        .find(|p| !selected_provider_id.is_empty() && p.name == selected_provider_id)
+        .or_else(|| providers.first())
+        .cloned()
+        .map(|mut p| {
+            if !selected_model.is_empty() {
+                p.model = selected_model;
+            }
+            p
+        });
+    let provider = match provider {
+        Some(p) => p,
+        None => {
+            // No provider — append error to the empty assistant msg.
+            if let Some(ref mut data) = this.ai_chat_panel {
+                if let Some(idx) = data.streaming_msg_idx.or(Some(streaming_msg_idx)) {
+                    data.set_message_content(
+                        idx,
+                        "⚠️ No API provider configured. Open Settings → API Providers.",
+                    );
+                }
+                data.is_streaming = false;
+                data.streaming_msg_idx = None;
+            }
+            cx.notify();
+            return;
+        }
+    };
+    let workspace_id = this
+        .ai_chat_panel
+        .as_ref()
+        .and_then(|d| d.selected_workspace.clone())
+        .unwrap_or_else(|| "default".to_string());
+    let socket_path = crate::client::herdr_socket_path();
+    let messages_for_engine: Vec<ChatMessageRef> = this
+        .ai_chat_panel
+        .as_ref()
+        .map(|d| {
+            d.messages
+                .iter()
+                .filter(|m| m.role == "user" || m.role == "assistant")
+                .map(|m| ChatMessageRef {
+                    role: m.role.clone(),
+                    content: m.content.clone(),
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // 3. Persist streaming_msg_idx into the panel data so handle_dispatch_event
+    //    knows which message to append to.
+    if let Some(ref mut data) = this.ai_chat_panel {
+        data.streaming_msg_idx = Some(streaming_msg_idx);
+    }
+
+    // 4. Spawn the streaming task. Uses mpsc to bridge tokio-side callback →
+    //    GPUI-side entity updates, and tokio::select! for cooperative abort.
+    cx.spawn(async move |this, cx| {
+        // 4a. Abort channel — sender goes to entity state for stop_chat_streaming.
+        let (abort_tx, abort_rx) = tokio::sync::oneshot::channel::<()>();
+        let _ = this.update(cx, |this, _| {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                data.abort_handle = Some(abort_tx);
+            }
+        });
+
+        // 4b. Event channel — chat_and_dispatch's callback runs on a tokio
+        //     worker thread; we forward events here and process them on the
+        //     GPUI async task so they can call `this.update(cx, ...)`.
+        let (event_tx, mut event_rx) =
+            tokio::sync::mpsc::unbounded_channel::<DispatchStreamEvent>();
+
+        // 4c. Build the engine + IPC client. Every failure path forwards an
+        //     Error event into the streaming message so the user sees a
+        //     visible error instead of a silently-empty bubble.
+        let event_tx_for_cb = event_tx.clone();
+        let chat_fut = async move {
+            tracing::info!(
+                target: "zenixai",
+                provider = %provider.name,
+                model = %provider.model,
+                endpoint = %provider.endpoint_url(),
+                msg_count = messages_for_engine.len(),
+                workspace = %workspace_id,
+                "chat_fut start"
+            );
+
+            let engine = match OrchestratorEngine::new(&provider) {
+                Ok(e) => e,
+                Err(e) => {
+                    tracing::warn!(target: "zenixai", error = %e, "engine init failed");
+                    let _ = event_tx.send(DispatchStreamEvent::Error(format!(
+                        "Engine init failed: {e}"
+                    )));
+                    let _ = event_tx.send(DispatchStreamEvent::Done);
+                    return Err(e);
+                }
+            };
+
+            // NOTE: Do NOT call herdr_client.connect() upfront — it pings the
+            // daemon and fails if herdr isn't running. For pure chat (no
+            // dispatch directive in the LLM response), herdr is never used.
+            // Defer connection to chat_and_dispatch's dispatch branch; if
+            // dispatch fires and herdr is down, execute_agent_task will
+            // surface the error via AgentComplete at that point.
+            let mut herdr_client = HerdrIpcClient::new(socket_path);
+
+            tracing::info!(target: "zenixai", "calling chat_and_dispatch");
+            let result = engine
+                .chat_and_dispatch(
+                    &messages_for_engine,
+                    &mut herdr_client,
+                    &workspace_id,
+                    move |ev| {
+                        let _ = event_tx_for_cb.send(ev);
+                    },
+                )
+                .await;
+
+            match &result {
+                Ok(text) => tracing::info!(
+                    target: "zenixai",
+                    bytes = text.len(),
+                    "chat_and_dispatch completed"
+                ),
+                Err(e) => {
+                    tracing::warn!(target: "zenixai", error = %e, "chat_and_dispatch failed");
+                    let _ = event_tx.send(DispatchStreamEvent::Error(format!(
+                        "Chat failed: {e}"
+                    )));
+                }
+            }
+
+            // Always emit Done so the consumer loop unblocks.
+            let _ = event_tx.send(DispatchStreamEvent::Done);
+            result
+        };
+
+        // 4d. Run chat_fut on the background executor with abort support.
+        //     When abort_rx fires, chat_fut is dropped (HTTP stream + on_event
+        //     callback are dropped together) — partial content is preserved.
+        let chat_task = cx.background_executor().spawn(async move {
+            tokio::select! {
+                _ = abort_rx => Ok::<String, crate::ai::error::AiError>(String::new()),
+                result = chat_fut => result,
+            }
+        });
+
+        // 4e. Consume events. Each event triggers an entity update that
+        //     appends to the streaming message's content.
+        while let Some(event) = event_rx.recv().await {
+            let _ = this.update(cx, |this, cx| {
+                handle_dispatch_event(this, event, cx);
+            });
+        }
+
+        // 4f. chat_task has resolved (event_tx dropped → recv returned None).
+        let _ = chat_task.await;
+
+        // 4g. Clear streaming state. Partial content is already in place on
+        //     the assistant message via Token events.
+        let _ = this.update(cx, |this, cx| {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                data.is_streaming = false;
+                data.streaming_msg_idx = None;
+                data.abort_handle = None;
+            }
+            cx.notify();
+        });
+    })
+    .detach();
+}
+
+/// Fold a `DispatchStreamEvent` into the chat panel state.
+///
+/// Called from the spawn task's consumer loop via `this.update(cx, ...)`.
+fn handle_dispatch_event(
+    this: &mut ZenixApp,
+    event: crate::ai::engine::DispatchStreamEvent,
+    cx: &mut gpui::Context<'_, ZenixApp>,
+) {
+    use crate::ai::engine::DispatchStreamEvent;
+    let Some(ref mut data) = this.ai_chat_panel else {
+        return;
+    };
+    match event {
+        DispatchStreamEvent::Token(text) => {
+            tracing::info!(
+                target: "zenixai",
+                len = text.len(),
+                streaming_idx = ?data.streaming_msg_idx,
+                current_msgs = data.messages.len(),
+                "Token event"
+            );
+            if let Some(idx) = data.streaming_msg_idx {
+                data.append_to_message(idx, &text);
+                cx.notify();
+            }
+        }
+        DispatchStreamEvent::Error(err) => {
+            if let Some(idx) = data.streaming_msg_idx {
+                let mut full = String::new();
+                if let Some(msg) = data.messages.get(idx) {
+                    if !msg.content.is_empty() {
+                        full.push_str(&msg.content);
+                        full.push_str("\n\n");
+                    }
+                }
+                full.push_str(&format!("⚠️ {err}"));
+                data.set_message_content(idx, full);
+            }
+            cx.notify();
+        }
+        DispatchStreamEvent::AgentComplete(result) => {
+            data.add_agent_block(&result);
+            cx.notify();
+        }
+        // Done, Dispatch, AgentOutput, ToolCall, ToolResult, Compacted —
+        // handled (or deferred to later phases). Done is consumed by the
+        // spawn loop's event_rx.recv() returning None after channel close.
+        other => {
+            tracing::info!(
+                target: "zenixai",
+                event = ?std::mem::discriminant(&other),
+                "other dispatch event"
+            );
+        }
+    }
+}
+
+/// Abort the in-flight chat stream.
+///
+/// Sends the abort signal; the spawn task's `tokio::select!` resolves the
+/// abort branch, drops `chat_fut` (closing the HTTP stream), and the cleanup
+/// in step 4g clears streaming state. Partial content already on the message
+/// is preserved.
+fn stop_chat_streaming(this: &mut ZenixApp, cx: &mut gpui::Context<'_, ZenixApp>) {
+    if let Some(ref mut data) = this.ai_chat_panel {
+        if let Some(tx) = data.abort_handle.take() {
+            let _ = tx.send(());
+        }
+    }
+    cx.notify();
+}
+
+/// Central dispatch for all chat panel UI actions.
+fn handle_ai_chat_action(
+    this: &mut ZenixApp,
+    action: crate::ai::chat::AiChatAction,
+    _window: &mut gpui::Window,
+    cx: &mut gpui::Context<'_, ZenixApp>,
+) {
+    use crate::ai::chat::AiChatAction;
+    use gpui::{FollowMode, ListAlignment, ListState, px};
+    match action {
+        AiChatAction::Send => {
+            let streaming = this
+                .ai_chat_panel
+                .as_ref()
+                .map_or(false, |d| d.is_streaming);
+            if streaming {
+                stop_chat_streaming(this, cx);
+            } else {
+                let text = this
+                    .chat_input_entity
+                    .as_ref()
+                    .map(|e| e.read(cx).value().to_string())
+                    .unwrap_or_default();
+                if !text.trim().is_empty() {
+                    if let Some(ref mut data) = this.ai_chat_panel {
+                        data.input_value = text.clone();
+                    }
+                    start_chat_streaming(this, text, cx);
+                }
+            }
+        }
+        AiChatAction::NewChat => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                let list_state =
+                    ListState::new(0, ListAlignment::Bottom, px(400.));
+                list_state.set_follow_mode(FollowMode::Tail);
+                data.messages = std::rc::Rc::new(Vec::new());
+                data.list_state = list_state;
+                data.scrolled_off_count = 0;
+                data.current_session_id = None;
+                data.current_session_title = None;
+                data.streaming_msg_idx = None;
+                data.is_streaming = false;
+                data.input_value = String::new();
+                data.last_user_prompt = None;
+                data.config_dropdown = None;
+            }
+            cx.notify();
+        }
+        AiChatAction::ToggleHistory => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                data.show_history = !data.show_history;
+                if data.show_history {
+                    data.show_agents = false;
+                    data.config_dropdown = None;
+                }
+            }
+            cx.notify();
+        }
+        AiChatAction::ToggleAgents => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                data.show_agents = !data.show_agents;
+                if data.show_agents {
+                    data.show_history = false;
+                    data.config_dropdown = None;
+                }
+            }
+            cx.notify();
+        }
+        AiChatAction::ToggleModelDropdown => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                data.config_dropdown = match data.config_dropdown {
+                    Some(crate::ai::chat::ConfigDropdownTarget::Model) => None,
+                    _ => {
+                        data.show_history = false;
+                        data.show_agents = false;
+                        Some(crate::ai::chat::ConfigDropdownTarget::Model)
+                    }
+                };
+            }
+            cx.notify();
+        }
+        AiChatAction::ToggleProviderDropdown => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                data.config_dropdown = match data.config_dropdown {
+                    Some(crate::ai::chat::ConfigDropdownTarget::Provider) => None,
+                    _ => {
+                        data.show_history = false;
+                        data.show_agents = false;
+                        Some(crate::ai::chat::ConfigDropdownTarget::Provider)
+                    }
+                };
+            }
+            cx.notify();
+        }
+        AiChatAction::SelectProvider(name) => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                data.selected_provider_id = name;
+                data.config_dropdown = None;
+                // Reset model discovery so the new provider's models are fetched.
+                data.available_models.clear();
+                data.selected_model.clear();
+                data.models_fetch_attempted = false;
+            }
+            cx.notify();
+        }
+        AiChatAction::SelectModel(model) => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                data.selected_model = model;
+                data.config_dropdown = None;
+            }
+            cx.notify();
+        }
+        AiChatAction::SuggestionClick(text) => {
+            if !text.trim().is_empty() {
+                start_chat_streaming(this, text, cx);
+            }
+        }
+    }
+}
 
 /// Render a friendly placeholder when no API Provider is configured.
 ///

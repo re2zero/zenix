@@ -24,8 +24,10 @@ use super::ThemeCallback;
 
 mod components;
 mod helpers;
+mod styles;
 mod tabs;
 use helpers::*;
+use styles::*;
 
 // ── Settings backdrop element with hitbox ─────────────────────────────
 
@@ -43,7 +45,7 @@ pub fn settings_backdrop(
         .left(px(0.))
         .w(px(win_w))
         .h(px(win_h))
-        .bg(gpui::rgba(0x000000AA))
+        .bg(backdrop_bg())
         .cursor_default()
         .on_mouse_down(gpui::MouseButton::Left, {
             let oc = on_close.clone();
@@ -273,16 +275,8 @@ pub struct SettingsDialogProps<'a> {
     pub on_api_action: ActionCb<ApiProviderAction>,
     pub mcp_test_results: &'a HashMap<String, String>,
     pub api_test_results: &'a HashMap<String, String>,
-    pub agent_search: &'a str,
-    pub agent_search_input: Option<&'a Entity<gpui_component::input::InputState>>,
-    pub on_agent_toggle_installed: ActionCb<bool>,
-    pub agent_installed_only: bool,
     pub active_skills_subtab: SkillsSubTab,
     pub skill_search: &'a str,
-    pub mcp_search: &'a str,
-    pub mcp_search_input: Option<&'a Entity<gpui_component::input::InputState>>,
-    pub api_search: &'a str,
-    pub api_search_input: Option<&'a Entity<gpui_component::input::InputState>>,
     pub skill_search_input: Option<&'a Entity<gpui_component::input::InputState>>,
     pub market_skills: &'a Vec<crate::skills::ApiSkill>,
     pub market_loading: bool,
@@ -301,6 +295,7 @@ pub struct SettingsDialogProps<'a> {
     pub on_confirm_action: ActionCb<bool>,
     pub font_family: &'a str,
     pub win_h: f32,
+    pub theme: &'a gpui_component::Theme,
 }
 
 pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
@@ -336,19 +331,11 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
         on_api_action,
         mcp_test_results,
         api_test_results,
-        agent_search,
-        agent_search_input,
-        on_agent_toggle_installed,
-        agent_installed_only,
         active_skills_subtab,
         skill_search,
         terminal_cursor_blink,
         terminal_cursor_style,
         terminal_opacity,
-        mcp_search,
-        mcp_search_input,
-        api_search,
-        api_search_input,
         skill_search_input,
         market_skills,
         market_loading,
@@ -364,6 +351,7 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
         font_family,
         win_w,
         win_h,
+        theme,
     } = props;
 
     let dialog_w = (win_w * 0.75).max(TAB_MIN_W);
@@ -375,10 +363,8 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
     let oma = Rc::new(on_mcp_action);
     let oaa = Rc::new(on_api_action);
     let oc = Rc::new(on_close);
-    let oat = Rc::new(on_agent_refresh);
     let oca = Rc::new(on_confirm_action);
     let oet = Rc::new(on_extension_tab_change);
-    let oati = Rc::new(on_agent_toggle_installed);
     let oas = Rc::new(on_agent_select);
 
     let ota = Rc::new(on_terminal_action);
@@ -393,24 +379,22 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
     let dialog = div()
         .id("settings-dialog")
         .w(px(dialog_w)).h(px(dialog_h))
-        .bg(gpui::rgba(0x1e1e2eff))
-        .border_1().border_color(gpui::rgba(0x45475aff))
-        .rounded_lg().shadow_lg()
+        .bg(bg_primary_theme(theme))
+        .border_1().border_color(border_color())
+        .rounded(border_radius_lg()).shadow_lg()
         .font_family(font_family)
         .flex().flex_col()
         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        // Header with close button
         .child(
             h_flex().flex_none().justify_between().items_center()
-                .px(px(16.)).py(px(8.))
-                .border_b_1().border_color(gpui::rgba(0x45475a33))
-                .child(txt(px(14.)).font_weight(gpui::FontWeight::BOLD).child(t("settings.title")))
+                .px(pad_xl()).py(pad_lg())
+                .child(txt(font_size_2xl()).font_weight(gpui::FontWeight::BOLD).text_color(text_color_high()).child(t("settings.title")))
                 .child(
-                    div().id("close-btn").w(px(28.)).h(px(28.)).rounded_md()
+                    div().id("close-btn").w(btn_icon_size()).h(btn_icon_size()).rounded(border_radius_md())
                         .flex().items_center().justify_center()
                         .cursor_pointer()
-                        .hover(|d| d.bg(gpui::rgba(0xFFFFFF14)))
-                        .child(txt(px(14.)).text_color(gpui::rgba(0x888888FF)).child("\u{2715}"))
+                        .hover(|d| d.bg(bg_hover()))
+                        .child(txt(font_size_lg()).text_color(text_color_muted()).child("\u{2715}"))
                         .on_click({
                             let oc = oc.clone();
                             move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
@@ -421,28 +405,41 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
         )
         // Left panel: tabs
         .child(
-            h_flex().flex_none().h_full()
+            h_flex().flex_grow(1.0).h_full().overflow_hidden()
             .child(
-                v_flex().flex_none().w(px(TAB_PANEL_W)).h_full().py_2()
+                v_flex().flex_none().w(px(TAB_PANEL_W)).h_full()
+                .py(pad_lg()).px(pad_md())
+                .gap(gap_xs())
+                .bg(bg_secondary_theme(theme))
+                .border_r_1().border_color(border_color_transparent())
                 .children((0..tab_labels.len()).map(|i| {
                     let label = tab_labels[i].clone();
                     let otc = otc.clone();
                     let is_active = active_tab_c == i;
-                    Button::new(format!("tab-{i}"))
+                    div()
+                        .id(format!("tab-{i}"))
+                        .w_full()
+                        .px(pad_md()).py(pad_sm())
+                        .rounded(border_radius_md())
                         .cursor_pointer()
-                        .compact()
-                        .label(label)
-                        .when(is_active, |b| b.primary())
-                        .when(!is_active, |b| b.ghost())
+                        .when(is_active, |d| d.bg(bg_selected_theme(theme)))
+                        .when(!is_active, |d| d.hover(|s| s.bg(bg_hover_theme(theme))))
+                        .child(
+                            txt(font_size_base())
+                                .font_weight(if is_active { gpui::FontWeight::MEDIUM } else { gpui::FontWeight::NORMAL })
+                                .text_color(if is_active { text_color_high() } else { text_color_muted() })
+                                .child(label),
+                        )
                         .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| otc(i, w, a))
                         .into_any_element()
                 }))
             )
             // Body: content area
             .child(
-                div().flex_grow(1.0).min_h_0().overflow_y_scrollbar().p(px(20.))
+                div().flex_grow(1.0).min_h_0().overflow_y_scrollbar()
+                .p(pad_2xl())
                 .child(tabs::tab_content(active_tab, font_size, current_theme_name, theme_buttons,
-                    on_font_down, on_font_up, locale, on_locale_change,
+                    &theme, on_font_down, on_font_up, locale, on_locale_change,
                     agents, selected_agent, &oas,
                     mcp_zenix_servers, mcp_per_agent, mcp_form,
                     mcp_available_agents, skills, skill_dialog_input, skill_dialog_mode,
@@ -451,10 +448,7 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
                     font_select,
                     active_extension_subtab, &oet,
                     mcp_test_results, api_test_results,
-                    agent_search, &oat, &otc, agent_search_input, &oati, agent_installed_only,
                     active_skills_subtab, skill_search, skill_search_input,
-                    mcp_search, mcp_search_input,
-                    api_search, api_search_input,
                     terminal_cursor_blink, terminal_cursor_style,
                     terminal_opacity, terminal_scrollback, scrollback_input,
                     &ota, market_skills, market_loading, market_error,
@@ -463,12 +457,12 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
         )
         // Toast overlay
         .when_some(toast, |el, t| {
-            let bg = if t.msg_type == "error" { gpui::rgba(0xFF4444CC) } else { gpui::rgba(0x00DD44CC) };
+            let bg = if t.msg_type == "error" { error_color() } else { success_color() };
             el.child(
-                div().absolute().bottom(px(24.)).right(px(24.))
-                    .px(px(16.)).py(px(10.))
-                    .bg(bg).rounded_md().shadow_lg()
-                    .child(txt(px(13.)).text_color(gpui::rgba(0xFFFFFFFF)).child(t.text.clone()))
+                div().absolute().bottom(context_menu_offset()).right(context_menu_offset())
+                    .px(pad_xl()).py(pad_lg())
+                    .bg(bg).rounded(border_radius_md()).shadow_lg()
+                    .child(txt(font_size_base()).text_color(text_color_high()).child(t.text.clone()))
             )
         })
         // Context menu
@@ -476,15 +470,16 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
             let ocmd = ocmd.clone();
             el.child(
                 div().absolute().left(px(cm.x)).top(px(cm.y))
-                    .px(px(12.)).py(px(8.))
-                    .bg(gpui::rgba(0x2e2e3eff)).border_1().border_color(gpui::rgba(0x45475aff))
-                    .rounded_md().shadow_lg()
+                    .px(pad_md()).py(pad_md())
+                    .bg(bg_elevated()).border_1().border_color(border_color())
+                    .rounded(border_radius_md()).shadow_lg()
                     .child(
-                        v_flex().gap(px(4.)).min_w(px(140.))
+                        v_flex().gap(gap_sm()).min_w(context_menu_w())
                             .child(
-                                div().px(px(8.)).py(px(4.)).cursor_pointer()
-                                    .hover(|d| d.bg(gpui::rgba(0xFFFFFF14)))
-                                    .child(txt(px(12.)).child(format!("Copy: {}", cm.agent_name)))
+                                div().px(pad_md()).py(pad_sm()).cursor_pointer()
+                                    .rounded(border_radius_sm())
+                                    .hover(|d| d.bg(bg_hover()))
+                                    .child(txt(font_size_sm()).child(format!("Copy: {}", cm.agent_name)))
                                     .on_mouse_down(gpui::MouseButton::Left, {
                                         let ocmd = ocmd.clone();
                                         let _n = cm.agent_name.clone();
@@ -497,39 +492,39 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
                     .on_mouse_down(gpui::MouseButton::Left, move |_, _, cx| cx.stop_propagation())
             )
         })
-        // Confirmation dialog
-        .when_some(pending_confirm, |el, pc| {
-            let oca = oca.clone();
-            el.child(
-                div().absolute().top_0().left_0().w_full().h_full()
-                    .flex().items_center().justify_center()
-                    .child(
-                        div().px(px(24.)).py(px(20.)).bg(gpui::rgba(0x2e2e3eff))
-                            .border_1().border_color(gpui::rgba(0x45475aff)).rounded_lg().shadow_xl()
-                            .child(v_flex().gap(px(12.))
-                                .child(txt(px(14.)).child(pc.message()))
-                                .child(h_flex().gap(px(8.)).justify_end()
-                                    .child(Button::new("confirm-yes")
-                                        .cursor_pointer()
-                                        .primary()
-                                        .label(t("general.yes"))
-                                        .on_click({
-                                            let oca = oca.clone();
-                                            move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| oca(true, w, a)
-                                        }))
-                                    .child(Button::new("confirm-no")
-                                        .cursor_pointer()
-                                        .ghost()
-                                        .label(t("general.no"))
-                                        .on_click({
-                                            let oca = oca.clone();
-                                            move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| oca(false, w, a)
-                                        }))
-                                )
+                // Confirmation dialog
+                .when_some(pending_confirm, |el, pc| {
+                    let oca = oca.clone();
+                    el.child(
+                        div().absolute().top_0().left_0().w_full().h_full()
+                            .flex().items_center().justify_center()
+                            .child(
+                                div().px(pad_xl()).py(pad_lg()).bg(bg_elevated())
+                                    .border_1().border_color(border_color()).rounded(border_radius_lg()).shadow_xl()
+                                    .child(v_flex().gap(gap_md())
+                                        .child(txt(font_size_base()).child(pc.message()))
+                                        .child(h_flex().gap(gap_sm()).justify_center()
+                                            .child(Button::new("confirm-yes")
+                                                .cursor_pointer()
+                                                .primary()
+                                                .label(t("general.yes"))
+                                                .on_click({
+                                                    let oca = oca.clone();
+                                                    move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| oca(true, w, a)
+                                                }))
+                                            .child(Button::new("confirm-no")
+                                                .cursor_pointer()
+                                                .ghost()
+                                                .label(t("general.no"))
+                                                .on_click({
+                                                    let oca = oca.clone();
+                                                    move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| oca(false, w, a)
+                                                }))
+                                        )
+                                    )
                             )
                     )
-            )
-        })
+                })
         .into_any_element();
 
     settings_backdrop(win_w, win_h, oc, dialog)

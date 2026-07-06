@@ -17,6 +17,7 @@ use gpui_component::{
 };
 
 use crate::ui::settings::helpers::*;
+use crate::ui::settings::styles::*;
 
 use super::{
     ApiProviderAction, ApiProviderFormState, McpAction, McpFormState, SharedActionCb, SkillAction,
@@ -30,21 +31,22 @@ pub fn mcp_card(
     on_mcp_action: &SharedActionCb<McpAction>,
     mcp_form: Option<&McpFormState>,
     mcp_test_results: &HashMap<String, String>,
+    theme: &gpui_component::Theme,
 ) -> AnyElement {
     let name = s.name.clone();
     let enabled_count = s.enabled_agents.len();
     let total = available_agents.len();
     let status = format!("{enabled_count}/{total} agents");
     let sc = if enabled_count > 0 {
-        gpui::rgba(0x00DD44FF)
+        success_color()
     } else {
-        gpui::rgba(0xFF4444FF)
+        error_color()
     };
     let type_label = match s.mcp_type {
         crate::mcp::McpType::Sse => "sse",
         crate::mcp::McpType::Stdio => "stdio",
     };
-    let type_color = gpui::rgba(0x8888FFFF);
+    let type_color = text_color_muted();
 
     let env_text = if s.env.is_empty() {
         String::new()
@@ -107,18 +109,18 @@ pub fn mcp_card(
         }
     };
 
-    zed_card()
+    zed_card(theme)
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .items_center()
                 .justify_between()
                 .child(
                     h_flex()
-                        .gap(px(8.))
+                        .gap(gap_md())
                         .items_center()
                         .child(
-                            txt(px(14.))
+                            txt(font_size_lg())
                                 .font_weight(gpui::FontWeight::MEDIUM)
                                 .child(name.clone()),
                         )
@@ -127,7 +129,7 @@ pub fn mcp_card(
                 )
                 .child(
                     h_flex()
-                        .gap(px(4.))
+                        .gap(gap_sm())
                         .child(
                             Button::new(format!("edit-zenix-mcp-{name}"))
                                 .cursor_pointer()
@@ -156,27 +158,31 @@ pub fn mcp_card(
         )
         .when_some(test_result, |el, tr| {
             let res_color = if tr.starts_with("OK:") {
-                gpui::rgba(0x00DD44FF)
+                success_color()
             } else {
-                gpui::rgba(0xFF4444FF)
+                error_color()
             };
-            el.child(txt(px(10.)).text_color(res_color).child(tr.to_string()))
+            el.child(
+                txt(font_size_sm())
+                    .text_color(res_color)
+                    .child(tr.to_string()),
+            )
         })
         .child(
-            txt(px(11.))
-                .text_color(gpui::rgba(0x888888FF))
+            txt(font_size_base())
+                .text_color(text_color_muted())
                 .child(format!("{} {}", s.command, s.args.join(" "))),
         )
         .when(!env_text.is_empty(), |el| {
             el.child(
-                txt(px(10.))
-                    .text_color(gpui::rgba(0x888888FF))
+                txt(font_size_sm())
+                    .text_color(text_color_muted())
                     .child(env_text),
             )
         })
         .child(
             h_flex()
-                .gap(px(6.))
+                .gap(gap_sm())
                 .flex_wrap()
                 .children(available_agents.iter().map(|agent| {
                     let checked = s.enabled_agents.contains(agent);
@@ -186,26 +192,26 @@ pub fn mcp_card(
                     div()
                         .id(format!("mcp-cb-{srv}-{agent_name}"))
                         .cursor_pointer()
-                        .px(px(8.))
-                        .py(px(3.))
-                        .rounded(px(4.))
+                        .px(pad_md())
+                        .py(pad_sm())
+                        .rounded(border_radius_sm())
                         .when(checked, |d| {
-                            d.bg(gpui::rgba(0x3B82F622))
+                            d.bg(primary_color_transparent())
                                 .border_1()
-                                .border_color(gpui::rgba(0x3B82F644))
+                                .border_color(primary_color_border())
                         })
                         .when(!checked, |d| {
-                            d.bg(gpui::rgba(0x00000022))
+                            d.bg(card_bg_transparent())
                                 .border_1()
-                                .border_color(gpui::rgba(0x45475a44))
+                                .border_color(border_color_transparent())
                         })
-                        .hover(|d| d.bg(gpui::rgba(0xFFFFFF08)))
+                        .hover(|d| d.bg(bg_hover_theme(theme)))
                         .child(
-                            txt(px(11.))
+                            txt(font_size_base())
                                 .text_color(if checked {
-                                    gpui::rgba(0x60A5FAFF)
+                                    text_color_link()
                                 } else {
-                                    gpui::rgba(0x888888FF)
+                                    text_color_muted()
                                 })
                                 .child(format!("{} {agent}", if checked { "✓" } else { "○" })),
                         )
@@ -243,26 +249,30 @@ pub fn mcp_inline_edit_card(
     let is_sse = form.mcp_type == "sse";
 
     v_flex()
-        .gap(px(6.))
-        .py(px(8.))
-        .px(px(10.))
+        .gap(gap_md())
+        .py(pad_lg())
+        .px(pad_xl())
         .border_1()
-        .border_color(gpui::rgba(0x44AAFFFF))
-        .rounded_md()
+        .border_color(border_color_active())
+        .rounded(border_radius_md())
         .overflow_y_scrollbar()
-        .max_h(px(500.))
+        .max_h(card_max_h())
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .items_center()
-                .child(txt(px(12.)).w(px(100.)).child(t("settings.mcp.form.name")))
+                .child(
+                    txt(font_size_sm())
+                        .w(form_label_w())
+                        .child(t("settings.mcp.form.name")),
+                )
                 .child(
                     form.name
                         .as_ref()
                         .map(|e| Input::new(e).into_any_element())
                         .unwrap_or_else(|| {
-                            txt(px(12.))
-                                .text_color(gpui::rgba(0x888888FF))
+                            txt(font_size_sm())
+                                .text_color(text_color_muted())
                                 .child("_")
                                 .into_any_element()
                         }),
@@ -270,9 +280,13 @@ pub fn mcp_inline_edit_card(
         )
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .items_center()
-                .child(txt(px(12.)).w(px(100.)).child(t("settings.mcp.form.type")))
+                .child(
+                    txt(font_size_sm())
+                        .w(form_label_w())
+                        .child(t("settings.mcp.form.type")),
+                )
                 .child(
                     Button::new("inline-mcp-type-stdio")
                         .cursor_pointer()
@@ -317,11 +331,11 @@ pub fn mcp_inline_edit_card(
         .when(!is_sse, |el| {
             el.child(
                 h_flex()
-                    .gap(px(8.))
+                    .gap(gap_md())
                     .items_center()
                     .child(
-                        txt(px(12.))
-                            .w(px(100.))
+                        txt(font_size_sm())
+                            .w(form_label_w())
                             .child(t("settings.mcp.form.command")),
                     )
                     .child(
@@ -329,8 +343,8 @@ pub fn mcp_inline_edit_card(
                             .as_ref()
                             .map(|e| Input::new(e).into_any_element())
                             .unwrap_or_else(|| {
-                                txt(px(12.))
-                                    .text_color(gpui::rgba(0x888888FF))
+                                txt(font_size_sm())
+                                    .text_color(text_color_muted())
                                     .child("_")
                                     .into_any_element()
                             }),
@@ -338,16 +352,20 @@ pub fn mcp_inline_edit_card(
             )
             .child(
                 h_flex()
-                    .gap(px(8.))
+                    .gap(gap_md())
                     .items_center()
-                    .child(txt(px(12.)).w(px(100.)).child(t("settings.mcp.form.args")))
+                    .child(
+                        txt(font_size_sm())
+                            .w(form_label_w())
+                            .child(t("settings.mcp.form.args")),
+                    )
                     .child(
                         form.args
                             .as_ref()
                             .map(|e| Input::new(e).into_any_element())
                             .unwrap_or_else(|| {
-                                txt(px(12.))
-                                    .text_color(gpui::rgba(0x888888FF))
+                                txt(font_size_sm())
+                                    .text_color(text_color_muted())
                                     .child("_")
                                     .into_any_element()
                             }),
@@ -357,16 +375,16 @@ pub fn mcp_inline_edit_card(
         .when(is_sse, |el| {
             el.child(
                 h_flex()
-                    .gap(px(8.))
+                    .gap(gap_md())
                     .items_center()
-                    .child(txt(px(12.)).w(px(100.)).child("URL"))
+                    .child(txt(font_size_sm()).w(form_label_w()).child("URL"))
                     .child(
                         form.url
                             .as_ref()
                             .map(|e| Input::new(e).into_any_element())
                             .unwrap_or_else(|| {
-                                txt(px(12.))
-                                    .text_color(gpui::rgba(0x888888FF))
+                                txt(font_size_sm())
+                                    .text_color(text_color_muted())
                                     .child("_")
                                     .into_any_element()
                             }),
@@ -375,16 +393,20 @@ pub fn mcp_inline_edit_card(
         })
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .items_start()
-                .child(txt(px(12.)).w(px(100.)).child(t("settings.mcp.form.env")))
+                .child(
+                    txt(font_size_sm())
+                        .w(form_label_w())
+                        .child(t("settings.mcp.form.env")),
+                )
                 .child(
                     form.env
                         .as_ref()
                         .map(|e| Input::new(e).into_any_element())
                         .unwrap_or_else(|| {
-                            txt(px(12.))
-                                .text_color(gpui::rgba(0x888888FF))
+                            txt(font_size_sm())
+                                .text_color(text_color_muted())
                                 .child("_")
                                 .into_any_element()
                         }),
@@ -392,7 +414,7 @@ pub fn mcp_inline_edit_card(
         )
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .justify_end()
                 .child(
                     Button::new("inline-mcp-form-cancel")
@@ -441,29 +463,33 @@ pub fn mcp_add_form(
     };
 
     v_flex()
-        .gap(px(8.))
-        .py(px(10.))
-        .px(px(12.))
+        .gap(gap_md())
+        .py(pad_lg())
+        .px(pad_xl())
         .border_1()
-        .border_color(gpui::rgba(0x45475a66))
-        .rounded_md()
+        .border_color(border_color_transparent_2())
+        .rounded(border_radius_md())
         .child(
-            txt(px(13.))
+            txt(font_size_md())
                 .font_weight(gpui::FontWeight::BOLD)
                 .child(form_title),
         )
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .items_center()
-                .child(txt(px(12.)).w(px(100.)).child(t("settings.mcp.form.name")))
+                .child(
+                    txt(font_size_md())
+                        .w(form_label_w())
+                        .child(t("settings.mcp.form.name")),
+                )
                 .child(
                     form.name
                         .as_ref()
                         .map(|e| Input::new(e).into_any_element())
                         .unwrap_or_else(|| {
-                            txt(px(12.))
-                                .text_color(gpui::rgba(0x888888FF))
+                            txt(font_size_md())
+                                .text_color(text_color_muted())
                                 .child("_")
                                 .into_any_element()
                         }),
@@ -471,9 +497,13 @@ pub fn mcp_add_form(
         )
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .items_center()
-                .child(txt(px(12.)).w(px(100.)).child(t("settings.mcp.form.type")))
+                .child(
+                    txt(font_size_md())
+                        .w(form_label_w())
+                        .child(t("settings.mcp.form.type")),
+                )
                 .child(
                     Button::new("mcp-type-stdio")
                         .cursor_pointer()
@@ -518,11 +548,11 @@ pub fn mcp_add_form(
         .when(is_stdio, |el| {
             el.child(
                 h_flex()
-                    .gap(px(8.))
+                    .gap(gap_md())
                     .items_center()
                     .child(
-                        txt(px(12.))
-                            .w(px(100.))
+                        txt(font_size_md())
+                            .w(form_label_w())
                             .child(t("settings.mcp.form.command")),
                     )
                     .child(
@@ -530,8 +560,8 @@ pub fn mcp_add_form(
                             .as_ref()
                             .map(|e| Input::new(e).into_any_element())
                             .unwrap_or_else(|| {
-                                txt(px(12.))
-                                    .text_color(gpui::rgba(0x888888FF))
+                                txt(font_size_md())
+                                    .text_color(text_color_muted())
                                     .child("_")
                                     .into_any_element()
                             }),
@@ -539,16 +569,20 @@ pub fn mcp_add_form(
             )
             .child(
                 h_flex()
-                    .gap(px(8.))
+                    .gap(gap_md())
                     .items_center()
-                    .child(txt(px(12.)).w(px(100.)).child(t("settings.mcp.form.args")))
+                    .child(
+                        txt(font_size_md())
+                            .w(form_label_w())
+                            .child(t("settings.mcp.form.args")),
+                    )
                     .child(
                         form.args
                             .as_ref()
                             .map(|e| Input::new(e).into_any_element())
                             .unwrap_or_else(|| {
-                                txt(px(12.))
-                                    .text_color(gpui::rgba(0x888888FF))
+                                txt(font_size_md())
+                                    .text_color(text_color_muted())
                                     .child("_")
                                     .into_any_element()
                             }),
@@ -558,16 +592,16 @@ pub fn mcp_add_form(
         .when(!is_stdio, |el| {
             el.child(
                 h_flex()
-                    .gap(px(8.))
+                    .gap(gap_md())
                     .items_center()
-                    .child(txt(px(12.)).w(px(100.)).child("URL"))
+                    .child(txt(font_size_md()).w(form_label_w()).child("URL"))
                     .child(
                         form.url
                             .as_ref()
                             .map(|e| Input::new(e).into_any_element())
                             .unwrap_or_else(|| {
-                                txt(px(12.))
-                                    .text_color(gpui::rgba(0x888888FF))
+                                txt(font_size_md())
+                                    .text_color(text_color_muted())
                                     .child("_")
                                     .into_any_element()
                             }),
@@ -576,16 +610,20 @@ pub fn mcp_add_form(
         })
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .items_start()
-                .child(txt(px(12.)).w(px(100.)).child(t("settings.mcp.form.env")))
+                .child(
+                    txt(font_size_md())
+                        .w(form_label_w())
+                        .child(t("settings.mcp.form.env")),
+                )
                 .child(
                     form.env
                         .as_ref()
                         .map(|e| Input::new(e).into_any_element())
                         .unwrap_or_else(|| {
-                            txt(px(12.))
-                                .text_color(gpui::rgba(0x888888FF))
+                            txt(font_size_md())
+                                .text_color(text_color_muted())
                                 .child("_")
                                 .into_any_element()
                         }),
@@ -593,7 +631,7 @@ pub fn mcp_add_form(
         )
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .justify_end()
                 .child(
                     Button::new("mcp-form-cancel")
@@ -617,6 +655,7 @@ pub fn mcp_agent_entry_with_test(
     entry: &crate::mcp::McpServerEntry,
     on_mcp_action: &SharedActionCb<McpAction>,
     mcp_test_results: &HashMap<String, String>,
+    theme: &gpui_component::Theme,
 ) -> impl IntoElement {
     let name = entry.name.clone();
     let cmd = format!("{} {}", entry.command, entry.args.join(" "));
@@ -675,37 +714,41 @@ pub fn mcp_agent_entry_with_test(
         t("mcp.enabled")
     };
     let status_color = if disabled {
-        gpui::rgba(0xFF4444FF)
+        error_color()
     } else {
-        gpui::rgba(0x00DD44FF)
+        success_color()
     };
 
     v_flex()
-        .gap(px(4.))
-        .py(px(6.))
-        .px(px(10.))
+        .gap(gap_sm())
+        .py(pad_sm())
+        .px(pad_md())
         .border_1()
-        .border_color(gpui::rgba(0x45475a44))
-        .rounded_md()
+        .border_color(border_color_transparent())
+        .rounded(border_radius_md())
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .items_center()
                 .justify_between()
                 .child(
                     h_flex()
-                        .gap(px(8.))
+                        .gap(gap_md())
                         .items_center()
                         .child(
-                            txt(px(12.))
+                            txt(font_size_sm())
                                 .font_weight(gpui::FontWeight::MEDIUM)
                                 .child(name.clone()),
                         )
-                        .child(txt(px(10.)).text_color(status_color).child(status_text)),
+                        .child(
+                            txt(font_size_base())
+                                .text_color(status_color)
+                                .child(status_text),
+                        ),
                 )
                 .child(
                     h_flex()
-                        .gap(px(4.))
+                        .gap(gap_sm())
                         .child(
                             Button::new(format!("toggle-agent-mcp-{agent}-{name}"))
                                 .cursor_pointer()
@@ -736,14 +779,22 @@ pub fn mcp_agent_entry_with_test(
                         ),
                 ),
         )
-        .child(txt(px(10.)).text_color(gpui::rgba(0x888888FF)).child(cmd))
+        .child(
+            txt(font_size_base())
+                .text_color(text_color_muted())
+                .child(cmd),
+        )
         .when_some(test_result, |el, tr| {
             let res_color = if tr.starts_with("OK:") {
-                gpui::rgba(0x00DD44FF)
+                success_color()
             } else {
-                gpui::rgba(0xFF4444FF)
+                error_color()
             };
-            el.child(txt(px(10.)).text_color(res_color).child(tr.to_string()))
+            el.child(
+                txt(font_size_base())
+                    .text_color(res_color)
+                    .child(tr.to_string()),
+            )
         })
 }
 
@@ -752,6 +803,7 @@ pub fn mcp_agent_entry_with_test(
 pub fn zenix_skill_card(
     s: &crate::skills::SkillInfo,
     on_skill_action: &SharedActionCb<SkillAction>,
+    theme: &gpui_component::Theme,
 ) -> impl IntoElement {
     let name = s.name.clone();
     let link_name = name.clone();
@@ -782,33 +834,33 @@ pub fn zenix_skill_card(
             );
         }
     };
-    zed_card()
+    zed_card(theme)
         .flex_1()
         .min_w_0()
-        .max_w(px(320.))
+        .max_w(search_w())
         .child(
             div()
                 .flex_1()
                 .min_w_0()
-                .max_h(px(72.))
+                .max_h(agent_card_max_h())
                 .overflow_hidden()
                 .child(
                     h_flex()
-                        .gap(px(8.))
+                        .gap(gap_md())
                         .items_center()
                         .min_w_0()
                         .child(
-                            txt(px(13.))
+                            txt(font_size_sm())
                                 .font_weight(gpui::FontWeight::MEDIUM)
                                 .text_ellipsis()
                                 .child(name),
                         )
-                        .child(zed_badge("link", gpui::rgba(0x44DD88FF))),
+                        .child(zed_badge("link", badge_green())),
                 ),
         )
         .child(
             h_flex()
-                .gap(px(4.))
+                .gap(gap_sm())
                 .justify_end()
                 .min_w_0()
                 .flex_wrap()
@@ -835,6 +887,7 @@ pub fn api_skill_card(
     s: &crate::skills::ApiSkill,
     installed_names: &std::collections::HashSet<String>,
     on_skill_action: &SharedActionCb<SkillAction>,
+    theme: &gpui_component::Theme,
 ) -> impl IntoElement {
     let is_installed = installed_names.contains(&s.slug);
     let skill_id = s.id.clone();
@@ -851,8 +904,8 @@ pub fn api_skill_card(
         }
     };
     let action = if is_installed {
-        txt(px(10.))
-            .text_color(gpui::rgba(0x00DD44FF))
+        txt(font_size_sm())
+            .text_color(success_color())
             .child(t("skills.installed"))
             .into_any_element()
     } else {
@@ -869,43 +922,43 @@ pub fn api_skill_card(
     } else {
         s.installs.to_string()
     };
-    zed_card()
+    zed_card(theme)
         .flex_1()
         .min_w_0()
-        .max_w(px(320.))
+        .max_w(search_w())
         .child(
             div()
                 .flex_1()
                 .min_w_0()
-                .max_h(px(72.))
+                .max_h(agent_card_max_h())
                 .overflow_hidden()
                 .child(
-                    txt(px(13.))
+                    txt(font_size_sm())
                         .font_weight(gpui::FontWeight::MEDIUM)
                         .text_ellipsis()
                         .child(s.name.clone()),
                 )
                 .child(
                     h_flex()
-                        .gap(px(4.))
+                        .gap(gap_sm())
                         .items_center()
                         .min_w_0()
-                        .child(zed_badge(s.source_type.clone(), gpui::rgba(0x8888AAFF)))
+                        .child(zed_badge(s.source_type.clone(), badge_gray_blue()))
                         .child(
-                            txt(px(10.))
-                                .text_color(gpui::rgba(0x888888FF))
+                            txt(font_size_base())
+                                .text_color(text_color_muted())
                                 .text_ellipsis()
                                 .child(format!("⬇ {}", installs_str)),
                         ),
                 )
                 .child(
-                    txt(px(10.))
-                        .text_color(gpui::rgba(0x888888FF))
+                    txt(font_size_base())
+                        .text_color(text_color_muted())
                         .text_ellipsis()
                         .child(s.source.clone()),
                 ),
         )
-        .child(v_flex().gap(px(2.)).items_center().child(action))
+        .child(v_flex().gap(gap_xs()).items_center().child(action))
 }
 
 pub fn add_skill_card(on_skill_action: &SharedActionCb<SkillAction>) -> impl IntoElement {
@@ -928,22 +981,22 @@ pub fn add_skill_card(on_skill_action: &SharedActionCb<SkillAction>) -> impl Int
         }
     };
     v_flex()
-        .gap(px(4.))
-        .py(px(6.))
-        .px(px(8.))
-        .min_w(px(180.))
-        .max_w(px(240.))
+        .gap(gap_sm())
+        .py(pad_sm())
+        .px(pad_md())
+        .min_w(card_min_w())
+        .max_w(card_max_w())
         .border_1()
-        .border_color(gpui::rgba(0x45475a66))
-        .rounded_md()
+        .border_color(border_color_transparent_2())
+        .rounded(border_radius_md())
         .child(
-            txt(px(12.))
-                .text_color(gpui::rgba(0x888888FF))
+            txt(font_size_sm())
+                .text_color(text_color_muted())
                 .child(t("skills.add_skill")),
         )
         .child(
             h_flex()
-                .gap(px(4.))
+                .gap(gap_sm())
                 .flex_wrap()
                 .child(
                     Button::new("add-git")
@@ -985,32 +1038,32 @@ pub fn per_agent_skill_card(
         }
     };
     let tag_color = if is_source {
-        gpui::rgba(0xDDCC44FF)
+        badge_yellow()
     } else {
-        gpui::rgba(0x44DD88FF)
+        badge_green()
     };
     let tag_text = if is_source { "bind" } else { "link" };
     h_flex()
-        .gap(px(8.))
-        .py(px(6.))
-        .px(px(8.))
-        .min_w(px(180.))
-        .max_w(px(240.))
+        .gap(gap_md())
+        .py(pad_sm())
+        .px(pad_md())
+        .min_w(card_min_w())
+        .max_w(card_max_w())
         .border_1()
-        .border_color(gpui::rgba(0x45475a44))
-        .rounded_md()
+        .border_color(border_color_transparent())
+        .rounded(border_radius_md())
         .child(
             div().flex_1().min_w_0().child(
-                txt(px(12.))
+                txt(font_size_sm())
                     .font_weight(gpui::FontWeight::MEDIUM)
                     .child(name.clone()),
             ),
         )
         .child(
             v_flex()
-                .gap(px(2.))
+                .gap(gap_xs())
                 .items_center()
-                .child(txt(px(10.)).text_color(tag_color).child(tag_text))
+                .child(txt(font_size_base()).text_color(tag_color).child(tag_text))
                 .child(if is_source {
                     let move_name = name.clone();
                     let move_cb = {
@@ -1056,8 +1109,8 @@ pub fn api_provider_card(
     let name = p.name.clone();
     let format_label = p.format.label();
     let format_color = match p.format {
-        ApiFormat::OpenAI => gpui::rgba(0x44AADDFF),
-        ApiFormat::Anthropic => gpui::rgba(0xDD8844FF),
+        ApiFormat::OpenAI => badge_blue(),
+        ApiFormat::Anthropic => badge_orange(),
     };
     let endpoint = format!("{}{}", p.base_url.trim_end_matches('/'), p.url_suffix);
     let think = format!("think: {}", p.thinking_level.label());
@@ -1111,31 +1164,35 @@ pub fn api_provider_card(
     };
 
     v_flex()
-        .gap(px(6.))
-        .py(px(8.))
-        .px(px(10.))
+        .gap(gap_sm())
+        .py(pad_md())
+        .px(pad_xl())
         .border_1()
-        .border_color(gpui::rgba(0x45475a44))
-        .rounded_md()
+        .border_color(border_color_transparent())
+        .rounded(border_radius_md())
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .items_center()
                 .justify_between()
                 .child(
                     h_flex()
-                        .gap(px(8.))
+                        .gap(gap_md())
                         .items_center()
                         .child(
-                            txt(px(13.))
+                            txt(font_size_sm())
                                 .font_weight(gpui::FontWeight::MEDIUM)
                                 .child(name.clone()),
                         )
-                        .child(txt(px(10.)).text_color(format_color).child(format_label)),
+                        .child(
+                            txt(font_size_base())
+                                .text_color(format_color)
+                                .child(format_label),
+                        ),
                 )
                 .child(
                     h_flex()
-                        .gap(px(4.))
+                        .gap(gap_sm())
                         .child(
                             Button::new(format!("edit-api-{name}"))
                                 .cursor_pointer()
@@ -1172,35 +1229,43 @@ pub fn api_provider_card(
         )
         .when_some(test_result, |el, tr| {
             let res_color = if tr.starts_with("OK:") {
-                gpui::rgba(0x00DD44FF)
+                success_color()
             } else {
-                gpui::rgba(0xFF4444FF)
+                error_color()
             };
-            el.child(txt(px(10.)).text_color(res_color).child(tr.to_string()))
+            el.child(
+                txt(font_size_base())
+                    .text_color(res_color)
+                    .child(tr.to_string()),
+            )
         })
         .child(
-            txt(px(11.))
-                .text_color(gpui::rgba(0x888888FF))
+            txt(font_size_base())
+                .text_color(text_color_muted())
                 .child(endpoint),
         )
         .child(
             h_flex()
-                .gap(px(12.))
+                .gap(gap_lg())
                 .child(
-                    txt(px(11.))
-                        .text_color(gpui::rgba(0x888888FF))
+                    txt(font_size_base())
+                        .text_color(text_color_muted())
                         .child(format!("model: {}", p.model)),
                 )
-                .child(txt(px(11.)).text_color(gpui::rgba(0x888888FF)).child(think))
                 .child(
-                    txt(px(11.))
-                        .text_color(gpui::rgba(0x666666FF))
+                    txt(font_size_base())
+                        .text_color(text_color_muted())
+                        .child(think),
+                )
+                .child(
+                    txt(font_size_base())
+                        .text_color(text_color_muted())
                         .child(format!("key: {masked_key}")),
                 ),
         )
         .child(
             h_flex()
-                .gap(px(4.))
+                .gap(gap_sm())
                 .flex_wrap()
                 .children(available_agents.iter().map(|agent| {
                     let checked = p.enabled_agents.contains(agent);
@@ -1252,27 +1317,27 @@ pub fn api_inline_edit_card(
     let presets = form.format.presets();
 
     v_flex()
-        .gap(px(6.))
-        .py(px(8.))
-        .px(px(10.))
+        .gap(gap_sm())
+        .py(pad_md())
+        .px(pad_xl())
         .border_1()
-        .border_color(gpui::rgba(0x44AAFFFF))
-        .rounded_md()
+        .border_color(border_color_active())
+        .rounded(border_radius_md())
         .overflow_y_scrollbar()
-        .max_h(px(500.))
+        .max_h(card_max_h())
         .child(
-            txt(px(12.))
+            txt(font_size_sm())
                 .font_weight(gpui::FontWeight::BOLD)
                 .child(t("settings.api.form.title_edit")),
         )
         .child(form_field(t("settings.api.form.name"), form.name.as_ref()))
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .items_center()
                 .child(
-                    txt(px(12.))
-                        .w(px(100.))
+                    txt(font_size_sm())
+                        .w(form_label_w())
                         .child(t("settings.api.form.format")),
                 )
                 .child(api_format_btn(ApiFormat::OpenAI, form.format, on_action))
@@ -1281,16 +1346,16 @@ pub fn api_inline_edit_card(
         // Preset selector
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .items_center()
                 .child(
-                    txt(px(12.))
-                        .w(px(100.))
+                    txt(font_size_sm())
+                        .w(form_label_w())
                         .child(t("settings.api.form.preset")),
                 )
                 .child(
                     h_flex()
-                        .gap(px(4.))
+                        .gap(gap_sm())
                         .flex_wrap()
                         .children(presets.iter().map(|preset| {
                             let p = preset.clone();
@@ -1313,16 +1378,16 @@ pub fn api_inline_edit_card(
         )
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .items_center()
                 .child(
-                    txt(px(12.))
-                        .w(px(100.))
+                    txt(font_size_sm())
+                        .w(form_label_w())
                         .child(t("settings.api.form.suffix")),
                 )
                 .child(
                     h_flex()
-                        .gap(px(4.))
+                        .gap(gap_sm())
                         .children(form.format.suffix_options().iter().map(|suffix| {
                             let s = suffix.to_string();
                             let on = on_action.clone();
@@ -1353,16 +1418,16 @@ pub fn api_inline_edit_card(
         ))
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .items_start()
                 .child(
-                    txt(px(12.))
-                        .w(px(100.))
+                    txt(font_size_sm())
+                        .w(form_label_w())
                         .child(t("settings.api.form.thinking")),
                 )
                 .child(
                     h_flex()
-                        .gap(px(4.))
+                        .gap(gap_sm())
                         .children(ThinkingLevel::all().iter().map(|level| {
                             let l = *level;
                             let on = on_action.clone();
@@ -1382,11 +1447,11 @@ pub fn api_inline_edit_card(
         )
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .items_start()
                 .child(
-                    txt(px(12.))
-                        .w(px(100.))
+                    txt(font_size_sm())
+                        .w(form_label_w())
                         .child(t("settings.api.form.selected_model")),
                 )
                 .child(
@@ -1412,7 +1477,7 @@ pub fn api_inline_edit_card(
         .when(!form.available_models.is_empty(), |el| {
             el.child(
                 h_flex()
-                    .gap(px(4.))
+                    .gap(gap_sm())
                     .flex_wrap()
                     .children(form.available_models.iter().map(|model| {
                         let m = model.clone();
@@ -1430,7 +1495,7 @@ pub fn api_inline_edit_card(
         })
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .justify_end()
                 .child(
                     Button::new("inline-api-cancel")
@@ -1481,25 +1546,25 @@ pub fn api_provider_form(
     let presets = form.format.presets();
 
     v_flex()
-        .gap(px(8.))
-        .py(px(10.))
-        .px(px(12.))
+        .gap(gap_md())
+        .py(pad_lg())
+        .px(pad_xl())
         .border_1()
-        .border_color(gpui::rgba(0x45475a66))
-        .rounded_md()
+        .border_color(border_color_transparent_2())
+        .rounded(border_radius_md())
         .child(
-            txt(px(13.))
+            txt(font_size_lg())
                 .font_weight(gpui::FontWeight::BOLD)
                 .child(form_title),
         )
         .child(form_field(t("settings.api.form.name"), form.name.as_ref()))
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .items_center()
                 .child(
-                    txt(px(12.))
-                        .w(px(100.))
+                    txt(font_size_sm())
+                        .w(form_label_w())
                         .child(t("settings.api.form.format")),
                 )
                 .child(api_format_btn(ApiFormat::OpenAI, form.format, on_action))
@@ -1508,16 +1573,16 @@ pub fn api_provider_form(
         // Preset selector
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .items_center()
                 .child(
-                    txt(px(12.))
-                        .w(px(100.))
+                    txt(font_size_sm())
+                        .w(form_label_w())
                         .child(t("settings.api.form.preset")),
                 )
                 .child(
                     h_flex()
-                        .gap(px(4.))
+                        .gap(gap_sm())
                         .flex_wrap()
                         .children(presets.iter().map(|preset| {
                             let p = preset.clone();
@@ -1543,44 +1608,54 @@ pub fn api_provider_form(
             let label = t("settings.api.form.suffix");
             if is_locked.is_some() {
                 h_flex()
-                    .gap(px(8.))
+                    .gap(gap_md())
                     .items_center()
-                    .child(txt(px(12.)).w(px(100.)).child(label.to_string()))
+                    .child(
+                        txt(font_size_sm())
+                            .w(form_label_w())
+                            .child(label.to_string()),
+                    )
                     .child(
                         h_flex()
-                            .gap(px(4.))
+                            .gap(gap_sm())
                             .items_center()
-                            .child(txt(px(12.)).child("/v1/chat/completions".to_string()))
-                            .child(txt(px(10.)).text_color(gpui::rgba(0x888888FF)).child("🔒")),
+                            .child(txt(font_size_sm()).child("/v1/chat/completions".to_string()))
+                            .child(
+                                txt(font_size_base())
+                                    .text_color(text_color_muted())
+                                    .child("🔒"),
+                            ),
                     )
                     .into_any_element()
             } else {
                 h_flex()
-                    .gap(px(8.))
+                    .gap(gap_md())
                     .items_center()
-                    .child(txt(px(12.)).w(px(100.)).child(label.to_string()))
                     .child(
-                        h_flex()
-                            .gap(px(4.))
-                            .children(form.format.suffix_options().iter().map(|suffix| {
-                                let s = suffix.to_string();
-                                let on = on_action.clone();
-                                Button::new(format!("suffix-{}", s.replace('/', "-")))
-                                    .cursor_pointer()
-                                    .ghost()
-                                    .compact()
-                                    .label(s.clone())
-                                    .on_click(
-                                        move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
-                                            on(
-                                                ApiProviderAction::SetSuffix { suffix: s.clone() },
-                                                w,
-                                                a,
-                                            );
-                                        },
-                                    )
-                            })),
+                        txt(font_size_sm())
+                            .w(form_label_w())
+                            .child(label.to_string()),
                     )
+                    .child(h_flex().gap(gap_sm()).children(
+                        form.format.suffix_options().iter().map(|suffix| {
+                            let s = suffix.to_string();
+                            let on = on_action.clone();
+                            Button::new(format!("suffix-{}", s.replace('/', "-")))
+                                .cursor_pointer()
+                                .ghost()
+                                .compact()
+                                .label(s.clone())
+                                .on_click(
+                                    move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                                        on(
+                                            ApiProviderAction::SetSuffix { suffix: s.clone() },
+                                            w,
+                                            a,
+                                        );
+                                    },
+                                )
+                        }),
+                    ))
                     .into_any_element()
             }
         })
@@ -1593,15 +1668,23 @@ pub fn api_provider_form(
             let label = t("settings.api.form.base_url");
             if is_locked.is_some() {
                 h_flex()
-                    .gap(px(8.))
+                    .gap(gap_md())
                     .items_center()
-                    .child(txt(px(12.)).w(px(100.)).child(label.to_string()))
+                    .child(
+                        txt(font_size_sm())
+                            .w(form_label_w())
+                            .child(label.to_string()),
+                    )
                     .child(
                         h_flex()
-                            .gap(px(4.))
+                            .gap(gap_sm())
                             .items_center()
-                            .child(txt(px(12.)).child("https://ai.zenix.dev/v1".to_string()))
-                            .child(txt(px(10.)).text_color(gpui::rgba(0x888888FF)).child("🔒")),
+                            .child(txt(font_size_sm()).child("https://ai.zenix.dev/v1".to_string()))
+                            .child(
+                                txt(font_size_base())
+                                    .text_color(text_color_muted())
+                                    .child("🔒"),
+                            ),
                     )
                     .into_any_element()
             } else {
@@ -1614,12 +1697,16 @@ pub fn api_provider_form(
         ))
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .items_center()
-                .child(txt(px(12.)).w(px(100.)).child(t("settings.api.form.think")))
+                .child(
+                    txt(font_size_sm())
+                        .w(form_label_w())
+                        .child(t("settings.api.form.think")),
+                )
                 .child(
                     h_flex()
-                        .gap(px(4.))
+                        .gap(gap_sm())
                         .children(ThinkingLevel::all().iter().map(|level| {
                             let lev = *level;
                             let selected = lev == form.thinking_level;
@@ -1651,32 +1738,32 @@ pub fn api_provider_form(
                 .filter(|m| search_query.is_empty() || m.to_lowercase().contains(&search_query))
                 .collect();
             v_flex()
-                .gap(px(4.))
-                .child(txt(px(12.)).child(t("settings.api.form.model")))
+                .gap(gap_sm())
+                .child(txt(font_size_sm()).child(t("settings.api.form.model")))
                 .child(
-                    txt(px(11.)).text_color(gpui::rgba(0x44DD88FF)).child(
+                    txt(font_size_base()).text_color(badge_green()).child(
                         t("settings.api.form.models_available")
                             .replace("{count}", &form.available_models.len().to_string()),
                     ),
                 )
                 .child(
                     h_flex()
-                        .gap(px(4.))
+                        .gap(gap_sm())
                         .items_center()
                         .child(
-                            txt(px(16.))
-                                .text_color(gpui::rgba(0x888888FF))
+                            txt(font_size_base())
+                                .text_color(text_color_muted())
                                 .child("\u{1F50D}"),
                         )
                         .child(
-                            txt(px(11.))
-                                .text_color(gpui::rgba(0x888888FF))
+                            txt(font_size_base())
+                                .text_color(text_color_muted())
                                 .child(t("general.search")),
                         ),
                 )
                 .child(
                     h_flex()
-                        .gap(px(4.))
+                        .gap(gap_sm())
                         .flex_wrap()
                         .children(filtered_models.iter().map(|m| {
                             let m_clone: String = (*m).clone();
@@ -1703,14 +1790,14 @@ pub fn api_provider_form(
                 )
                 .into_any_element()
         } else {
-            txt(px(12.))
-                .text_color(gpui::rgba(0x888888FF))
+            txt(font_size_sm())
+                .text_color(text_color_muted())
                 .child(t("settings.api.form.model_fetch_hint"))
                 .into_any_element()
         })
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .justify_end()
                 .child(
                     Button::new("api-form-cancel")
@@ -1752,15 +1839,15 @@ pub fn form_field(
     input: Option<&Entity<gpui_component::input::InputState>>,
 ) -> impl IntoElement {
     h_flex()
-        .gap(px(8.))
+        .gap(gap_md())
         .items_center()
-        .child(txt(px(12.)).w(px(100.)).child(label.into()))
+        .child(txt(font_size_sm()).w(form_label_w()).child(label.into()))
         .child(
             input
                 .map(|e| Input::new(e).into_any_element())
                 .unwrap_or_else(|| {
-                    txt(px(12.))
-                        .text_color(gpui::rgba(0x888888FF))
+                    txt(font_size_sm())
+                        .text_color(text_color_muted())
                         .child("_")
                         .into_any_element()
                 }),

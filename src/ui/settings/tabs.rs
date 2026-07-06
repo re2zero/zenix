@@ -9,7 +9,7 @@ use crate::i18n::t;
 use crate::skills::ApiSkill;
 use gpui::{
     AnyElement, ClickEvent, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, Window, div, prelude::FluentBuilder as _, px,
+    StatefulInteractiveElement as _, Styled as _, Window, div, prelude::FluentBuilder as _,
 };
 use gpui_component::{
     button::{Button, ButtonVariants as _},
@@ -22,6 +22,7 @@ use gpui_component::{
 };
 
 use crate::ui::settings::helpers::*;
+use crate::ui::settings::styles::*;
 
 use super::components;
 use super::{
@@ -36,6 +37,7 @@ pub fn tab_content(
     font_size: f32,
     current_theme_name: &str,
     theme_buttons: Vec<AnyElement>,
+    theme: &gpui_component::Theme,
     on_font_down: ThemeCallback,
     on_font_up: ThemeCallback,
     locale: &str,
@@ -60,19 +62,9 @@ pub fn tab_content(
     on_extension_tab_change: &SharedActionCb<ExtensionSubTab>,
     mcp_test_results: &HashMap<String, String>,
     api_test_results: &HashMap<String, String>,
-    agent_search: &str,
-    on_agent_refresh: &SharedActionCb<()>,
-    on_tab_change: &SharedActionCb<usize>,
-    agent_search_input: Option<&Entity<gpui_component::input::InputState>>,
-    on_agent_toggle_installed: &SharedActionCb<bool>,
-    agent_installed_only: bool,
     active_skills_subtab: SkillsSubTab,
     skill_search: &str,
     skill_search_input: Option<&Entity<gpui_component::input::InputState>>,
-    mcp_search: &str,
-    mcp_search_input: Option<&Entity<gpui_component::input::InputState>>,
-    api_search: &str,
-    api_search_input: Option<&Entity<gpui_component::input::InputState>>,
     terminal_cursor_blink: bool,
     terminal_cursor_style: &str,
     terminal_opacity: f32,
@@ -84,7 +76,7 @@ pub fn tab_content(
     market_error: Option<&str>,
 ) -> AnyElement {
     match active_tab {
-        0 => tab_general(locale, on_locale_change).into_any_element(),
+        0 => tab_general(locale, on_locale_change, theme).into_any_element(),
         1 => tab_appearance(
             font_size,
             current_theme_name,
@@ -92,6 +84,7 @@ pub fn tab_content(
             on_font_down,
             on_font_up,
             font_select,
+            theme,
         )
         .into_any_element(),
         2 => tab_terminal(
@@ -101,6 +94,7 @@ pub fn tab_content(
             terminal_scrollback,
             scrollback_input,
             on_terminal_action,
+            theme,
         )
         .into_any_element(),
         3 => tab_agent_cli(
@@ -114,13 +108,8 @@ pub fn tab_content(
             on_mcp_action,
             on_skill_action,
             mcp_test_results,
-            agent_search,
-            agent_search_input,
-            on_agent_toggle_installed,
-            agent_installed_only,
-            on_agent_refresh,
-            on_tab_change,
             on_extension_tab_change,
+            theme,
         )
         .into_any_element(),
         _ => tab_extensions(
@@ -137,10 +126,6 @@ pub fn tab_content(
             skill_search_input,
             skill_dialog_mode,
             on_skill_action,
-            mcp_search,
-            mcp_search_input,
-            api_search,
-            api_search_input,
             api_providers,
             api_form,
             mcp_test_results,
@@ -150,6 +135,7 @@ pub fn tab_content(
             market_skills,
             market_loading,
             market_error,
+            theme,
         )
         .into_any_element(),
     }
@@ -157,25 +143,29 @@ pub fn tab_content(
 
 // ── General Tab ───────────────────────────────────────────────────────
 
-fn tab_general(locale: &str, on_locale_change: ActionCb<String>) -> impl IntoElement {
+fn tab_general(locale: &str, on_locale_change: ActionCb<String>, theme: &gpui_component::Theme) -> impl IntoElement {
     let loc = locale.to_string();
     let cb = Rc::new(on_locale_change);
     let config_dir = crate::platform::zenix_config_dir();
     v_flex()
-        .gap(px(16.))
-        .child(setting_group_header(t("settings.general.language")))
+        .gap(gap_xl())
         .child(
-            h_flex()
-                .gap(px(4.))
-                .child(locale_btn("en", "English", &loc, cb.clone()))
-                .child(locale_btn("zh-CN", "\u{4e2d}\u{6587}", &loc, cb)),
+            section_card(theme)
+                .child(section_header().child(t("settings.general.language")))
+                .child(
+                    h_flex()
+                        .gap(gap_sm())
+                        .child(locale_btn("en", "English", &loc, cb.clone()))
+                        .child(locale_btn("zh-CN", "\u{4e2d}\u{6587}", &loc, cb)),
+                ),
         )
-        .child(setting_group_header(t("settings.about")))
-        .child(txt(px(12.)).child(format!("zenix v{}", env!("CARGO_PKG_VERSION"))))
         .child(
-            txt(px(11.)).text_color(gpui::rgba(0x888888FF)).child(
-                t("settings.config_path").replace("{path}", &config_dir.display().to_string()),
-            ),
+            section_card(theme)
+                .child(section_header().child(t("settings.about")))
+                .child(txt(font_size_sm()).child(format!("zenix v{}", env!("CARGO_PKG_VERSION"))))
+                .child(txt(font_size_sm()).text_color(text_color_muted()).child(
+                    t("settings.config_path").replace("{path}", &config_dir.display().to_string()),
+                )),
         )
 }
 
@@ -205,57 +195,65 @@ fn tab_appearance(
     on_font_down: ThemeCallback,
     on_font_up: ThemeCallback,
     font_select: Option<&Entity<SelectState<SearchableVec<String>>>>,
+    theme: &gpui_component::Theme,
 ) -> impl IntoElement {
     let mid = theme_buttons.len().div_ceil(2);
     let mut iter = theme_buttons.into_iter();
     let col1: Vec<_> = iter.by_ref().take(mid).collect();
     let col2: Vec<_> = iter.collect();
     v_flex()
-        .gap(px(16.))
-        .child(setting_group_header(t("settings.appearance.title")))
-        .child(setting_label(t("settings.appearance.theme")))
+        .gap(gap_xl())
         .child(
-            h_flex()
-                .gap(px(8.))
-                .child(v_flex().flex_grow(1.0).gap(px(4.)).children(col1))
-                .child(v_flex().flex_grow(1.0).gap(px(4.)).children(col2)),
-        )
-        .child(setting_row(
-            t("settings.appearance.font"),
-            h_flex()
-                .gap(px(8.))
-                .items_center()
+            section_card(theme)
+                .child(section_header().child(t("settings.appearance.title")))
+                .child(setting_label(t("settings.appearance.theme")))
                 .child(
-                    Button::new("f-dn")
-                        .ghost()
-                        .label("\u{2212}")
-                        .text_size(px(18.))
-                        .on_click(on_font_down),
-                )
-                .child(
-                    txt(px(15.))
-                        .w(px(44.))
-                        .text_center()
-                        .child(format!("{:.0}px", font_size)),
-                )
-                .child(
-                    Button::new("f-up")
-                        .ghost()
-                        .label("+")
-                        .text_size(px(18.))
-                        .on_click(on_font_up),
-                )
-                .child(
-                    font_select
-                        .map(|sel| Select::new(sel).w(px(220.)).into_any_element())
-                        .unwrap_or_else(|| {
-                            div()
-                                .w(px(220.))
-                                .child(t("settings.appearance.change_font"))
-                                .into_any_element()
-                        }),
+                    h_flex()
+                        .gap(gap_md())
+                        .child(v_flex().flex_grow(1.0).gap(gap_sm()).children(col1))
+                        .child(v_flex().flex_grow(1.0).gap(gap_sm()).children(col2)),
                 ),
-        ))
+        )
+        .child(
+            section_card(theme)
+                .child(section_header().child(t("settings.appearance.font")))
+                .child(setting_row(
+                    t("settings.appearance.font"),
+                    h_flex()
+                        .gap(gap_md())
+                        .items_center()
+                        .child(
+                            Button::new("f-dn")
+                                .ghost()
+                                .label("\u{2212}")
+                                .text_size(font_size_md())
+                                .on_click(on_font_down),
+                        )
+                        .child(
+                            txt(font_size_sm())
+                                .w(tab_icon_w())
+                                .text_center()
+                                .child(format!("{:.0}px", font_size)),
+                        )
+                        .child(
+                            Button::new("f-up")
+                                .ghost()
+                                .label("+")
+                                .text_size(font_size_md())
+                                .on_click(on_font_up),
+                        )
+                        .child(
+                            font_select
+                                .map(|sel| Select::new(sel).w(form_field_w()).into_any_element())
+                                .unwrap_or_else(|| {
+                                    div()
+                                        .w(form_field_w())
+                                        .child(t("settings.appearance.change_font"))
+                                        .into_any_element()
+                                }),
+                        ),
+                )),
+        )
 }
 
 // ── Terminal Tab ──────────────────────────────────────────────────────
@@ -267,6 +265,7 @@ fn tab_terminal(
     scrollback: u32,
     _scrollback_input: Option<&Entity<gpui_component::input::InputState>>,
     ota: &SharedActionCb<TerminalAction>,
+    theme: &gpui_component::Theme,
 ) -> impl IntoElement {
     let style_btn = |style: &'static str, current: &str| {
         let sel = style == current;
@@ -297,107 +296,110 @@ fn tab_terminal(
     let ota_blink = ota.clone();
 
     // Scrollback: readonly display with +/- buttons (long-press supported).
-    let scrollback_display: AnyElement = txt(px(12.))
+    let scrollback_display: AnyElement = txt(font_size_sm())
         .font_family("JetBrains Mono, Lilex")
-        .w(px(80.))
+        .w(scrollback_display_w())
         .text_center()
         .child(format!("{scrollback}"))
         .into_any_element();
 
-    v_flex()
-        .gap(px(16.))
-        .child(setting_group_header(t("settings.terminal.title")))
-        .child(setting_row(
-            t("settings.terminal.cursor_style"),
-            h_flex()
-                .gap(px(8.))
-                .child(style_btn("block", cursor_style))
-                .child(style_btn("bar", cursor_style))
-                .child(style_btn("underline", cursor_style)),
-        ))
-        .child(setting_row(
-            t("settings.terminal.cursor_blink"),
-            Button::new("cursor-blink")
-                .when(cursor_blink, |b| b.primary())
-                .when(!cursor_blink, |b| b.ghost())
-                .label(blink_label)
-                .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
-                    ota_blink(TerminalAction::ToggleCursorBlink, w, a)
-                }),
-        ))
-        .child(setting_row(
-            t("settings.terminal.opacity"),
-            h_flex()
-                .gap(px(8.))
-                .items_center()
-                .child(
-                    Button::new("opacity-down")
-                        .ghost()
-                        .label("-")
-                        .text_size(px(18.))
-                        .on_click({
-                            let ota = ota.clone();
-                            move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
-                                let pct = (opacity * 100.0 - 1.0).round().clamp(30.0, 100.0) as i32;
-                                let new_op = pct as f32 / 100.0;
-                                ota(TerminalAction::SetOpacity(new_op), w, a);
-                            }
-                        }),
-                )
-                .child(
-                    txt(px(12.))
-                        .w(px(44.))
-                        .text_center()
-                        .child(format!("{:.0}%", (opacity * 100.0).round())),
-                )
-                .child(
-                    Button::new("opacity-up")
-                        .ghost()
-                        .label("+")
-                        .text_size(px(18.))
-                        .on_click({
-                            let ota = ota.clone();
-                            move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
-                                let pct = (opacity * 100.0 + 1.0).round().clamp(30.0, 100.0) as i32;
-                                let new_op = pct as f32 / 100.0;
-                                ota(TerminalAction::SetOpacity(new_op), w, a);
-                            }
-                        }),
-                ),
-        ))
-        .child(setting_row(
-            t("settings.terminal.scrollback"),
-            h_flex()
-                .gap(px(4.))
-                .items_center()
-                .child(
-                    Button::new("scrollback-down")
-                        .ghost()
-                        .label("-")
-                        .text_size(px(18.))
-                        .on_click({
-                            let ota = ota.clone();
-                            move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
-                                let new_sb = (scrollback as i32 - 100).max(100) as u32;
-                                ota(TerminalAction::SetScrollback(new_sb), w, a);
-                            }
-                        }),
-                )
-                .child(scrollback_display)
-                .child(
-                    Button::new("scrollback-up")
-                        .ghost()
-                        .label("+")
-                        .text_size(px(18.))
-                        .on_click({
-                            let ota = ota.clone();
-                            move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
-                                let new_sb = (scrollback as i32 + 100).min(100000) as u32;
-                                ota(TerminalAction::SetScrollback(new_sb), w, a);
-                            }
-                        }),
-                ),
-        ))
+    v_flex().gap(gap_xl()).child(
+        section_card(theme)
+            .child(section_header().child(t("settings.terminal.title")))
+            .child(setting_row(
+                t("settings.terminal.cursor_style"),
+                h_flex()
+                    .gap(gap_md())
+                    .child(style_btn("block", cursor_style))
+                    .child(style_btn("bar", cursor_style))
+                    .child(style_btn("underline", cursor_style)),
+            ))
+            .child(setting_row(
+                t("settings.terminal.cursor_blink"),
+                Button::new("cursor-blink")
+                    .when(cursor_blink, |b| b.primary())
+                    .when(!cursor_blink, |b| b.ghost())
+                    .label(blink_label)
+                    .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                        ota_blink(TerminalAction::ToggleCursorBlink, w, a)
+                    }),
+            ))
+            .child(setting_row(
+                t("settings.terminal.opacity"),
+                h_flex()
+                    .gap(gap_md())
+                    .items_center()
+                    .child(
+                        Button::new("opacity-down")
+                            .ghost()
+                            .label("-")
+                            .text_size(font_size_md())
+                            .on_click({
+                                let ota = ota.clone();
+                                move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                                    let pct =
+                                        (opacity * 100.0 - 1.0).round().clamp(30.0, 100.0) as i32;
+                                    let new_op = pct as f32 / 100.0;
+                                    ota(TerminalAction::SetOpacity(new_op), w, a);
+                                }
+                            }),
+                    )
+                    .child(
+                        txt(font_size_sm())
+                            .w(tab_icon_w())
+                            .text_center()
+                            .child(format!("{:.0}%", (opacity * 100.0).round())),
+                    )
+                    .child(
+                        Button::new("opacity-up")
+                            .ghost()
+                            .label("+")
+                            .text_size(font_size_md())
+                            .on_click({
+                                let ota = ota.clone();
+                                move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                                    let pct =
+                                        (opacity * 100.0 + 1.0).round().clamp(30.0, 100.0) as i32;
+                                    let new_op = pct as f32 / 100.0;
+                                    ota(TerminalAction::SetOpacity(new_op), w, a);
+                                }
+                            }),
+                    ),
+            ))
+            .child(setting_row(
+                t("settings.terminal.scrollback"),
+                h_flex()
+                    .gap(gap_sm())
+                    .items_center()
+                    .child(
+                        Button::new("scrollback-down")
+                            .ghost()
+                            .label("-")
+                            .text_size(font_size_md())
+                            .on_click({
+                                let ota = ota.clone();
+                                move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                                    let new_sb = (scrollback as i32 - 100).max(100) as u32;
+                                    ota(TerminalAction::SetScrollback(new_sb), w, a);
+                                }
+                            }),
+                    )
+                    .child(scrollback_display)
+                    .child(
+                        Button::new("scrollback-up")
+                            .ghost()
+                            .label("+")
+                            .text_size(font_size_md())
+                            .on_click({
+                                let ota = ota.clone();
+                                move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
+                                    let new_sb = (scrollback as i32 + 100).min(100000) as u32;
+                                    ota(TerminalAction::SetScrollback(new_sb), w, a);
+                                }
+                            }),
+                    ),
+            )),
+    )
 }
 
 // ── Agent CLI Tab ─────────────────────────────────────────────────────
@@ -413,29 +415,10 @@ fn tab_agent_cli(
     on_mcp_action: &SharedActionCb<McpAction>,
     on_skill_action: &SharedActionCb<SkillAction>,
     mcp_test_results: &HashMap<String, String>,
-    agent_search: &str,
-    agent_search_input: Option<&Entity<gpui_component::input::InputState>>,
-    on_agent_toggle_installed: &SharedActionCb<bool>,
-    agent_installed_only: bool,
-    on_agent_refresh: &SharedActionCb<()>,
-    on_tab_change: &SharedActionCb<usize>,
     on_extension_tab_change: &SharedActionCb<ExtensionSubTab>,
+    theme: &gpui_component::Theme,
 ) -> impl IntoElement {
-    let filtered_agents: Vec<(usize, &AgentCliInfo)> = agents
-        .iter()
-        .enumerate()
-        .filter(|(_, info)| {
-            let matches_search = agent_search.is_empty()
-                || info.name.contains(agent_search)
-                || info
-                    .display_name
-                    .to_lowercase()
-                    .contains(&agent_search.to_lowercase());
-            let matches_installed = !agent_installed_only || info.detected;
-            matches_search && matches_installed
-        })
-        .collect();
-    let _has_filter = !agent_search.is_empty() || agent_installed_only;
+    let filtered_agents: Vec<(usize, &AgentCliInfo)> = agents.iter().enumerate().collect();
 
     // Re-map selected_idx through filtered list
     let _display_selected = selected_idx.and_then(|sid| {
@@ -444,65 +427,27 @@ fn tab_agent_cli(
             .position(|(orig_i, _)| *orig_i == sid)
     });
 
-    let installed_toggle_cb = {
-        let oati = on_agent_toggle_installed.clone();
-        move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
-            oati(!agent_installed_only, w, a);
-        }
-    };
-
-    let installed_label = format!(
-        "{} {}",
-        if agent_installed_only {
-            "\u{2611}"
-        } else {
-            "\u{2610}"
-        },
-        t("settings.agent_cli.installed_only")
-    );
-
-    v_flex().gap(px(8.)).h_full()
-        .child(h_flex().gap(px(8.)).items_center().justify_between()
+    v_flex().gap(gap_md()).h_full()
+        .child(h_flex().gap(gap_md()).items_center().justify_between()
             .child(setting_group_header(t("settings.tab.agent_cli")))
-            .child(Button::new("agent-refresh")
-                .cursor_pointer()
-                .ghost()
-                .label(t("settings.agent_cli.refresh"))
-                .on_click({
-                    let oar = on_agent_refresh.clone();
-                    move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| oar((), w, a)
-                }))
         )
         .child(
-            h_flex().flex_grow(1.0).min_h_0().gap(px(8.))
-                // Left panel: agent list
+            h_flex().flex_grow(1.0).min_h_0().gap(gap_md())
                 .child(
-                    v_flex().flex_none().w(px(210.)).h_full().gap(px(4.))
-                        .border_1().border_color(gpui::rgba(0x45475a44)).rounded_md()
+                    v_flex().flex_none().w(sidebar_w()).h_full().gap_0()
+                        .bg(bg_secondary_theme(theme))
+                        .border_1().border_color(border_color_transparent())
+                        .rounded(border_radius_md())
                         .child(
                             v_flex().gap_0()
                                 .child(
-                                    // Search row
-                                    h_flex().gap(px(4.)).px(px(6.)).py(px(6.)).items_center()
-                                        .border_b_1().border_color(gpui::rgba(0x45475a33))
-                                        .child(txt(px(16.)).text_color(gpui::rgba(0x888888FF)).child("\u{1F50D}"))
-                                        .child(agent_search_input.map(|e| Input::new(e).flex_grow(1.0).into_any_element())
-                                            .unwrap_or_else(|| txt(px(11.)).text_color(gpui::rgba(0x888888FF)).child(t("settings.agent_cli.search_hint")).into_any_element()))
-                                )
-                                .child(
-                                    // Installed-only toggle
-                                    h_flex().gap(px(4.)).px(px(6.)).py(px(3.))
-                                        .border_b_1().border_color(gpui::rgba(0x45475a33))
-                                        .child(Button::new("installed-only")
-                                            .cursor_pointer()
-                                            .when(agent_installed_only, |b| b.primary())
-                                            .when(!agent_installed_only, |b| b.ghost())
-                                            .compact()
-                                            .label(installed_label)
-                                            .on_click(installed_toggle_cb)
-                                        )
-                                        .child(txt(px(10.)).text_color(gpui::rgba(0x666666FF)).child(format!("{} / {}", filtered_agents.len(), agents.len())))
-                                )
+                                    h_flex().gap(gap_sm()).px(pad_md()).py(pad_md()).items_center()
+                                 )
+                                 .child(
+                                     h_flex().gap(gap_sm()).px(pad_md()).py(pad_sm())
+                                         .border_b_1().border_color(border_color_transparent())
+                                         .child(txt(font_size_xs()).text_color(text_color_muted()).child(format!("{} / {}", filtered_agents.len(), agents.len())))
+                                 )
                                 .child(
                                     div().overflow_y_scrollbar().child(
                                         v_flex().gap_0()
@@ -510,17 +455,17 @@ fn tab_agent_cli(
                                                 let sel = selected_idx == Some(*orig_i);
                                                 let oas = on_agent_select.clone();
                                                 let indicator = if info.detected { "\u{25CF}" } else { "\u{25CB}" };
-                                                let ind_color = if info.detected { gpui::rgba(0x00DD44FF) } else { gpui::rgba(0x666666FF) };
+                                                let ind_color = if info.detected { success_color() } else { text_color_muted() };
                                                 let orig_idx = *orig_i;
-                                                div().id(format!("agent-{}", info.name)).w_full()
-                                                    .when(sel, |d| d.bg(gpui::rgba(0xFFFFFF14)))
-                                                    .hover(|d| d.bg(gpui::rgba(0xFFFFFF08)))
-                                                    .cursor_pointer()
-                                                    .px(px(10.)).py(px(6.))
+                                                 div().id(format!("agent-{}", info.name)).w_full()
+                                                     .when(sel, |d| d.bg(bg_selected_theme(theme)))
+                                                     .hover(|d| d.bg(bg_hover_theme(theme)))
+                                                     .cursor_pointer()
+                                                    .px(pad_md()).py(pad_sm())
                                                     .child(
-                                                        h_flex().gap(px(6.)).items_center()
-                                                            .child(txt(px(12.)).text_color(ind_color).child(indicator))
-                                                            .child(txt(px(12.)).child(info.display_name.to_string()))
+                                                        h_flex().gap(gap_sm()).items_center()
+                                                            .child(txt(font_size_xs()).text_color(ind_color).child(indicator))
+                                                            .child(txt(font_size_sm()).child(info.display_name.to_string()))
                                                     )
                                                     .on_click(move |_: &ClickEvent, w: &mut Window, a: &mut gpui::App| {
                                                         oas(Some(orig_idx), w, a);
@@ -535,13 +480,14 @@ fn tab_agent_cli(
                     div().flex_grow(1.0).h_full().overflow_y_scrollbar()
                         .child(
                             match selected_idx.and_then(|i| agents.get(i)) {
-                                None => txt(px(12.)).text_color(gpui::rgba(0x888888FF))
+                                None => txt(font_size_sm()).text_color(text_color_very_muted())
                                     .child(t("settings.agent_cli.no_agent_selected"))
                                     .into_any_element(),
                                 Some(agent) => agent_detail_panel(
                                     agent, mcp_per_agent, skills, api_providers,
                                     mcp_available_agents, on_mcp_action, on_skill_action,
-                                    mcp_test_results, on_tab_change, on_extension_tab_change,
+                                    mcp_test_results, on_extension_tab_change,
+                                    theme,
                                 ),
                             }
                         )
@@ -558,8 +504,8 @@ fn agent_detail_panel(
     on_mcp_action: &SharedActionCb<McpAction>,
     on_skill_action: &SharedActionCb<SkillAction>,
     mcp_test_results: &HashMap<String, String>,
-    on_tab_change: &SharedActionCb<usize>,
     on_extension_tab_change: &SharedActionCb<ExtensionSubTab>,
+    theme: &gpui_component::Theme,
 ) -> AnyElement {
     let agent_name = agent.name;
     let status_text = if agent.detected {
@@ -568,9 +514,9 @@ fn agent_detail_panel(
         t("agent.not_installed")
     };
     let status_color = if agent.detected {
-        gpui::rgba(0x00DD44FF)
+        success_color()
     } else {
-        gpui::rgba(0xFF4444FF)
+        error_color()
     };
 
     let mcp_entries: Vec<&crate::mcp::McpServerEntry> = mcp_per_agent
@@ -593,25 +539,29 @@ fn agent_detail_panel(
         .collect();
 
     v_flex()
-        .gap(px(16.))
+        .gap(gap_lg())
         .child(
             v_flex()
-                .gap(px(4.))
+                .gap(gap_sm())
                 .child(
                     h_flex()
-                        .gap(px(8.))
+                        .gap(gap_md())
                         .items_center()
                         .child(
-                            txt(px(15.))
+                            txt(font_size_lg())
                                 .font_weight(gpui::FontWeight::BOLD)
                                 .child(agent.display_name.to_string()),
                         )
-                        .child(txt(px(11.)).text_color(status_color).child(status_text)),
+                        .child(
+                            txt(font_size_base())
+                                .text_color(status_color)
+                                .child(status_text),
+                        ),
                 )
                 .when_some(agent.binary_path.as_ref(), |el, path| {
                     el.child(
-                        txt(px(11.))
-                            .text_color(gpui::rgba(0x888888FF))
+                        txt(font_size_base())
+                            .text_color(text_color_muted())
                             .child(format!(
                                 "{}: {}",
                                 t("settings.agent_cli.binary_path"),
@@ -623,21 +573,21 @@ fn agent_detail_panel(
         .when(!agent.detected, |el| {
             el.child(
                 v_flex()
-                    .gap(px(4.))
-                    .py(px(8.))
-                    .px(px(10.))
+                    .gap(gap_sm())
+                    .py(pad_md())
+                    .px(pad_md())
                     .border_1()
-                    .border_color(gpui::rgba(0x44AAFFFF))
-                    .rounded_md()
-                    .child(txt(px(12.)).child(t("agent.install")))
+                    .border_color(border_color_active())
+                    .rounded(border_radius_md())
+                    .child(txt(font_size_sm()).child(t("agent.install")))
                     .child(
                         div()
-                            .px(px(8.))
-                            .py(px(4.))
-                            .bg(gpui::rgba(0x00000044))
-                            .rounded_sm()
+                            .px(pad_sm())
+                            .py(pad_sm())
+                            .bg(card_bg_transparent())
+                            .rounded(border_radius_sm())
                             .child(
-                                txt(px(11.))
+                                txt(font_size_sm())
                                     .font_family("monospace")
                                     .child(agent.install_command.to_string()),
                             ),
@@ -646,39 +596,35 @@ fn agent_detail_panel(
         })
         .child(
             v_flex()
-                .gap(px(8.))
-                .child(
-                    txt(px(13.))
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .child(t("settings.api.title")),
-                )
+                .gap(gap_md())
+                .child(section_header().child(t("settings.api.title")))
                 .child(if agent_providers.is_empty() {
-                    txt(px(11.))
-                        .text_color(gpui::rgba(0x888888FF))
+                    txt(font_size_sm())
+                        .text_color(text_color_very_muted())
                         .child(t("settings.no_api_providers"))
                         .into_any_element()
                 } else {
                     v_flex()
-                        .gap(px(6.))
+                        .gap(gap_sm())
                         .children(agent_providers.iter().map(|p| {
                             let fmt_color = match p.format {
-                                crate::api_provider::ApiFormat::OpenAI => gpui::rgba(0x44AADDFF),
-                                crate::api_provider::ApiFormat::Anthropic => gpui::rgba(0xDD8844FF),
+                                crate::api_provider::ApiFormat::OpenAI => badge_blue(),
+                                crate::api_provider::ApiFormat::Anthropic => badge_orange(),
                             };
                             h_flex()
-                                .gap(px(8.))
-                                .py(px(4.))
-                                .px(px(8.))
+                                .gap(gap_md())
+                                .py(pad_sm())
+                                .px(pad_md())
                                 .border_1()
-                                .border_color(gpui::rgba(0x45475a44))
-                                .rounded_md()
+                                .border_color(border_color_transparent_2())
+                                .rounded(border_radius_sm())
                                 .child(
-                                    txt(px(12.))
+                                    txt(font_size_sm())
                                         .font_weight(gpui::FontWeight::MEDIUM)
                                         .child(p.name.clone()),
                                 )
                                 .child(
-                                    txt(px(10.))
+                                    txt(font_size_sm())
                                         .text_color(fmt_color)
                                         .child(p.format.label().to_string()),
                                 )
@@ -688,26 +634,23 @@ fn agent_detail_panel(
         )
         .child(
             v_flex()
-                .gap(px(8.))
-                .child(
-                    txt(px(13.))
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .child(t("settings.mcp.title")),
-                )
+                .gap(gap_md())
+                .child(section_header().child(t("settings.mcp.title")))
                 .child(if mcp_entries.is_empty() {
-                    txt(px(11.))
-                        .text_color(gpui::rgba(0x888888FF))
+                    txt(font_size_sm())
+                        .text_color(text_color_very_muted())
                         .child(t("mcp.no_servers"))
                         .into_any_element()
                 } else {
                     v_flex()
-                        .gap(px(6.))
+                        .gap(gap_sm())
                         .children(mcp_entries.iter().map(|entry| {
                             components::mcp_agent_entry_with_test(
                                 agent_name,
                                 entry,
                                 on_mcp_action,
                                 mcp_test_results,
+                                theme,
                             )
                         }))
                         .into_any_element()
@@ -717,35 +660,29 @@ fn agent_detail_panel(
             div()
                 .cursor_pointer()
                 .child(
-                    txt(px(11.))
-                        .text_color(gpui::rgba(0x44AADDFF))
+                    txt(font_size_base())
+                        .text_color(badge_blue())
                         .child(t("settings.agent_cli.add_mcp_extensions")),
                 )
                 .on_mouse_down(gpui::MouseButton::Left, {
-                    let otc = on_tab_change.clone();
                     let oetc = on_extension_tab_change.clone();
                     move |_: &gpui::MouseDownEvent, w: &mut Window, a: &mut gpui::App| {
-                        otc(4, w, a);
                         oetc(ExtensionSubTab::Mcp, w, a);
                     }
                 }),
         )
         .child(
             v_flex()
-                .gap(px(8.))
-                .child(
-                    txt(px(13.))
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .child(t("settings.tab.skills")),
-                )
+                .gap(gap_md())
+                .child(section_header().child(t("settings.tab.skills")))
                 .child(if agent_skills.is_empty() {
-                    txt(px(11.))
-                        .text_color(gpui::rgba(0x888888FF))
+                    txt(font_size_sm())
+                        .text_color(text_color_very_muted())
                         .child(t("skills.no_skills"))
                         .into_any_element()
                 } else {
                     h_flex()
-                        .gap(px(8.))
+                        .gap(gap_sm())
                         .flex_wrap()
                         .children(agent_skills.iter().map(|s| {
                             components::per_agent_skill_card(agent_name, s, on_skill_action)
@@ -772,10 +709,6 @@ fn tab_extensions(
     skill_search_input: Option<&Entity<gpui_component::input::InputState>>,
     skill_dialog_mode: &InputDialogMode,
     on_skill_action: &SharedActionCb<SkillAction>,
-    mcp_search: &str,
-    mcp_search_input: Option<&Entity<gpui_component::input::InputState>>,
-    api_search: &str,
-    api_search_input: Option<&Entity<gpui_component::input::InputState>>,
     api_providers: &[ApiProviderConfig],
     api_form: Option<&ApiProviderFormState>,
     mcp_test_results: &HashMap<String, String>,
@@ -785,6 +718,7 @@ fn tab_extensions(
     market_skills: &[ApiSkill],
     market_loading: bool,
     market_error: Option<&str>,
+    theme: &gpui_component::Theme,
 ) -> impl IntoElement {
     let otc = on_sub_tab_change.clone();
     let labels: Vec<(String, ExtensionSubTab)> = vec![
@@ -793,8 +727,8 @@ fn tab_extensions(
         (t("settings.tab.skills"), ExtensionSubTab::Skills),
     ];
     v_flex()
-        .gap(px(12.))
-        .child(zed_tab_bar(
+        .gap(gap_lg())
+        .child(extension_tab_nav(
             "ext-sub",
             labels.iter().map(|(l, _)| l.clone()).collect(),
             labels
@@ -809,6 +743,7 @@ fn tab_extensions(
                     }
                 }
             },
+            theme,
         ))
         .child(match active_sub {
             ExtensionSubTab::Api => tab_api_content(
@@ -817,8 +752,6 @@ fn tab_extensions(
                 mcp_available_agents,
                 on_api_action,
                 api_test_results,
-                api_search,
-                api_search_input,
             )
             .into_any_element(),
             ExtensionSubTab::Mcp => tab_mcp_content(
@@ -828,8 +761,7 @@ fn tab_extensions(
                 mcp_available_agents,
                 on_mcp_action,
                 mcp_test_results,
-                mcp_search,
-                mcp_search_input,
+                theme,
             )
             .into_any_element(),
             ExtensionSubTab::Skills => tab_skills_content(
@@ -843,6 +775,7 @@ fn tab_extensions(
                 market_skills,
                 market_loading,
                 market_error,
+                theme,
             )
             .into_any_element(),
         })
@@ -852,13 +785,12 @@ fn tab_extensions(
 
 fn tab_mcp_content(
     zenix_servers: &[crate::mcp::ZenixMcpServer],
-    _per_agent: &[(String, Vec<crate::mcp::McpServerEntry>)],
+    per_agent: &[(String, Vec<crate::mcp::McpServerEntry>)],
     mcp_form: Option<&McpFormState>,
     available_agents: &[String],
     on_mcp_action: &SharedActionCb<McpAction>,
     mcp_test_results: &HashMap<String, String>,
-    mcp_search: &str,
-    mcp_search_input: Option<&Entity<gpui_component::input::InputState>>,
+    theme: &gpui_component::Theme,
 ) -> impl IntoElement {
     let add_cb = {
         let oma = on_mcp_action.clone();
@@ -867,16 +799,8 @@ fn tab_mcp_content(
         }
     };
 
-    // Filter servers by search
-    let filtered_servers: Vec<&crate::mcp::ZenixMcpServer> = if mcp_search.is_empty() {
-        zenix_servers.iter().collect()
-    } else {
-        let q = mcp_search.to_lowercase();
-        zenix_servers
-            .iter()
-            .filter(|s| s.name.to_lowercase().contains(&q))
-            .collect()
-    };
+    // No filtering needed for MCP servers
+    let filtered_servers: Vec<&crate::mcp::ZenixMcpServer> = zenix_servers.iter().collect();
 
     // Only show the form if we're adding a new server (not editing an existing one)
     // When editing, the card itself renders the inline edit form
@@ -885,10 +809,10 @@ fn tab_mcp_content(
         .map(|form| components::mcp_add_form(form, on_mcp_action));
 
     v_flex()
-        .gap(px(12.))
+        .gap(gap_lg())
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .items_center()
                 .justify_between()
                 .child(setting_group_header(t("settings.mcp.title")))
@@ -900,16 +824,15 @@ fn tab_mcp_content(
                         .on_click(add_cb),
                 ),
         )
-        .child(zed_search_bar(&t("settings.mcp.search"), mcp_search_input))
         .when_some(form_el, |el, form| el.child(form))
         .child(if filtered_servers.is_empty() && mcp_form.is_none() {
-            txt(px(12.))
-                .text_color(gpui::rgba(0x888888FF))
+            txt(font_size_sm())
+                .text_color(text_color_very_muted())
                 .child(t("settings.mcp.no_zenix_servers"))
                 .into_any_element()
         } else {
             v_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .children(filtered_servers.iter().map(|s| {
                     components::mcp_card(
                         s,
@@ -917,6 +840,7 @@ fn tab_mcp_content(
                         on_mcp_action,
                         mcp_form,
                         mcp_test_results,
+                        theme,
                     )
                 }))
                 .into_any_element()
@@ -936,6 +860,7 @@ fn tab_skills_content(
     market_skills: &[ApiSkill],
     market_loading: bool,
     market_error: Option<&str>,
+    theme: &gpui_component::Theme,
 ) -> impl IntoElement {
     let zenix_skills = crate::skills::zenix_skills();
     let installed_names: std::collections::HashSet<String> =
@@ -956,10 +881,10 @@ fn tab_skills_content(
     let otc = on_skill_action.clone();
 
     v_flex()
-        .gap(px(12.))
+        .gap(gap_lg())
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .items_center()
                 .justify_between()
                 .child(zed_tab_bar(
@@ -979,6 +904,7 @@ fn tab_skills_content(
                             }
                         }
                     },
+                    theme,
                 ))
                 .child(
                     Button::new("refresh-s")
@@ -988,7 +914,7 @@ fn tab_skills_content(
                         .on_click(refresh_cb),
                 ),
         )
-        .child(zed_search_bar(&t("skills.search"), skill_search_input))
+        .child(zed_search_bar(&t("skills.search"), skill_search_input, theme))
         .child(match active_subtab {
             SkillsSubTab::Installed => {
                 let filtered: Vec<&crate::skills::SkillInfo> = zenix_skills
@@ -999,20 +925,20 @@ fn tab_skills_content(
                     })
                     .collect();
                 if filtered.is_empty() {
-                    txt(px(12.))
-                        .text_color(gpui::rgba(0x888888FF))
+                    txt(font_size_sm())
+                        .text_color(text_color_very_muted())
                         .child(t("skills.no_installed"))
                         .into_any_element()
                 } else {
                     h_flex()
-                        .gap(px(8.))
+                        .gap(gap_sm())
                         .flex_wrap()
                         .min_w_0()
                         .overflow_x_hidden()
                         .children(
                             filtered
                                 .iter()
-                                .map(|s| components::zenix_skill_card(s, on_skill_action)),
+                                .map(|s| components::zenix_skill_card(s, on_skill_action, theme)),
                         )
                         .into_any_element()
                 }
@@ -1026,21 +952,21 @@ fn tab_skills_content(
                 };
 
                 let market_content = if market_loading {
-                    txt(px(12.))
-                        .text_color(gpui::rgba(0x888888FF))
+                    txt(font_size_sm())
+                        .text_color(text_color_muted())
                         .child(t("skills.market_loading"))
                         .into_any_element()
                 } else if let Some(err) = market_error {
-                    txt(px(12.))
-                        .text_color(gpui::rgba(0xFF4444FF))
+                    txt(font_size_sm())
+                        .text_color(error_color())
                         .child(err.to_string())
                         .into_any_element()
                 } else if market_skills.is_empty() {
                     v_flex()
-                        .gap(px(8.))
+                        .gap(gap_sm())
                         .child(
-                            txt(px(12.))
-                                .text_color(gpui::rgba(0x888888FF))
+                            txt(font_size_sm())
+                                .text_color(text_color_muted())
                                 .child(t("skills.market_empty")),
                         )
                         .child(
@@ -1065,15 +991,15 @@ fn tab_skills_content(
                         .collect();
                     let count = filtered.len();
                     v_flex()
-                        .gap(px(12.))
+                        .gap(gap_lg())
                         .child(
                             h_flex()
-                                .gap(px(8.))
+                                .gap(gap_md())
                                 .items_center()
                                 .justify_between()
                                 .child(
-                                    txt(px(10.))
-                                        .text_color(gpui::rgba(0x666666FF))
+                                    txt(font_size_sm())
+                                        .text_color(text_color_very_muted())
                                         .child(format!("{} items", count)),
                                 )
                                 .child(
@@ -1086,25 +1012,25 @@ fn tab_skills_content(
                                 ),
                         )
                         .child(if filtered.is_empty() {
-                            txt(px(12.))
-                                .text_color(gpui::rgba(0x888888FF))
+                            txt(font_size_sm())
+                                .text_color(text_color_very_muted())
                                 .child(t("skills.no_skills"))
                                 .into_any_element()
                         } else {
                             h_flex()
-                                .gap(px(8.))
+                                .gap(gap_sm())
                                 .flex_wrap()
                                 .min_w_0()
                                 .overflow_x_hidden()
                                 .children(filtered.iter().map(|s| {
-                                    components::api_skill_card(s, &installed_names, on_skill_action)
+                                    components::api_skill_card(s, &installed_names, on_skill_action, theme)
                                 }))
                                 .into_any_element()
                         })
                         .into_any_element()
                 };
                 v_flex()
-                    .gap(px(8.))
+                    .gap(gap_md())
                     .child(market_content)
                     .child(components::add_skill_card(on_skill_action))
                     .into_any_element()
@@ -1114,26 +1040,26 @@ fn tab_skills_content(
             el.when(*skill_dialog_mode == InputDialogMode::SkillAddGit, |el| {
                 el.child(
                     v_flex()
-                        .gap(px(8.))
-                        .py(px(8.))
-                        .px(px(10.))
+                        .gap(gap_md())
+                        .py(pad_md())
+                        .px(pad_xl())
                         .border_1()
-                        .border_color(gpui::rgba(0x45475a66))
-                        .rounded_md()
-                        .child(txt(px(12.)).child(t("skills.dialog_git_url")))
+                        .border_color(border_color_transparent_2())
+                        .rounded(border_radius_md())
+                        .child(txt(font_size_sm()).child(t("skills.dialog_git_url")))
                         .child(Input::new(inp)),
                 )
             })
             .when(*skill_dialog_mode == InputDialogMode::SkillAddLocal, |el| {
                 el.child(
                     v_flex()
-                        .gap(px(8.))
-                        .py(px(8.))
-                        .px(px(10.))
+                        .gap(gap_md())
+                        .py(pad_md())
+                        .px(pad_xl())
                         .border_1()
-                        .border_color(gpui::rgba(0x45475a66))
-                        .rounded_md()
-                        .child(txt(px(12.)).child(t("skills.dialog_local_path")))
+                        .border_color(border_color_transparent_2())
+                        .rounded(border_radius_md())
+                        .child(txt(font_size_sm()).child(t("skills.dialog_local_path")))
                         .child(Input::new(inp)),
                 )
             })
@@ -1148,20 +1074,11 @@ fn tab_api_content(
     available_agents: &[String],
     on_action: &SharedActionCb<ApiProviderAction>,
     api_test_results: &HashMap<String, String>,
-    api_search: &str,
-    api_search_input: Option<&Entity<gpui_component::input::InputState>>,
 ) -> impl IntoElement {
     let on_api = on_action.clone();
 
-    let filtered: Vec<&ApiProviderConfig> = if api_search.is_empty() {
-        providers.iter().collect()
-    } else {
-        let q = api_search.to_lowercase();
-        providers
-            .iter()
-            .filter(|p| p.name.to_lowercase().contains(&q))
-            .collect()
-    };
+    // No filtering needed for API providers
+    let filtered: Vec<&ApiProviderConfig> = providers.iter().collect();
 
     let add_cb = {
         let on_api = on_api.clone();
@@ -1171,44 +1088,19 @@ fn tab_api_content(
     };
 
     v_flex()
-        .gap(px(12.))
+        .gap(gap_lg())
         .child(
             h_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .items_center()
                 .justify_between()
                 .child(setting_group_header(t("settings.api.title")))
                 .child(
-                    h_flex()
-                        .gap(px(4.))
-                        .items_center()
-                        .child(
-                            txt(px(16.))
-                                .text_color(gpui::rgba(0x888888FF))
-                                .child("\u{1F50D}"),
-                        )
-                        .child(
-                            api_search_input
-                                .map(|e| Input::new(e).flex_grow(1.0).into_any_element())
-                                .unwrap_or_else(|| {
-                                    txt(px(11.))
-                                        .text_color(gpui::rgba(0x888888FF))
-                                        .child(t("settings.api.search"))
-                                        .into_any_element()
-                                }),
-                        )
-                        .child(
-                            txt(px(10.))
-                                .text_color(gpui::rgba(0x666666FF))
-                                .child(format!("{} items", filtered.len())),
-                        )
-                        .child(
-                            Button::new("add-api-provider")
-                                .cursor_pointer()
-                                .ghost()
-                                .label(t("general.add"))
-                                .on_click(add_cb),
-                        ),
+                    Button::new("add-api-provider")
+                        .cursor_pointer()
+                        .ghost()
+                        .label(t("general.add"))
+                        .on_click(add_cb),
                 ),
         )
         // Only show the add form if not editing (editing is inline in the card)
@@ -1216,13 +1108,13 @@ fn tab_api_content(
             el.child(components::api_provider_form(f, on_action))
         })
         .child(if filtered.is_empty() && form.is_none() {
-            txt(px(12.))
-                .text_color(gpui::rgba(0x888888FF))
+            txt(font_size_sm())
+                .text_color(text_color_very_muted())
                 .child(t("settings.api.no_providers"))
                 .into_any_element()
         } else {
             v_flex()
-                .gap(px(8.))
+                .gap(gap_md())
                 .children(filtered.iter().map(|p| {
                     components::api_provider_card(
                         p,
