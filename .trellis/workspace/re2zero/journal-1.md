@@ -380,3 +380,36 @@ API 编辑时，编辑表单显示在卡片上方/下方，而不是在原有卡
 2. AI 会话 API 配置隔离（无配置时 AI 不可用）
 3. Rust Agent CLI 开源库调查
 4. 编排功能 Tool 化（MCP Tool vs 硬编码调度）
+
+
+## Session 1: ZenixAI chat panel v4 redesign — modular + popover-driven + resizable
+
+**Date**: 2026-07-07
+**Task**: ZenixAI chat panel v4 redesign — modular + popover-driven + resizable
+**Branch**: `main`
+
+### Summary
+
+Split chat.rs (1364 lines) into 11-module chat/ directory. Unified message stream via role=tool/error string convention (no ChatMessage schema change). Drawer replaces floating history/agents panels. Drag-resize panel width + input height with config persistence. Model/thinking selectors via deferred popover overlays. Markdown completeness (heading/blockquote/table/link/task). Multi-line input with auto-grow + history navigation. Iterative visual QA rounds fixed: occlude() for absolute hit-testing, deferred() for flex-detached overlays, min_w_0() for long-text flex items, on_drag_move on handle direct parent. Captured gpui patterns in spec/frontend/gpui-ui-patterns.md. Known residuals deferred: drag handle interaction tuning, dropdown smart positioning (up/down), provider selector consolidation.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `dc66ec6` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
