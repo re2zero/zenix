@@ -10,7 +10,10 @@
 //! Output is a `Vec<AnyElement>` (GPUI segments) suitable for rendering
 //! inside a chat bubble.
 
-use gpui::{AnyElement, FontWeight, IntoElement, ParentElement as _, Styled as _, div, px};
+use gpui::{
+    AnyElement, FontWeight, IntoElement, ParentElement as _, Styled as _, div, px,
+};
+use gpui::prelude::FluentBuilder as _;
 use gpui_component::{Theme, h_flex, v_flex};
 
 // ── Segment types ───────────────────────────────────────────────────────
@@ -24,6 +27,11 @@ pub enum MdSegment {
     InlineCode(String),
     CodeBlock(String),
     ListItem(String),
+    Heading(u8, String),
+    Blockquote(String),
+    Table { headers: Vec<String>, rows: Vec<Vec<String>> },
+    Link(String, String),
+    Task(bool, String),
 }
 
 /// Render a markdown string into a vector of GPUI `AnyElement` segments.
@@ -81,6 +89,16 @@ fn parse_markdown(text: &str) -> Vec<MdSegment> {
 
         // Check for list item
         if is_list_item(line) {
+            // Task item: "- [ ]" or "- [x]" / "* [ ]" etc.
+            if let Some((checked, text)) = parse_task_item(line) {
+                if !current_plain.is_empty() {
+                    segments.push(MdSegment::Plain(current_plain.clone()));
+                    current_plain.clear();
+                }
+                segments.push(MdSegment::Task(checked, text));
+                i += 1;
+                continue;
+            }
             if !current_plain.is_empty() {
                 segments.push(MdSegment::Plain(current_plain.clone()));
                 current_plain.clear();
@@ -88,6 +106,40 @@ fn parse_markdown(text: &str) -> Vec<MdSegment> {
             let content = strip_list_marker(line);
             segments.push(MdSegment::ListItem(content));
             i += 1;
+            continue;
+        }
+
+        // Heading: "# " .. "###### "
+        if let Some((level, text)) = parse_heading(line) {
+            if !current_plain.is_empty() {
+                segments.push(MdSegment::Plain(current_plain.clone()));
+                current_plain.clear();
+            }
+            segments.push(MdSegment::Heading(level, text));
+            i += 1;
+            continue;
+        }
+
+        // Blockquote: "> ..."
+        if let Some(text) = parse_blockquote(line) {
+            if !current_plain.is_empty() {
+                segments.push(MdSegment::Plain(current_plain.clone()));
+                current_plain.clear();
+            }
+            segments.push(MdSegment::Blockquote(text));
+            i += 1;
+            continue;
+        }
+
+        // Table: current line has "|" and next line is a separator row.
+        if is_table_start(&lines, i) {
+            if !current_plain.is_empty() {
+                segments.push(MdSegment::Plain(current_plain.clone()));
+                current_plain.clear();
+            }
+            let (headers, rows, consumed) = parse_table(&lines, i);
+            segments.push(MdSegment::Table { headers, rows });
+            i += consumed;
             continue;
         }
 
@@ -166,6 +218,100 @@ fn strip_list_marker(line: &str) -> String {
     trimmed.to_string()
 }
 
+/// Parse a task item line: `- [ ] text` or `- [x] text` (also `*` marker).
+fn parse_task_item(line: &str) -> Option<(bool, String)> {
+    let trimmed = line.trim_start();
+    let after_marker = trimmed
+        .strip_prefix("- ")
+        .or_else(|| trimmed.strip_prefix("* "))?;
+    let bytes = after_marker.as_bytes();
+    if bytes.len() < 3 || bytes[0] != b'[' || bytes[2] != b']' {
+        return None;
+    }
+    let checked = match bytes[1] {
+        b' ' => false,
+        b'x' | b'X' => true,
+        _ => return None,
+    };
+    Some((checked, after_marker[3..].trim_start().to_string()))
+}
+
+/// Parse a heading line: 1-6 `#` followed by a space.
+fn parse_heading(line: &str) -> Option<(u8, String)> {
+    let trimmed = line.trim_start();
+    let level = trimmed.bytes().take_while(|&b| b == b'#').count();
+    if level == 0 || level > 6 {
+        return None;
+    }
+    let rest = &trimmed[level..];
+    if rest.is_empty() {
+        return Some((level as u8, String::new()));
+    }
+    if rest.starts_with(' ') {
+        return Some((level as u8, rest.trim_start().to_string()));
+    }
+    None
+}
+
+/// Parse a blockquote line: leading `>` optionally followed by a space.
+fn parse_blockquote(line: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    let rest = trimmed.strip_prefix('>')?;
+    if rest.is_empty() {
+        Some(String::new())
+    } else if let Some(stripped) = rest.strip_prefix(' ') {
+        Some(stripped.to_string())
+    } else {
+        None
+    }
+}
+
+/// Split a table row by `|`, trimming edges and cells.
+fn split_table_row(line: &str) -> Vec<String> {
+    let trimmed = line.trim();
+    let inner = trimmed.trim_start_matches('|').trim_end_matches('|');
+    inner.split('|').map(|c| c.trim().to_string()).collect()
+}
+
+/// A table separator cell: only `-` and `:` allowed, at least one `-`.
+fn is_separator_cell(cell: &str) -> bool {
+    !cell.is_empty()
+        && cell
+            .chars()
+            .all(|c| c == '-' || c == ':')
+        && cell.contains('-')
+}
+
+/// Detect a table: current line contains `|` and next line is a separator.
+fn is_table_start(lines: &[&str], i: usize) -> bool {
+    if i + 1 >= lines.len() {
+        return false;
+    }
+    let cur = lines[i];
+    let next = lines[i + 1];
+    if !cur.contains('|') || !next.contains('|') {
+        return false;
+    }
+    let cells = split_table_row(next);
+    !cells.is_empty() && cells.iter().all(|c| is_separator_cell(c))
+}
+
+/// Parse a table starting at line `i`. Returns headers, rows, lines consumed.
+fn parse_table(lines: &[&str], i: usize) -> (Vec<String>, Vec<Vec<String>>, usize) {
+    let headers = split_table_row(lines[i]);
+    let mut rows = Vec::new();
+    let mut idx = i + 2;
+    while idx < lines.len() {
+        let line = lines[idx];
+        if !line.contains('|') || line.trim().is_empty() {
+            break;
+        }
+        rows.push(split_table_row(line));
+        idx += 1;
+    }
+    (headers, rows, idx - i)
+}
+
 /// Parse inline formatting within a single line.
 fn parse_inline(line: &str) -> Vec<MdSegment> {
     let mut segments: Vec<MdSegment> = Vec::new();
@@ -175,6 +321,20 @@ fn parse_inline(line: &str) -> Vec<MdSegment> {
     let mut current_plain = String::new();
 
     while i < len {
+        // Link: [text](url)
+        if chars[i] == '[' {
+            if let Some((text, url, end)) = parse_link(&chars, i) {
+                if !current_plain.is_empty() {
+                    segments.push(MdSegment::Plain(current_plain.clone()));
+                    current_plain.clear();
+                }
+                let _ = &text;
+                segments.push(MdSegment::Link(text, url));
+                i = end;
+                continue;
+            }
+        }
+
         if chars[i] == '`' {
             // Inline code: ``...`` or `...`
             if i + 1 < len && chars[i + 1] == '`' {
@@ -287,6 +447,24 @@ fn extract_between(chars: &[char], start: usize, end: usize) -> String {
     chars[start..end].iter().collect()
 }
 
+/// Parse a markdown link `[text](url)` starting at `start` (the `[`).
+/// Returns (text, url, index_after_closing_paren) on success.
+fn parse_link(chars: &[char], start: usize) -> Option<(String, String, usize)> {
+    let len = chars.len();
+    let close_bracket = (start + 1..len).find(|&j| chars[j] == ']')?;
+    if close_bracket + 1 >= len || chars[close_bracket + 1] != '(' {
+        return None;
+    }
+    let open_paren = close_bracket + 1;
+    let close_paren = (open_paren + 1..len).find(|&j| chars[j] == ')')?;
+    if close_paren == open_paren + 1 {
+        return None;
+    }
+    let text: String = chars[start + 1..close_bracket].iter().collect();
+    let url: String = chars[open_paren + 1..close_paren].iter().collect();
+    Some((text, url, close_paren + 1))
+}
+
 // ── Renderer ────────────────────────────────────────────────────────────
 
 /// Render a list of segments into GPUI `AnyElement` objects.
@@ -378,8 +556,112 @@ fn render_segments(segments: &[MdSegment], theme: &Theme) -> Vec<AnyElement> {
                     )
                     .into_any_element()
             }
+            MdSegment::Heading(level, s) => {
+                let (size, lh, weight) = match *level {
+                    1 => (px(20.), px(26.), FontWeight::BOLD),
+                    2 => (px(17.), px(23.), FontWeight::BOLD),
+                    3 => (px(15.), px(21.), FontWeight::SEMIBOLD),
+                    _ => (px(14.), px(20.), FontWeight::SEMIBOLD),
+                };
+                txt(size)
+                    .font_weight(weight)
+                    .text_color(fg)
+                    .line_height(lh)
+                    .child(s.clone())
+                    .into_any_element()
+            }
+            MdSegment::Blockquote(s) => h_flex()
+                .gap(px(8.))
+                .items_start()
+                .child(div().w(px(3.)).h_full().bg(gpui::rgba(0xFFFFFF20)))
+                .child(
+                    txt(px(13.))
+                        .italic()
+                        .text_color(mu)
+                        .line_height(px(18.))
+                        .child(s.clone()),
+                )
+                .into_any_element(),
+            MdSegment::Link(text, _url) => txt(px(13.))
+                .text_color(theme.accent)
+                .underline()
+                .line_height(px(18.))
+                .child(text.clone())
+                .into_any_element(),
+            MdSegment::Task(checked, s) => {
+                let box_char = if *checked { "☑" } else { "☐" };
+                let box_color = if *checked { theme.accent } else { mu };
+                h_flex()
+                    .gap(px(8.))
+                    .items_start()
+                    .child(txt(px(13.)).text_color(box_color).child(box_char.to_string()))
+                    .child(
+                        txt(px(13.))
+                            .text_color(fg)
+                            .line_height(px(18.))
+                            .child(s.clone()),
+                    )
+                    .into_any_element()
+            }
+            MdSegment::Table { headers, rows } => {
+                let col_count = headers.len();
+                let mut grid = v_flex().gap(px(0.)).child(render_table_row(headers, true, theme));
+                for row in rows.iter() {
+                    let padded = pad_row(row, col_count);
+                    grid = grid.child(render_table_row(&padded, false, theme));
+                }
+                grid.into_any_element()
+            }
         })
         .collect()
+}
+
+fn pad_row(row: &[String], col_count: usize) -> Vec<String> {
+    let mut out = row.to_vec();
+    while out.len() < col_count {
+        out.push(String::new());
+    }
+    out
+}
+
+fn render_table_row(cells: &[String], is_header: bool, theme: &Theme) -> AnyElement {
+    let fg = theme.foreground;
+    let mu = theme.muted_foreground;
+    let border = gpui::rgba(0xFFFFFF18);
+    let header_bg = gpui::rgba(0xFFFFFF0C);
+    let row = h_flex();
+    let row = if is_header {
+        row.bg(header_bg)
+    } else {
+        row
+    };
+    let count = cells.len();
+    let mut row = row;
+    for (i, cell) in cells.iter().enumerate() {
+        let color = if is_header { fg } else { mu };
+        let weight = if is_header {
+            FontWeight::SEMIBOLD
+        } else {
+            FontWeight::NORMAL
+        };
+        row = row.child(
+            div()
+                .flex_1()
+                .min_w(px(40.))
+                .px(px(8.))
+                .py(px(4.))
+                .border_1()
+                .border_color(border)
+                .when(i + 1 < count, |p| p.border_r_0())
+                .child(
+                    txt(px(12.))
+                        .text_color(color)
+                        .font_weight(weight)
+                        .child(cell.clone()),
+                ),
+        );
+    }
+    row.into_any_element()
 }
 
 // ── Helpers ─────────────────────────────────────────────────────────────
@@ -573,5 +855,60 @@ mod tests {
             "should parse double-backtick code, got {:?}",
             segments
         );
+    }
+
+    #[test]
+    fn test_heading() {
+        let segments = parse_markdown("## Title");
+        let has_h = segments
+            .iter()
+            .any(|s| matches!(s, MdSegment::Heading(2, t) if t == "Title"));
+        assert!(has_h, "should parse h2, got {:?}", segments);
+    }
+
+    #[test]
+    fn test_blockquote() {
+        let segments = parse_markdown("> quoted text");
+        let has_bq = segments
+            .iter()
+            .any(|s| matches!(s, MdSegment::Blockquote(t) if t == "quoted text"));
+        assert!(has_bq, "should parse blockquote, got {:?}", segments);
+    }
+
+    #[test]
+    fn test_table() {
+        let text = "| Name | Age |\n| --- | --- |\n| Ada | 30 |\n| Bob | 25 |";
+        let segments = parse_markdown(text);
+        let has_table = segments
+            .iter()
+            .any(|s| matches!(s, MdSegment::Table { headers, .. } if headers.len() == 2));
+        assert!(has_table, "should parse table, got {:?}", segments);
+    }
+
+    #[test]
+    fn test_link() {
+        let segments = parse_markdown("see [docs](https://example.com) now");
+        let has_link = segments
+            .iter()
+            .any(|s| matches!(s, MdSegment::Link(t, u) if t == "docs" && u == "https://example.com"));
+        assert!(has_link, "should parse link, got {:?}", segments);
+    }
+
+    #[test]
+    fn test_task_item_unchecked() {
+        let segments = parse_markdown("- [ ] todo");
+        let has_task = segments
+            .iter()
+            .any(|s| matches!(s, MdSegment::Task(false, t) if t == "todo"));
+        assert!(has_task, "should parse unchecked task, got {:?}", segments);
+    }
+
+    #[test]
+    fn test_task_item_checked() {
+        let segments = parse_markdown("- [x] done");
+        let has_task = segments
+            .iter()
+            .any(|s| matches!(s, MdSegment::Task(true, t) if t == "done"));
+        assert!(has_task, "should parse checked task, got {:?}", segments);
     }
 }

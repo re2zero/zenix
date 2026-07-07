@@ -633,3 +633,30 @@ ai:
     no_workspace:
       en: "No workspace"
       zh-CN: "无工作区"
+    configure:
+      en: "Configure"
+      zh-CN: "配置"
+  new_session:
+    en: "New Session"
+    zh-CN: "新建会话"
+  session_placeholder:
+    en: "New Chat"
+    zh-CN: "新会话"
+  model_select:
+    en: "Model"
+    zh-CN: "模型"
+  workspace_select:
+    en: "Workspace"
+    zh-CN: "工作区"
+  thinking_level:
+    en: "Thinking"
+    zh-CN: "思考级别"
+  send_message:
+    en: "Send message"
+    zh-CN: "发送消息"
+  placeholder:
+    en: "Type a message... (@ to mention, / for commands)"
+    zh-CN: "输入消息... (@ 提及，/ 命令)"
+  error_no_session:
+    en: "No active session"
+    zh-CN: "无活动会话"

@@ -18,6 +18,7 @@ pub struct Session {
     pub thinking_level: String,
 }
 
+#[derive(Clone)]
 pub struct ChatMessage {
     pub id: i64,
     pub session_id: String,

@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "lint/type-check/clippy standards — verification baseline"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "verify no unwrap, proper Result/Context handling in new code"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "verify module structure of 6 new files matches project conventions"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "verify role string data flow consistency across session.rs → chat/state.rs → chat/messages.rs"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "verify no duplicated code, proper gpui-component widget reuse, unified conventions"}
+{"file": ".trellis/tasks/07-06-zenixai-redesign-v4/prd.md", "reason": "acceptance criteria — 7 end-to-end scenarios + 14 requirements (R1-R14) verification"}
+{"file": ".trellis/tasks/07-06-zenixai-redesign-v4/design.md", "reason": "architecture decision compliance — unified message flow, role convention, state machines, module change list"}

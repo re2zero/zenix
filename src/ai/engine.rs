@@ -13,6 +13,22 @@
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+/// Acquire the tokio runtime handle.
+///
+/// Prefers the ambient handle when already inside a tokio context; falls back
+/// to the global handle set by `main.rs`. GPUI's async executor is not tokio,
+/// so `tokio::task::spawn` called from a GPUI-spawned task would panic — use
+/// this helper instead.
+fn tokio_handle() -> tokio::runtime::Handle {
+    tokio::runtime::Handle::try_current()
+        .unwrap_or_else(|_| {
+            crate::TOKIO_HANDLE
+                .get()
+                .expect("TOKIO_HANDLE not initialized")
+                .clone()
+        })
+}
+
 use anyhow::{Context, Result};
 use futures::StreamExt as _;
 use serde::{Deserialize, Serialize};
@@ -277,8 +293,7 @@ impl OrchestratorEngine {
         let api_key = self.api_key.clone();
         let on_event_clone = on_event;
 
-        // Run the HTTP request in a tokio task (tokio runtime is initialized in main.rs).
-        let result = tokio::task::spawn(async move {
+        let result = tokio_handle().spawn(async move {
             let resp = http_client
                 .post(&endpoint)
                 .header("Authorization", format!("Bearer {api_key}"))
@@ -311,8 +326,9 @@ impl OrchestratorEngine {
                     }
                 };
 
-                for byte in chunk {
-                    if byte == b'\n' {
+                let text = String::from_utf8_lossy(&chunk);
+                for ch in text.chars() {
+                    if ch == '\n' {
                         if buffer.starts_with("data: ") {
                             let data = &buffer[6..];
                             if data.trim() == "[DONE]" {
@@ -320,7 +336,6 @@ impl OrchestratorEngine {
                                 buffer.clear();
                                 continue;
                             }
-                            // Try OpenAI format first (choices[].delta.content)
                             if let Ok(sse_chunk) = serde_json::from_str::<SseChunk>(data) {
                                 if let Some(choices) = sse_chunk.choices {
                                     for choice in choices {
@@ -341,7 +356,7 @@ impl OrchestratorEngine {
                         }
                         buffer.clear();
                     } else {
-                        buffer.push(byte as char);
+                        buffer.push(ch);
                     }
                 }
                 if done {
@@ -618,7 +633,7 @@ impl OrchestratorEngine {
         let api_key = self.api_key.clone();
         let on_event_clone = on_event;
 
-        let result = tokio::task::spawn(async move {
+        let result = tokio_handle().spawn(async move {
             let resp = http_client
                 .post(&endpoint)
                 .header("Authorization", format!("Bearer {api_key}"))

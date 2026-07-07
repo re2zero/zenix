@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "GPUI patterns (no state mutation in render, Entity/Context/Action), clippy, formatting — all v4 code must follow"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "anyhow::Context/Result, strict no-unwrap constraint — v4 adds 6 new modules"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "module layout conventions for new files (tool_card/error_card/reasoning/drawer/resize/markdown_ext) under src/ai/chat/"}
+{"file": ".trellis/spec/backend/ai-orchestrator.md", "reason": "engine/session/chat architecture — role string extension touches session DB → chat state → render flow"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "role string extension spans DB (session.rs ChatMessage) → state (AiChatPanelData) → render (messages.rs) — cross-layer consistency check"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "widget reuse (gpui-component) vs hand-implement — avoid duplicating existing chat/ module patterns"}
+{"file": ".trellis/tasks/07-05-zenixai-structural-redesign/redesign-v4-direction.md", "reason": "design direction blueprint — 15 decisions + scope划分 basis; PRD/design.md were derived from this"}
+{"file": ".trellis/tasks/07-05-zenixai-structural-redesign/SESSION-RESUME.md", "reason": "preserved code assets inventory + hard constraints (tokio_handle, Tab interception, AiChatAction dispatch, atomic PR)"}

@@ -38,6 +38,12 @@ fn default_terminal_opacity() -> f32 {
 fn default_terminal_scrollback() -> u32 {
     10000
 }
+fn default_ai_panel_width() -> f32 {
+    420.0
+}
+fn default_ai_input_height() -> f32 {
+    160.0
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigFile {
@@ -63,6 +69,12 @@ pub struct ConfigFile {
     pub terminal_opacity: f32,
     #[serde(default = "default_terminal_scrollback")]
     pub terminal_scrollback: u32,
+    /// ZenixAI chat panel width in pixels (clamped 360..=720 on load).
+    #[serde(default = "default_ai_panel_width")]
+    pub ai_panel_width: f32,
+    /// ZenixAI input area height in pixels (clamped 60..=400 on load).
+    #[serde(default = "default_ai_input_height")]
+    pub ai_input_height: f32,
 }
 
 impl Default for ConfigFile {
@@ -79,6 +91,8 @@ impl Default for ConfigFile {
             terminal_cursor_blink: default_terminal_cursor_blink(),
             terminal_opacity: default_terminal_opacity(),
             terminal_scrollback: default_terminal_scrollback(),
+            ai_panel_width: default_ai_panel_width(),
+            ai_input_height: default_ai_input_height(),
         }
     }
 }
@@ -200,6 +214,22 @@ impl ConfigStore {
 
     pub fn set_terminal_scrollback(&mut self, scrollback: u32) {
         self.data.terminal_scrollback = scrollback;
+    }
+
+    pub fn ai_panel_width(&self) -> f32 {
+        self.data.ai_panel_width.clamp(360.0, 720.0)
+    }
+
+    pub fn set_ai_panel_width(&mut self, width: f32) {
+        self.data.ai_panel_width = width.clamp(360.0, 720.0);
+    }
+
+    pub fn ai_input_height(&self) -> f32 {
+        self.data.ai_input_height.clamp(60.0, 400.0)
+    }
+
+    pub fn set_ai_input_height(&mut self, height: f32) {
+        self.data.ai_input_height = height.clamp(60.0, 400.0);
     }
 
     pub fn save(&self) -> Result<()> {

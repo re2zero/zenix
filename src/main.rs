@@ -1,6 +1,10 @@
 #![windows_subsystem = "windows"]
 rust_i18n::i18n!("locales");
 
+use std::sync::OnceLock;
+
+pub static TOKIO_HANDLE: OnceLock<tokio::runtime::Handle> = OnceLock::new();
+
 mod agent;
 mod ai;
 mod api_provider;
@@ -150,6 +154,7 @@ fn main() {
         .enable_all()
         .build()
         .expect("failed to build tokio runtime");
+    let _ = crate::TOKIO_HANDLE.set(rt.handle().clone());
     let _guard = rt.enter();
 
     // Ensure config dir exists for socket

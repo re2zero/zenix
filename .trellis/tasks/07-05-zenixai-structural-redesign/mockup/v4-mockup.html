@@ -1,0 +1,1524 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>ZenixAI v4 Mockup — Tokyonight Dark</title>
+<style>
+  /* === Tokyonight Dark theme tokens (from assets/themes/tokyonight.json) === */
+  :root {
+    --bg: #1a1b26;
+    --bg-elevated: #292e42;          /* panel.background */
+    --bg-muted: #2C304544;           /* muted.background (with alpha) */
+    --bg-hover: #2d3349;             /* secondary.hover.background */
+    --fg: #c0caf5;
+    --fg-muted: #565f89;             /* muted.foreground */
+    --fg-dim: #414868;
+    --accent: #7aa2f7;               /* primary.background */
+    --accent-fg: #1a1b26;            /* primary.foreground */
+    --border: #292e42;
+    --border-strong: #3d4462;
+    --danger: #f7768e;
+    --danger-bg: #f7768e22;
+    --warning: #e0af68;
+    --success: #9ece6a;
+    --info: #2ac3de;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    background: #0f1017;
+    color: var(--fg);
+    font-family: -apple-system, "SF Pro Text", "Inter", "Segoe UI", system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* === Page layout === */
+  .page {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 40px 24px 80px;
+  }
+  .hero {
+    margin-bottom: 40px;
+    padding-bottom: 24px;
+    border-bottom: 1px solid var(--border);
+  }
+  .hero h1 {
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--fg);
+    margin-bottom: 8px;
+    letter-spacing: -0.01em;
+  }
+  .hero .sub {
+    color: var(--fg-muted);
+    font-size: 13px;
+    margin-bottom: 16px;
+  }
+  .decisions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .decision-chip {
+    background: var(--bg-muted);
+    border: 1px solid var(--border);
+    color: var(--fg);
+    padding: 4px 10px;
+    border-radius: 6px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+  .decision-chip strong { color: var(--accent); margin-right: 4px; }
+
+  /* === Scene layout === */
+  .scene {
+    margin-bottom: 56px;
+  }
+  .scene-title {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+  .scene-title .num {
+    background: var(--accent);
+    color: var(--accent-fg);
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+  }
+  .scene-title h2 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .scene-title .desc {
+    color: var(--fg-muted);
+    font-size: 12px;
+  }
+  .scene-body {
+    display: grid;
+    grid-template-columns: 480px 1fr;
+    gap: 32px;
+    align-items: start;
+  }
+  .scene-notes ul {
+    list-style: none;
+    padding: 0;
+  }
+  .scene-notes li {
+    color: var(--fg-muted);
+    font-size: 12px;
+    padding: 6px 0;
+    padding-left: 18px;
+    position: relative;
+  }
+  .scene-notes li::before {
+    content: "→";
+    position: absolute;
+    left: 0;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .scene-notes li strong { color: var(--fg); font-weight: 500; }
+  .scene-notes .delta {
+    margin-top: 14px;
+    padding: 10px 12px;
+    background: var(--bg-muted);
+    border-left: 2px solid var(--warning);
+    border-radius: 4px;
+    font-size: 11px;
+    color: var(--fg);
+  }
+  .scene-notes .delta strong { color: var(--warning); }
+
+  /* === Chat panel (the mockup target) === */
+  .chat-panel {
+    width: 480px;
+    height: 600px;
+    background: var(--bg);
+    border: 1px solid var(--border-strong);
+    border-radius: 8px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.4);
+  }
+
+  /* --- Header (v4: minimal) --- */
+  .chat-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .chat-header .title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .chat-header .title-text {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .chat-header .model-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--bg-muted);
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 10px;
+    color: var(--fg-muted);
+    cursor: pointer;
+  }
+  .chat-header .model-pill:hover { background: var(--bg-hover); }
+  .chat-header .model-pill .dot {
+    width: 4px; height: 4px; border-radius: 50%;
+    background: var(--accent);
+  }
+  .chat-header .actions {
+    display: flex;
+    gap: 2px;
+  }
+  .icon-btn {
+    width: 26px; height: 26px;
+    border: none;
+    background: transparent;
+    color: var(--fg-muted);
+    border-radius: 4px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+  }
+  .icon-btn:hover { background: var(--bg-hover); color: var(--fg); }
+  .icon-btn svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+
+  /* --- Messages area --- */
+  .messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 0;
+    min-height: 0;
+  }
+  .messages::-webkit-scrollbar { width: 6px; }
+  .messages::-webkit-scrollbar-thumb { background: var(--fg-dim); border-radius: 3px; }
+
+  .msg {
+    padding: 6px 14px;
+    margin: 2px 0;
+    position: relative;
+  }
+  .msg:hover .msg-time { opacity: 1; }
+  .msg-time {
+    font-size: 10px;
+    color: var(--fg-muted);
+    padding: 2px 4px 0;
+    opacity: 0;
+    transition: opacity 0.15s ease;
+  }
+
+  /* --- User message (accent background, right-aligned, responsive width) --- */
+  .msg.user {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+  }
+  .msg.user .bubble {
+    background: var(--accent);
+    color: var(--accent-fg);
+    padding: 8px 12px;
+    border-radius: 10px;
+    max-width: 88%;             /* responsive */
+    word-wrap: break-word;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  /* --- Assistant message (muted background, full-width, with avatar) --- */
+  .msg.assistant {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .msg.assistant .avatar {
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    background: var(--bg-muted);
+    border: 1px solid var(--border);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 2px;
+    font-size: 11px;
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .msg.assistant .bubble {
+    background: var(--bg-muted);
+    border: 1px solid var(--border);
+    padding: 10px 14px;
+    border-radius: 10px;
+    flex: 1;
+    max-width: calc(88% - 32px);
+    font-size: 13px;
+    line-height: 1.6;
+    color: var(--fg);
+  }
+  .msg.assistant .bubble p { margin-bottom: 6px; }
+  .msg.assistant .bubble p:last-child { margin-bottom: 0; }
+  .msg.assistant .bubble code {
+    background: var(--bg);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: "JetBrains Mono", "Fira Code", monospace;
+    font-size: 12px;
+    color: var(--info);
+  }
+  .msg.assistant .bubble pre {
+    background: var(--bg);
+    padding: 10px 12px;
+    border-radius: 6px;
+    margin: 6px 0;
+    overflow-x: auto;
+    border: 1px solid var(--border);
+  }
+  .msg.assistant .bubble pre code {
+    background: transparent;
+    padding: 0;
+    color: var(--fg);
+    font-size: 11.5px;
+    line-height: 1.55;
+  }
+
+  /* --- Streaming cursor (trailing edge pulsing block) --- */
+  .streaming-cursor {
+    display: inline-block;
+    width: 7px;
+    height: 14px;
+    background: var(--accent);
+    margin-left: 2px;
+    vertical-align: text-bottom;
+    animation: blink 0.9s steps(2, start) infinite;
+  }
+  @keyframes blink { to { visibility: hidden; } }
+
+  /* --- TTFT indicator (three animated dots before first token) --- */
+  .ttft {
+    display: inline-flex;
+    gap: 4px;
+    padding: 12px 14px;
+  }
+  .ttft .dot {
+    width: 6px; height: 6px;
+    background: var(--fg-muted);
+    border-radius: 50%;
+    animation: ttft-bounce 1.2s infinite ease-in-out;
+  }
+  .ttft .dot:nth-child(2) { animation-delay: 0.15s; }
+  .ttft .dot:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes ttft-bounce {
+    0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+    30% { transform: translateY(-4px); opacity: 1; }
+  }
+
+  /* --- Tool call card (in-message-stream, lifecycle) --- */
+  .tool-group {
+    margin: 8px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-elevated);
+    overflow: hidden;
+  }
+  .tool-group .group-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    background: var(--bg-muted);
+    cursor: pointer;
+    font-size: 12px;
+  }
+  .tool-group .group-header:hover { background: var(--bg-hover); }
+  .tool-group .group-header .label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--fg);
+    font-weight: 500;
+  }
+  .tool-group .group-header .label .icon {
+    color: var(--accent);
+    font-size: 11px;
+  }
+  .tool-group .group-header .count {
+    color: var(--fg-muted);
+    font-size: 11px;
+    background: var(--bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+  }
+  .tool-group .group-header .status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--fg-muted);
+    font-size: 11px;
+  }
+  .tool-group .group-header .status .dot { width: 6px; height: 6px; border-radius: 50%; }
+  .tool-group .group-header .status.running .dot { background: var(--info); animation: pulse 1.2s infinite; }
+  .tool-group .group-header .status.success .dot { background: var(--success); }
+  .tool-group .group-header .status.failed .dot { background: var(--danger); }
+  @keyframes pulse { 50% { opacity: 0.3; } }
+  .tool-group .group-header .chevron { color: var(--fg-muted); font-size: 10px; }
+
+  .tool-group.expanded .group-body { display: block; }
+  .group-body { display: none; padding: 6px 12px; }
+  .group-body .call {
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 11.5px;
+    color: var(--fg-muted);
+  }
+  .group-body .call:last-child { border-bottom: none; }
+  .group-body .call .call-head {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 2px;
+  }
+  .group-body .call .call-name { color: var(--fg); font-weight: 500; }
+  .group-body .call .call-status { font-size: 10px; }
+  .group-body .call .call-status.success { color: var(--success); }
+  .group-body .call .call-status.failed { color: var(--danger); }
+  .group-body .call .call-status.running { color: var(--info); }
+  .group-body .call .call-args {
+    color: var(--fg-muted);
+    font-family: "JetBrains Mono", monospace;
+    font-size: 10.5px;
+  }
+
+  /* --- Error card (in-message-stream, alert pattern) --- */
+  .error-card {
+    margin: 8px 14px;
+    border: 1px solid var(--danger);
+    border-left: 3px solid var(--danger);
+    border-radius: 6px;
+    background: var(--danger-bg);
+    padding: 10px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .error-card .err-head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--danger);
+  }
+  .error-card .err-head .icon {
+    width: 16px; height: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: var(--danger);
+    color: var(--bg);
+    font-size: 10px;
+    font-weight: 700;
+  }
+  .error-card .err-msg {
+    font-size: 12px;
+    color: var(--fg);
+    padding-left: 24px;
+  }
+  .error-card .err-actions {
+    display: flex;
+    gap: 8px;
+    padding-left: 24px;
+  }
+  .error-card .btn {
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--fg);
+  }
+  .error-card .btn.primary {
+    background: var(--accent);
+    color: var(--accent-fg);
+    border-color: var(--accent);
+    font-weight: 500;
+  }
+
+  /* --- Empty state --- */
+  .empty {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    gap: 14px;
+  }
+  .empty .icon-large {
+    width: 48px; height: 48px;
+    border-radius: 50%;
+    background: var(--bg-muted);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--accent);
+    font-size: 22px;
+    font-weight: 700;
+  }
+  .empty .title-big {
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .empty .subtitle {
+    color: var(--fg-muted);
+    font-size: 12px;
+    text-align: center;
+    max-width: 320px;
+  }
+  .empty .suggestions {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+    width: 100%;
+    max-width: 360px;
+  }
+  .empty .suggestion {
+    background: var(--bg-muted);
+    border: 1px solid var(--border);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    color: var(--fg);
+    cursor: pointer;
+    text-align: left;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .empty .suggestion:hover { background: var(--bg-hover); border-color: var(--accent); }
+  .empty .suggestion .sugg-icon { color: var(--accent); font-size: 13px; }
+  .empty .suggestion .sugg-meta { color: var(--fg-muted); font-size: 10px; margin-left: auto; }
+
+  /* --- Input bar (multi-line) --- */
+  .input-bar {
+    border-top: 1px solid var(--border);
+    padding: 8px 10px;
+    flex-shrink: 0;
+    background: var(--bg);
+  }
+  .input-wrapper {
+    background: var(--bg-muted);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 4px 4px 4px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .input-wrapper:focus-within { border-color: var(--accent); }
+  .input-area {
+    min-height: 28px;
+    max-height: 140px;
+    overflow-y: auto;
+    color: var(--fg);
+    font-size: 13px;
+    line-height: 1.5;
+    padding: 4px 6px;
+    font-family: inherit;
+    outline: none;
+    white-space: pre-wrap;
+  }
+  .input-area:empty::before {
+    content: attr(data-placeholder);
+    color: var(--fg-muted);
+  }
+  .input-bottom-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .input-tools {
+    display: flex;
+    gap: 2px;
+    align-items: center;
+  }
+  .tool-btn {
+    background: transparent;
+    border: none;
+    color: var(--fg-muted);
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 24px;
+    font-family: inherit;
+  }
+  .tool-btn:hover { background: var(--bg-hover); color: var(--fg); }
+  .tool-btn.model {
+    background: var(--bg);
+    color: var(--fg);
+    font-weight: 500;
+    border: 1px solid var(--border);
+  }
+  .tool-btn.model:hover { border-color: var(--accent); }
+  .tool-btn .dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent);
+  }
+  .send-btn {
+    width: 28px; height: 28px;
+    border-radius: 6px;
+    background: var(--accent);
+    color: var(--accent-fg);
+    border: none;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .send-btn.stop {
+    background: var(--danger);
+  }
+  .send-btn svg { width: 13px; height: 13px; stroke: currentColor; fill: none; stroke-width: 2.2; }
+  .input-meta {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-top: 6px;
+    padding: 0 4px;
+    font-size: 10px;
+    color: var(--fg-muted);
+  }
+  .input-meta kbd {
+    background: var(--bg-muted);
+    border: 1px solid var(--border);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: "JetBrains Mono", monospace;
+    font-size: 9px;
+  }
+
+  /* --- Resizable handle (left edge of chat panel) --- */
+  .resize-handle {
+    position: absolute;
+    left: -3px;
+    top: 0;
+    bottom: 0;
+    width: 5px;
+    cursor: col-resize;
+    background: transparent;
+    transition: background 0.15s;
+    z-index: 10;
+  }
+  .resize-handle:hover, .resize-handle.dragging {
+    background: var(--accent);
+  }
+  .resize-handle::after {
+    content: "";
+    position: absolute;
+    left: 1px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3px;
+    height: 24px;
+    background: var(--fg-dim);
+    border-radius: 2px;
+  }
+  .resize-handle:hover::after, .resize-handle.dragging::after {
+    background: var(--accent-fg);
+  }
+
+  /* --- History drawer (slide-in from right) --- */
+  .drawer-overlay {
+    position: absolute;
+    inset: 0;
+    background: rgba(10, 11, 20, 0.5);
+    z-index: 20;
+  }
+  .history-drawer {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 320px;
+    background: var(--bg-elevated);
+    border-left: 1px solid var(--border);
+    z-index: 21;
+    display: flex;
+    flex-direction: column;
+    box-shadow: -10px 0 30px rgba(0,0,0,0.3);
+  }
+  .drawer-header {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .drawer-header h3 {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .drawer-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+  }
+  .history-item {
+    padding: 8px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    margin-bottom: 2px;
+  }
+  .history-item:hover { background: var(--bg-hover); }
+  .history-item.active { background: var(--bg-muted); border-left: 2px solid var(--accent); }
+  .history-item .h-title {
+    font-size: 12px;
+    color: var(--fg);
+    margin-bottom: 2px;
+    font-weight: 500;
+  }
+  .history-item .h-meta {
+    font-size: 10px;
+    color: var(--fg-muted);
+    display: flex;
+    gap: 8px;
+  }
+  .history-item .h-meta .provider {
+    color: var(--accent);
+  }
+  .history-group {
+    font-size: 10px;
+    color: var(--fg-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    padding: 12px 10px 6px;
+    font-weight: 600;
+  }
+
+  /* --- Reasoning block (collapsible, in assistant msg) --- */
+  .reasoning {
+    margin-bottom: 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg);
+    overflow: hidden;
+  }
+  .reasoning-head {
+    padding: 6px 10px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--fg-muted);
+  }
+  .reasoning-head:hover { color: var(--fg); }
+  .reasoning-head .label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .reasoning-head .think-icon {
+    color: var(--accent);
+    font-size: 11px;
+  }
+  .reasoning-head .duration {
+    font-size: 10px;
+    color: var(--fg-dim);
+  }
+  .reasoning-body {
+    padding: 8px 12px;
+    border-top: 1px solid var(--border);
+    font-size: 11.5px;
+    color: var(--fg-muted);
+    line-height: 1.6;
+    font-style: italic;
+  }
+  .reasoning-body p { margin-bottom: 4px; }
+  .reasoning-body p:last-child { margin-bottom: 0; }
+  .reasoning.expanded .reasoning-body { display: block; }
+  .reasoning:not(.expanded) .reasoning-body { display: none; }
+
+  /* --- Width comparison (scene 5) --- */
+  .width-compare {
+    display: flex;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  .width-compare .chat-panel {
+    margin: 0;
+    position: relative;
+  }
+  .width-compare .width-label {
+    text-align: center;
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--fg-muted);
+  }
+  .width-compare .width-label strong { color: var(--accent); font-weight: 600; }
+  .width-compare .col {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  /* === Footer note === */
+  .footer-note {
+    margin-top: 60px;
+    padding-top: 20px;
+    border-top: 1px solid var(--border);
+    color: var(--fg-muted);
+    font-size: 11px;
+    text-align: center;
+  }
+
+  /* === Mini scrollbar styling === */
+  .input-area::-webkit-scrollbar { width: 4px; }
+  .input-area::-webkit-scrollbar-thumb { background: var(--fg-dim); border-radius: 2px; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ============= HERO ============= -->
+  <div class="hero">
+    <h1>ZenixAI v4 — 结构 + 视觉 + 信息架构重做</h1>
+    <div class="sub">主题: Tokyonight Dark · 哲学: Claude distraction-free + Zed GPUI 原生 · 框架: zenix 现有主题 tokens</div>
+    <div class="decisions">
+      <span class="decision-chip"><strong>D1</strong>user/assistant 背景对比</span>
+      <span class="decision-chip"><strong>D2</strong>header 极简</span>
+      <span class="decision-chip"><strong>D3</strong>tool calls 批处理</span>
+      <span class="decision-chip"><strong>D4</strong>透守现有主题</span>
+      <span class="decision-chip"><strong>D5</strong>消息流统一（agent_blocks 进入）</span>
+      <span class="decision-chip"><strong>D6</strong>streaming cursor 嵌入 tail</span>
+      <span class="decision-chip"><strong>D7</strong>多行输入 + auto_grow</span>
+      <span class="decision-chip"><strong>D8</strong>resizable 宽度</span>
+      <span class="decision-chip"><strong>D9</strong>时间戳 hover 显示</span>
+      <span class="decision-chip"><strong>D10</strong>错误卡片化 + 重试</span>
+    </div>
+  </div>
+
+  <!-- ============= SCENE 1: EMPTY STATE ============= -->
+  <div class="scene">
+    <div class="scene-title">
+      <span class="num">1</span>
+      <h2>空状态</h2>
+      <span class="desc">上下文相关 suggestion chips（基于当前 workspace/git）</span>
+    </div>
+    <div class="scene-body">
+      <div class="chat-panel">
+        <div class="chat-header">
+          <div class="title">
+            <span class="title-text">ZenixAI</span>
+
+          </div>
+          <div class="actions">
+            <button class="icon-btn" title="New chat">
+              <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+            </button>
+            <button class="icon-btn" title="Menu">
+              <svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg>
+            </button>
+          </div>
+        </div>
+        <div class="empty">
+          <div class="icon-large">Z</div>
+          <div class="title-big">有什么可以帮你?</div>
+          <div class="subtitle">基于当前 zenix workspace · 输入 / 用命令, @ 加上下文</div>
+          <div class="suggestions">
+            <div class="suggestion">
+              <span class="sugg-icon">⚠</span>
+              <span>分析 src/ai/chat/ 的当前实现并提改进点</span>
+              <span class="sugg-meta">workspace</span>
+            </div>
+            <div class="suggestion">
+              <span class="sugg-icon">⎇</span>
+              <span>总结最近 5 次 git commits (main 分支)</span>
+              <span class="sugg-meta">git</span>
+            </div>
+            <div class="suggestion">
+              <span class="sugg-icon">⚙</span>
+              <span>Refactor render_input_bar 为多行 TextArea</span>
+              <span class="sugg-meta">code</span>
+            </div>
+          </div>
+        </div>
+        <div class="input-bar">
+          <div class="input-wrapper">
+            <div class="input-area" contenteditable="true" data-placeholder="问任何事, 分派 agent, 或输入 / 用命令"></div>
+            <div class="input-bottom-row">
+              <div class="input-tools">
+                <button class="tool-btn model"><span class="dot"></span>claude-3.5-sonnet ▾</button>
+                <button class="tool-btn">@</button>
+                <button class="tool-btn">/</button>
+              </div>
+              <button class="send-btn">
+                <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="input-meta">
+            <span><kbd>Enter</kbd> 发送 · <kbd>Shift+Enter</kbd> 换行 · <kbd>↑↓</kbd> 历史</span>
+            <span>multi-line · auto-grow</span>
+          </div>
+        </div>
+      </div>
+      <div class="scene-notes">
+        <ul>
+          <li><strong>header 极简</strong>: 只保留 title + model pill + 2 按钮 (new + menu)，history/agents 进 menu</li>
+          <li><strong>suggestion 上下文相关</strong>: 基于 workspace/git/current file，不是通用模板</li>
+          <li><strong>input bar 多行</strong>: gpui-component <code>InputState::multi_line(true).auto_grow(true)</code></li>
+          <li><strong>input 底部 meta</strong>: 显示快捷键提示 + 输入模式状态</li>
+        </ul>
+        <div class="delta"><strong>vs 现状</strong>: 现 header 4 按钮 (More 装饰); suggestion 是 3 个固定通用文本; input 单行; 无快捷键提示</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============= SCENE 2: STREAMING RESPONSE ============= -->
+  <div class="scene">
+    <div class="scene-title">
+      <span class="num">2</span>
+      <h2>流式响应中</h2>
+      <span class="desc">streaming cursor 嵌入消息流 tail + TTFT 间隙 indicator</span>
+    </div>
+    <div class="scene-body">
+      <div class="chat-panel">
+        <div class="chat-header">
+          <div class="title">
+            <span class="title-text">ZenixAI</span>
+
+          </div>
+          <div class="actions">
+            <button class="icon-btn"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+            <button class="icon-btn"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+          </div>
+        </div>
+        <div class="messages">
+          <div class="msg user">
+            <div class="bubble">分析下 src/ai/chat/messages.rs 的渲染逻辑有什么问题</div>
+            <div class="msg-time">14:32:05</div>
+          </div>
+          <div class="msg assistant">
+            <div class="avatar">Z</div>
+            <div class="bubble">
+              <p>分析 <code>messages.rs</code> 后发现几个关键问题:</p>
+              <p><strong>1. assistant 消息无背景色</strong> — 只是裸文本，与 user 气泡的视觉反差过大，缺乏容器感</p>
+              <p><strong>2. max_w 硬编码</strong> — user 320px / assistant 340px 写死，宽屏浪费空间<span class="streaming-cursor"></span></p>
+            </div>
+          </div>
+        </div>
+        <div class="input-bar">
+          <div class="input-wrapper">
+            <div class="input-area" contenteditable="true" data-placeholder="问任何事, 分派 agent, 或输入 / 用命令"></div>
+            <div class="input-bottom-row">
+              <div class="input-tools">
+                <button class="tool-btn model"><span class="dot"></span>claude-3.5-sonnet ▾</button>
+                <button class="tool-btn">@</button>
+                <button class="tool-btn">/</button>
+              </div>
+              <button class="send-btn stop" title="Stop">
+                <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="input-meta">
+            <span>streaming · 28 tokens/s · 0.4s TTFT</span>
+            <span><kbd>Esc</kbd> 中止</span>
+          </div>
+        </div>
+      </div>
+      <div class="scene-notes">
+        <ul>
+          <li><strong>user/assistant 背景对比</strong>: user <code>--accent</code> 右对齐 88% 宽; assistant <code>--bg-muted</code> 左对齐 + avatar</li>
+          <li><strong>streaming cursor</strong>: 在最后一条 assistant 内容末尾嵌入 pulsing block（CSS 动画，不触发重渲染）</li>
+          <li><strong>TTFT indicator</strong>: 用户发消息到第一个 token 之间显示三个动画点（参 ChatGPT 模式）</li>
+          <li><strong>send 按钮 stop 化</strong>: 流式中变红色方块，点击中止</li>
+          <li><strong>input 底部 meta</strong>: 显示 streaming 状态 + token 速率 + Esc 中止提示</li>
+          <li><strong>avatar</strong>: "Z" 圆形 logo，强化 zenixAI 身份</li>
+        </ul>
+        <div class="delta"><strong>vs 现状</strong>: 现 assistant 无背景无 avatar; streaming indicator 在 messages 上方独立区域; max_w 320/340 硬编码; send 按钮只是图标切换无红色强调</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============= SCENE 3: TOOL CALL BATCHED ============= -->
+  <div class="scene">
+    <div class="scene-title">
+      <span class="num">3</span>
+      <h2>工具调用批处理</h2>
+      <span class="desc">连续 tool calls 折叠为 grouped block（参 Roo Code）+ lifecycle 状态</span>
+    </div>
+    <div class="scene-body">
+      <div class="chat-panel">
+        <div class="chat-header">
+          <div class="title">
+            <span class="title-text">ZenixAI</span>
+
+          </div>
+          <div class="actions">
+            <button class="icon-btn"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+            <button class="icon-btn"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+          </div>
+        </div>
+        <div class="messages">
+          <div class="msg user">
+            <div class="bubble">重构 src/ai/chat/ 目录, 把渲染逻辑按职责拆分</div>
+            <div class="msg-time">14:35:12</div>
+          </div>
+          <div class="msg assistant">
+            <div class="avatar">Z</div>
+            <div class="bubble">
+              <p>好的，我先探索当前结构然后规划拆分方案。</p>
+            </div>
+          </div>
+          <!-- Tool group: collapsed, running -->
+          <div class="tool-group">
+            <div class="group-header">
+              <span class="label"><span class="icon">⚙</span>File operations <span class="count">3 calls</span></span>
+              <span class="status running"><span class="dot"></span>running · 1.2s</span>
+            </div>
+          </div>
+          <!-- Tool group: expanded, success -->
+          <div class="tool-group expanded">
+            <div class="group-header">
+              <span class="label"><span class="icon">⚙</span>Read files <span class="count">4 calls</span></span>
+              <span class="status success"><span class="dot"></span>done · 0.8s</span>
+            </div>
+            <div class="group-body">
+              <div class="call">
+                <div class="call-head">
+                  <span class="call-name">read_file</span>
+                  <span class="call-status success">✓ 0.2s</span>
+                </div>
+                <div class="call-args">path: src/ai/chat/mod.rs · 211 lines</div>
+              </div>
+              <div class="call">
+                <div class="call-head">
+                  <span class="call-name">read_file</span>
+                  <span class="call-status success">✓ 0.2s</span>
+                </div>
+                <div class="call-args">path: src/ai/chat/messages.rs · 130 lines</div>
+              </div>
+              <div class="call">
+                <div class="call-head">
+                  <span class="call-name">read_file</span>
+                  <span class="call-status success">✓ 0.2s</span>
+                </div>
+                <div class="call-args">path: src/ai/chat/input.rs · 290 lines</div>
+              </div>
+              <div class="call">
+                <div class="call-head">
+                  <span class="call-name">read_file</span>
+                  <span class="call-status success">✓ 0.2s</span>
+                </div>
+                <div class="call-args">path: src/ai/chat/header.rs · 679 lines</div>
+              </div>
+            </div>
+          </div>
+          <div class="msg assistant">
+            <div class="avatar">Z</div>
+            <div class="bubble">
+              <p>当前 chat/ 模块共 1942 行，最大文件是 <code>header.rs</code>（679 行）。建议按职责进一步拆分:</p>
+              <p>把 <code>render_history_panel</code> 和 <code>render_agent_monitor</code> 提到独立 <code>overlays.rs</code>，把 <code>render_dropdown</code> 提到 <code>dropdown.rs</code>...</p>
+            </div>
+          </div>
+        </div>
+        <div class="input-bar">
+          <div class="input-wrapper">
+            <div class="input-area" contenteditable="true" data-placeholder="问任何事, 分派 agent, 或输入 / 用命令"></div>
+            <div class="input-bottom-row">
+              <div class="input-tools">
+                <button class="tool-btn model"><span class="dot"></span>claude-3.5-sonnet ▾</button>
+                <button class="tool-btn">@</button>
+                <button class="tool-btn">/</button>
+              </div>
+              <button class="send-btn">
+                <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="input-meta">
+            <span>idle</span>
+            <span><kbd>Enter</kbd> 发送</span>
+          </div>
+        </div>
+      </div>
+      <div class="scene-notes">
+        <ul>
+          <li><strong>tool group 在消息流内</strong>: 不再独立区域，与对话内容时序统一</li>
+          <li><strong>批处理连续 calls</strong>: 4 个 read_file 折叠为单个 "Read files · 4 calls" 卡片（参 Roo Code grouped blocks）</li>
+          <li><strong>lifecycle 状态</strong>: running（脉冲蓝点 + 计时）/ success（绿点 + 耗时）/ failed（红点 + 错误）</li>
+          <li><strong>可折叠展开</strong>: 点击 group_header 切换；展开显示每个 call 的 name + status + args</li>
+          <li><strong>计数 chip</strong>: "3 calls" / "4 calls" 直观显示批处理规模</li>
+        </ul>
+        <div class="delta"><strong>vs 现状</strong>: 现 agent_blocks 在 messages 上方独立区域; 每个 block 单独显示不批处理; status 是字符串 "running"/"completed"/"failed" 不是 lifecycle 枚举</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============= SCENE 4: ERROR CARD + MULTI-LINE INPUT ============= -->
+  <div class="scene">
+    <div class="scene-title">
+      <span class="num">4</span>
+      <h2>错误卡片 + 多行输入</h2>
+      <span class="desc">错误 inline 卡片 + 重试 · 多行输入 auto-grow · 历史导航提示</span>
+    </div>
+    <div class="scene-body">
+      <div class="chat-panel">
+        <div class="chat-header">
+          <div class="title">
+            <span class="title-text">ZenixAI</span>
+
+          </div>
+          <div class="actions">
+            <button class="icon-btn"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+            <button class="icon-btn"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+          </div>
+        </div>
+        <div class="messages">
+          <div class="msg user">
+            <div class="bubble">调用 OpenAI API 生成一段示例代码</div>
+            <div class="msg-time">14:40:22</div>
+          </div>
+          <div class="msg assistant">
+            <div class="avatar">Z</div>
+            <div class="bubble">
+              <p>正在生成示例代码...</p>
+            </div>
+          </div>
+          <!-- Error card -->
+          <div class="error-card">
+            <div class="err-head">
+              <span class="icon">!</span>
+              <span>Authentication failed · 401</span>
+            </div>
+            <div class="err-msg">Invalid API key for provider "OpenAI". Please check Settings → API Providers.</div>
+            <div class="err-actions">
+              <button class="btn primary">重试</button>
+              <button class="btn">打开 Settings</button>
+              <button class="btn">复制错误</button>
+            </div>
+          </div>
+        </div>
+        <div class="input-bar">
+          <div class="input-wrapper">
+            <div class="input-area" contenteditable="true" data-placeholder="问任何事...">这是一个多行输入的示例，
+可以看到 auto-grow 后输入框变高了，
+最多到 8 行后出现内部滚动。
+
+当前的 prompt 已经 4 行，继续输入会继续增高。</div>
+            <div class="input-bottom-row">
+              <div class="input-tools">
+                <button class="tool-btn model"><span class="dot"></span>gpt-4-turbo ▾</button>
+                <button class="tool-btn">@</button>
+                <button class="tool-btn">/</button>
+              </div>
+              <button class="send-btn">
+                <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+              </button>
+            </div>
+          </div>
+          <div class="input-meta">
+            <span>4 lines · 96 chars · ↑↓ browsing history #3</span>
+            <span><kbd>Enter</kbd> 发送 · <kbd>Esc</kbd> 清空</span>
+          </div>
+        </div>
+      </div>
+      <div class="scene-notes">
+        <ul>
+          <li><strong>错误卡片化</strong>: 红色边框 + 图标 + 错误类型 (401/Auth/Network) + 信息 + 重试按钮</li>
+          <li><strong>错误进消息流</strong>: 不再 ⚠️ 文本追加到 streaming msg；保留已生成内容 + 错误卡片附后</li>
+          <li><strong>重试按钮</strong>: 重新触发相同 prompt（从 input_history.last() 取）</li>
+          <li><strong>多行输入</strong>: auto-grow 到 8 行后内部滚动；当前 4 行示例</li>
+          <li><strong>input meta</strong>: 显示行数 + 字符数 + 历史导航位置（"browsing history #3"）</li>
+          <li><strong>流式中途失败</strong>: 已生成的 assistant 内容保留，错误卡片附在其后（不丢部分响应）</li>
+        </ul>
+        <div class="delta"><strong>vs 现状</strong>: 现错误以 <code>⚠️ Chat failed: ...</code> 文本追加到 streaming msg; 无重试按钮; 无错误类型分类; input 单行无 auto-grow; 无历史导航提示</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============= SCENE 5: RESIZABLE WIDTH ============= -->
+  <div class="scene">
+    <div class="scene-title">
+      <span class="num">5</span>
+      <h2>响应式宽度</h2>
+      <span class="desc">360px (min) ↔ 480px (default) ↔ 720px (max) · 拖拽左边缘 + 持久化到 config</span>
+    </div>
+    <div class="scene-body" style="grid-template-columns: 1fr;">
+      <div>
+        <div class="width-compare">
+          <div class="col">
+            <div class="chat-panel" style="width: 320px; height: 460px;">
+              <div class="resize-handle"></div>
+              <div class="chat-header">
+                <div class="title"><span class="title-text">ZenixAI</span></div>
+                <div class="actions">
+                  <button class="icon-btn"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+                  <button class="icon-btn"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+                </div>
+              </div>
+              <div class="messages">
+                <div class="msg user">
+                  <div class="bubble" style="max-width: 84%;">分析 chat 模块</div>
+                </div>
+                <div class="msg assistant">
+                  <div class="avatar">Z</div>
+                  <div class="bubble" style="max-width: calc(84% - 32px);">
+                    <p>360px 时消息气泡自动收窄，user/assistant 仍保持对比。</p>
+                  </div>
+                </div>
+              </div>
+              <div class="input-bar">
+                <div class="input-wrapper">
+                  <div class="input-area" contenteditable="true" data-placeholder="问任何事..."></div>
+                  <div class="input-bottom-row">
+                    <div class="input-tools"><button class="tool-btn model"><span class="dot"></span>claude ▾</button></div>
+                    <button class="send-btn"><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="width-label"><strong>360px</strong> · min · 小屏紧凑</div>
+          </div>
+
+          <div class="col">
+            <div class="chat-panel" style="width: 480px; height: 460px;">
+              <div class="resize-handle dragging"></div>
+              <div class="chat-header">
+                <div class="title"><span class="title-text">ZenixAI</span></div>
+                <div class="actions">
+                  <button class="icon-btn"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+                  <button class="icon-btn"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+                </div>
+              </div>
+              <div class="messages">
+                <div class="msg user">
+                  <div class="bubble">分析 chat 模块，给我看完整代码块</div>
+                </div>
+                <div class="msg assistant">
+                  <div class="avatar">Z</div>
+                  <div class="bubble">
+                    <p>480px 是默认宽度。代码块勉强能展示 30 字符宽:</p>
+                    <pre><code>fn render_message(msg: &amp;ChatMessage) -&gt; AnyElement {
+    let is_user = msg.role == "user";
+    // ...
+}</code></pre>
+                  </div>
+                </div>
+              </div>
+              <div class="input-bar">
+                <div class="input-wrapper">
+                  <div class="input-area" contenteditable="true" data-placeholder="问任何事..."></div>
+                  <div class="input-bottom-row">
+                    <div class="input-tools">
+                      <button class="tool-btn model"><span class="dot"></span>claude-3.5-sonnet ▾</button>
+                      <button class="tool-btn">@</button>
+                    </div>
+                    <button class="send-btn"><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="width-label"><strong>480px</strong> · default · 拖拽中（蓝高亮）</div>
+          </div>
+
+          <div class="col">
+            <div class="chat-panel" style="width: 600px; height: 460px;">
+              <div class="resize-handle"></div>
+              <div class="chat-header">
+                <div class="title"><span class="title-text">ZenixAI</span></div>
+                <div class="actions">
+                  <button class="icon-btn"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+                  <button class="icon-btn"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+                </div>
+              </div>
+              <div class="messages">
+                <div class="msg user">
+                  <div class="bubble">分析 chat 模块，给我看完整代码块</div>
+                </div>
+                <div class="msg assistant">
+                  <div class="avatar">Z</div>
+                  <div class="bubble">
+                    <p>600px 宽屏，代码块可以完整展示 50+ 字符不折行:</p>
+                    <pre><code>pub(super) fn render_message(msg: &amp;ChatMessage, theme: &amp;Theme) -&gt; AnyElement {
+    let is_user = msg.role == "user";
+    let content = markdown::render_markdown(&amp;msg.content, theme);
+    if is_user {
+        // accent background bubble, right-aligned
+        v_flex().items_end().child(div().max_w(px(480.)).bg(theme.accent)...)
+    } else {
+        // muted background bubble with avatar
+        v_flex().child(h_flex().child(avatar).child(div().bg(theme.muted)...))
+    }
+}</code></pre>
+                  </div>
+                </div>
+              </div>
+              <div class="input-bar">
+                <div class="input-wrapper">
+                  <div class="input-area" contenteditable="true" data-placeholder="问任何事..."></div>
+                  <div class="input-bottom-row">
+                    <div class="input-tools">
+                      <button class="tool-btn model"><span class="dot"></span>claude-3.5-sonnet ▾</button>
+                      <button class="tool-btn">@</button>
+                      <button class="tool-btn">/</button>
+                    </div>
+                    <button class="send-btn"><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="width-label"><strong>600px</strong> · comfortable · 宽屏代码不折行</div>
+          </div>
+        </div>
+        <div class="scene-notes" style="margin-top: 28px;">
+          <ul>
+            <li><strong>拖拽分隔条</strong>: chat 面板左边缘 5px 宽，hover/dragging 时变 accent 蓝高亮</li>
+            <li><strong>clamp 范围</strong>: 360px (min) ~ 720px (max)；min 保证可读性，max 防止终端被挤压 &lt; 400px</li>
+            <li><strong>响应式内容</strong>: 消息气泡 max_w 用百分比 (88%)，不是硬编码 px</li>
+            <li><strong>代码块自适应</strong>: 窄屏代码块出现水平滚动；宽屏代码不折行</li>
+            <li><strong>持久化</strong>: 拖拽结束 (<code>on_drop</code>) 时存到 <code>~/.config/zenix/config.json</code> 的 <code>ai_panel_width</code> 字段</li>
+            <li><strong>窗口缩小告警</strong>: 当终端宽度 &lt; 400px 时，面板顶部显示细黄条提示</li>
+          </ul>
+          <div class="delta"><strong>vs 现状</strong>: 现 <code>AI_PANEL_WIDTH = 420.0</code> 硬编码常量 (chat/mod.rs:41)，不可调；代码块在窄屏经常折行难读</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============= SCENE 6: HISTORY DRAWER ============= -->
+  <div class="scene">
+    <div class="scene-title">
+      <span class="num">6</span>
+      <h2>History 抽屉式</h2>
+      <span class="desc">从右滑入覆盖 · 半透明背景 · 按 date 分组 · 不再浮层割裂 input</span>
+    </div>
+    <div class="scene-body">
+      <div class="chat-panel" style="position: relative;">
+        <div class="chat-header">
+          <div class="title"><span class="title-text">ZenixAI</span></div>
+          <div class="actions">
+            <button class="icon-btn"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+            <button class="icon-btn" style="background: var(--bg-hover); color: var(--accent);"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+          </div>
+        </div>
+        <div class="messages" style="position: relative;">
+          <div class="msg user">
+            <div class="bubble">重构 chat 模块</div>
+            <div class="msg-time">14:35:12</div>
+          </div>
+          <div class="msg assistant">
+            <div class="avatar">Z</div>
+            <div class="bubble"><p>正在分析当前结构...</p></div>
+          </div>
+          <div class="tool-group">
+            <div class="group-header">
+              <span class="label"><span class="icon">⚙</span>Read files <span class="count">4 calls</span></span>
+              <span class="status running"><span class="dot"></span>running</span>
+            </div>
+          </div>
+          <!-- Overlay over messages -->
+          <div class="drawer-overlay"></div>
+          <!-- History drawer from right -->
+          <div class="history-drawer">
+            <div class="drawer-header">
+              <h3>对话历史</h3>
+              <button class="icon-btn"><svg viewBox="0 0 24 24"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+            </div>
+            <div class="drawer-body">
+              <div class="history-group">今天</div>
+              <div class="history-item active">
+                <div class="h-title">重构 chat 模块</div>
+                <div class="h-meta"><span class="provider">claude-3.5</span><span>14:35</span><span>12 msgs</span></div>
+              </div>
+              <div class="history-item">
+                <div class="h-title">分析 messages.rs 渲染</div>
+                <div class="h-meta"><span class="provider">claude-3.5</span><span>13:20</span><span>8 msgs</span></div>
+              </div>
+              <div class="history-item">
+                <div class="h-title">修复 streaming bug</div>
+                <div class="h-meta"><span class="provider">gpt-4</span><span>11:05</span><span>15 msgs</span></div>
+              </div>
+
+              <div class="history-group">昨天</div>
+              <div class="history-item">
+                <div class="h-title">ZenixAI 配置链路修复</div>
+                <div class="h-meta"><span class="provider">claude-3.5</span><span>18:42</span><span>6 msgs</span></div>
+              </div>
+              <div class="history-item">
+                <div class="h-title">gpui-component widget 调研</div>
+                <div class="h-meta"><span class="provider">claude-3.5</span><span>16:14</span><span>22 msgs</span></div>
+              </div>
+
+              <div class="history-group">本周</div>
+              <div class="history-item">
+                <div class="h-title">Tab key 修复方案</div>
+                <div class="h-meta"><span class="provider">gpt-4</span><span>周二</span><span>9 msgs</span></div>
+              </div>
+              <div class="history-item">
+                <div class="h-title">theme system 重构</div>
+                <div class="h-meta"><span class="provider">claude-3.5</span><span>周一</span><span>18 msgs</span></div>
+              </div>
+
+              <div class="history-group">更早</div>
+              <div class="history-item">
+                <div class="h-title">herdr IPC 协议设计</div>
+                <div class="h-meta"><span class="provider">gpt-4</span><span>06-28</span><span>31 msgs</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="input-bar">
+          <div class="input-wrapper">
+            <div class="input-area" contenteditable="true" data-placeholder="问任何事..."></div>
+            <div class="input-bottom-row">
+              <div class="input-tools">
+                <button class="tool-btn model"><span class="dot"></span>claude-3.5-sonnet ▾</button>
+              </div>
+              <button class="send-btn"><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="scene-notes">
+        <ul>
+          <li><strong>抽屉式覆盖</strong>: 从右滑入 320px 宽，半透明遮罩 (rgba 0.5) 覆盖消息区域</li>
+          <li><strong>不遮挡 input</strong>: 抽屉只占 messages 区域，input bar 仍可见可操作（关键改进）</li>
+          <li><strong>按 date 分组</strong>: 今天 / 昨天 / 本周 / 更早，参考 ChatGPT 历史</li>
+          <li><strong>每项 metadata</strong>: 标题 + provider 标签 + 时间 + 消息数；点击切换 session</li>
+          <li><strong>当前项高亮</strong>: 左侧 accent 蓝条 + muted 背景</li>
+          <li><strong>关闭方式</strong>: 点遮罩 / 点 X / 按 Esc</li>
+          <li><strong>agent monitor</strong>: 同样抽屉式（共用 pattern），不再各自浮层</li>
+        </ul>
+        <div class="delta"><strong>vs 现状</strong>: 现 history/agent_monitor 是浮层覆盖在 input 下方 (<code>header.rs:439, 495</code>)，遮挡 input 且视觉割裂；无 date 分组；无 provider 标签</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============= SCENE 7: REASONING BLOCK ============= -->
+  <div class="scene">
+    <div class="scene-title">
+      <span class="num">7</span>
+      <h2>Reasoning 折叠块</h2>
+      <span class="desc">assistant 消息内嵌可折叠 "思考过程" · 默认折叠 · 参 ChatGPT reasoning blocks</span>
+    </div>
+    <div class="scene-body">
+      <div class="chat-panel">
+        <div class="chat-header">
+          <div class="title"><span class="title-text">ZenixAI</span></div>
+          <div class="actions">
+            <button class="icon-btn"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg></button>
+            <button class="icon-btn"><svg viewBox="0 0 24 24"><circle cx="12" cy="5" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="12" cy="19" r="1.5"/></svg></button>
+          </div>
+        </div>
+        <div class="messages">
+          <div class="msg user">
+            <div class="bubble">为什么 chat 模块迭代 3 次都不成功? 根因是什么?</div>
+            <div class="msg-time">14:45:18</div>
+          </div>
+          <div class="msg assistant">
+            <div class="avatar">Z</div>
+            <div class="bubble">
+              <!-- Collapsed reasoning -->
+              <div class="reasoning">
+                <div class="reasoning-head">
+                  <span class="label"><span class="think-icon">◐</span>思考过程 · 2.4s</span>
+                  <span class="duration">点击展开 ▾</span>
+                </div>
+              </div>
+              <p>3 次失败的根因可以从 <strong>scope 划分</strong>、<strong>视觉决策</strong>、<strong>功能完整性</strong> 三个维度分析：</p>
+              <p><strong>Task 03/04</strong>: 把"重设计"当换皮，没碰结构缺陷（D1 流式、D2 虚拟化）</p>
+              <p><strong>Task 07-05</strong>: 修了结构但 PRD 明确排除视觉重做，导致功能在但 UI 不像样</p>
+              <p>推荐方向：参 Claude 哲学 + gpui-component 现成 widget...</p>
+            </div>
+          </div>
+
+          <!-- Second variant: expanded reasoning -->
+          <div class="msg assistant" style="margin-top: 16px; opacity: 0.6;">
+            <div class="avatar">Z</div>
+            <div class="bubble">
+              <div class="reasoning expanded">
+                <div class="reasoning-head">
+                  <span class="label"><span class="think-icon">◐</span>思考过程 · 2.4s</span>
+                  <span class="duration">点击折叠 ▴</span>
+                </div>
+                <div class="reasoning-body">
+                  <p>用户问"为什么 3 次都不成功"。需要分析三轮任务（03/04/07-05）的失败根因。</p>
+                  <p>03 是换皮路线（pill 配置条、彩色气泡）—— 治标不治本。</p>
+                  <p>04 是 Zed 风格 —— PRD 自己承认"没真正理解 Zed 设计模式"。</p>
+                  <p>07-05 修了 D1-D9 结构缺陷，但 PRD 第 47 行明确排除视觉重做 —— 这是关键错误判断。</p>
+                  <p>根因是：把"重设计"理解为可分解的子任务（先结构、后视觉），但用户期望一次性做对。</p>
+                </div>
+              </div>
+              <p style="opacity: 0.5;"><em>（展开状态下显示完整思考过程；上方演示折叠状态）</em></p>
+            </div>
+          </div>
+        </div>
+        <div class="input-bar">
+          <div class="input-wrapper">
+            <div class="input-area" contenteditable="true" data-placeholder="问任何事..."></div>
+            <div class="input-bottom-row">
+              <div class="input-tools">
+                <button class="tool-btn model"><span class="dot"></span>claude-3.5-sonnet ▾</button>
+              </div>
+              <button class="send-btn"><svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg></button>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="scene-notes">
+        <ul>
+          <li><strong>折叠默认</strong>: assistant msg 顶部显示 "思考过程 · 2.4s" 折叠条，点击展开</li>
+          <li><strong>折叠状态</strong>: 一行 header + think icon + duration + "点击展开 ▾"</li>
+          <li><strong>展开状态</strong>: 显示完整 reasoning 内容（斜体 muted 区分），下方仍是正常 response</li>
+          <li><strong>触发条件</strong>: engine 返回 <code>thinking</code> 块时自动渲染（参 Claude 3.5 thinking 模式）</li>
+          <li><strong>不阻塞阅读</strong>: reasoning 默认折叠，response 立即可见</li>
+          <li><strong>视觉层级</strong>: reasoning 在 msg 内嵌的独立折叠块，不是单独 msg</li>
+        </ul>
+        <div class="delta"><strong>vs 现状</strong>: 现无 reasoning 渲染；engine 已有 <code>StreamEvent::Thinking</code> 但 chat 不消费；与 ChatGPT/Claude reasoning 体验差距大</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============= FOOTER ============= -->
+  <div class="footer-note">
+    ZenixAI v4 Mockup · 基于 tokyonight dark 主题 tokens · 哲学参考: Claude Desktop / Cursor / Zed Assistant / Roo Code<br>
+    所有 widget 对应 gpui-component v0.5.2 现成组件: input.multi_line / resizable / accordion / table / highlighter / alert / badge / spinner / menu / tooltip
+  </div>
+
+</div>
+</body>
+</html>

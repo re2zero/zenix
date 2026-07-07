@@ -42,20 +42,29 @@ use crate::{
 };
 
 // Tab action types to intercept Tab before gpui-component's Root handler.
-actions!([TabToPty, ShiftTabToPty]);
+// ChatHistory{Up,Down} navigate the multi-line input's history via Alt+arrows.
+actions!([TabToPty, ShiftTabToPty, ChatHistoryUp, ChatHistoryDown]);
 
-/// Register Tab keybindings at app level. Must be called after gpui_component::init
-/// so these bindings take precedence over gpui-component's Root-level Tab bindings.
+/// Register keybindings at app level. Must be called after gpui_component::init
+/// so these bindings take precedence over gpui-component's Root-level bindings.
 pub fn init_actions(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("tab", TabToPty, None),
         KeyBinding::new("shift-tab", ShiftTabToPty, None),
+        KeyBinding::new("alt-up", ChatHistoryUp, None),
+        KeyBinding::new("alt-down", ChatHistoryDown, None),
     ]);
 }
 
 const MAX_CONNECT_ATTEMPTS: usize = 200;
 const FONT_SIZE_MIN: f32 = 8.0;
 const FONT_SIZE_MAX: f32 = 24.0;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HistoryDir {
+    Up,
+    Down,
+}
 
 pub struct ZenixApp {
     focus_handle: FocusHandle,
@@ -123,6 +132,7 @@ pub struct ZenixApp {
     pending_confirm: Option<crate::ui::settings::PendingConfirm>,
     ai_chat_panel: Option<crate::ai::chat::AiChatPanelData>,
     chat_input_entity: Option<gpui::Entity<gpui_component::input::InputState>>,
+    pending_clear_chat_input: bool,
     agent_polling: bool,
     pub cursor_visible: bool,
     single_instance_rx: Option<std::sync::mpsc::Receiver<crate::single_instance::Signal>>,
@@ -143,7 +153,7 @@ fn write_to_pty(backend: &Option<BackendTx>, tab: &mut Option<TerminalTab>, byte
 }
 
 /// Return the current UTC timestamp in ISO 8601 format (matching SQLite datetime output).
-fn timestamp_now() -> String {
+pub(crate) fn timestamp_now() -> String {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| {
@@ -282,6 +292,7 @@ impl ZenixApp {
             pending_confirm: None,
             ai_chat_panel: None,
             chat_input_entity: None,
+            pending_clear_chat_input: false,
             agent_polling: false,
             single_instance_rx,
         };
@@ -671,6 +682,56 @@ impl ZenixApp {
         write_to_pty(&self.backend, &mut self.tab, vec![0x09]);
     }
 
+    fn on_chat_history_up(&mut self, _: &ChatHistoryUp, window: &mut Window, cx: &mut Context<Self>) {
+        self.navigate_chat_history(HistoryDir::Up, window, cx);
+    }
+
+    fn on_chat_history_down(
+        &mut self,
+        _: &ChatHistoryDown,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.navigate_chat_history(HistoryDir::Down, window, cx);
+    }
+
+    fn navigate_chat_history(
+        &mut self,
+        dir: HistoryDir,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(input) = self.chat_input_entity.as_ref() else {
+            return;
+        };
+        let Some(panel) = self.ai_chat_panel.as_mut() else {
+            return;
+        };
+        if panel.input_history.is_empty() {
+            return;
+        }
+        let len = panel.input_history.len();
+        let new_idx = match (panel.input_history_idx, dir) {
+            (None, HistoryDir::Up) => Some(len - 1),
+            (None, HistoryDir::Down) => None,
+            (Some(i), HistoryDir::Up) => Some(i.saturating_sub(1)),
+            (Some(i), HistoryDir::Down) => {
+                if i + 1 >= len {
+                    None
+                } else {
+                    Some(i + 1)
+                }
+            }
+        };
+        panel.input_history_idx = new_idx;
+        let value = match new_idx {
+            Some(i) => panel.input_history[i].clone(),
+            None => String::new(),
+        };
+        input.update(cx, |state, cx| state.set_value(value, window, cx));
+        cx.notify();
+    }
+
     // ── Mouse dispatch ──────────────────────────────────────────────────
 
     fn on_mouse_down(
@@ -985,6 +1046,12 @@ impl Render for ZenixApp {
                 self.spawn_pty(&binary, &["client"], cx);
             }
         }
+        if self.pending_clear_chat_input {
+            if let Some(input) = self.chat_input_entity.as_ref() {
+                input.update(cx, |state, cx| state.set_value("", window, cx));
+            }
+            self.pending_clear_chat_input = false;
+        }
 
         // Start sysinfo polling when system info panel is first opened
         if self.active_panel == Panel::SystemInfo && !self.sysinfo_polling {
@@ -1211,11 +1278,15 @@ impl Render for ZenixApp {
                     let data = self
                         .ai_chat_panel
                         .get_or_insert_with(crate::ai::chat::AiChatPanelData::new);
+                    data.ai_panel_width = self.config.ai_panel_width().clamp(360.0, 720.0);
+                    data.input_height = self.config.ai_input_height().clamp(60.0, 400.0);
                     // Lazy-create the InputState entity for the chat input.
                     if self.chat_input_entity.is_none() {
                         let input = cx.new(|cx| {
                             gpui_component::input::InputState::new(window, cx)
                                 .placeholder("Ask anything, dispatch agents, or type / for commands")
+                                .multi_line(true)
+                                .auto_grow(1, 12)
                         });
                         // Subscribe to input events: Enter sends, Escape clears focus.
                         cx.subscribe(&input, {
@@ -1231,7 +1302,17 @@ impl Render for ZenixApp {
                                     } => {
                                         let text = _input.read(cx).value().to_string();
                                         if !text.trim().is_empty() {
+                                            if let Some(ref mut data) = this.ai_chat_panel {
+                                                if data.input_history.last() != Some(&text) {
+                                                    data.input_history.push(text.clone());
+                                                }
+                                                data.input_history_idx = None;
+                                            }
                                             start_chat_streaming(this, text, cx);
+                                            // Input is cleared from render() via
+                                            // pending_clear_chat_input, where the
+                                            // window handle is available.
+                                            this.pending_clear_chat_input = true;
                                         }
                                         cx.notify();
                                     }
@@ -1239,7 +1320,7 @@ impl Render for ZenixApp {
                                         shift: true,
                                         ..
                                     } => {
-                                        // Shift+Enter: newline (default behavior, no special handling needed)
+                                        // Shift+Enter: newline (handled by multi_line mode).
                                     }
                                     gpui_component::input::InputEvent::Change => {
                                         if let Some(ref mut data) = this.ai_chat_panel {
@@ -1272,11 +1353,7 @@ impl Render for ZenixApp {
                                 !data.selected_provider_id.is_empty()
                                     && p.name == data.selected_provider_id
                             })
-                            .or_else(|| {
-                                providers
-                                    .iter()
-                                    .find(|p| !p.api_key.trim().is_empty())
-                            })
+                            .or_else(|| providers.iter().find(|p| !p.api_key.trim().is_empty()))
                             .filter(|p| !p.api_key.trim().is_empty())
                             .cloned();
                         if let Some(provider) = provider {
@@ -1478,6 +1555,8 @@ impl Render for ZenixApp {
             .on_key_down(cx.listener(Self::on_key_down))
             .on_action(cx.listener(Self::on_tab_to_pty))
             .on_action(cx.listener(Self::on_shift_tab_to_pty))
+            .on_action(cx.listener(Self::on_chat_history_up))
+            .on_action(cx.listener(Self::on_chat_history_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::on_mouse_down))
             .on_mouse_down(MouseButton::Right, cx.listener(Self::on_mouse_down))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
@@ -1485,6 +1564,70 @@ impl Render for ZenixApp {
             .on_mouse_up(MouseButton::Middle, cx.listener(Self::on_mouse_up))
             .on_mouse_up(MouseButton::Right, cx.listener(Self::on_mouse_up))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
+            .on_drag_move({
+                let entity = cx.entity();
+                move |ev: &gpui::DragMoveEvent<crate::ai::chat::resize::PanelResizeDrag>,
+                      window,
+                      cx| {
+                    let drag = ev.drag(cx);
+                    let cursor_x = f32::from(ev.event.position.x);
+                    let new_width = crate::ai::chat::resize::compute_resized_width(drag, cursor_x);
+                    let _ = entity.update(cx, |this, cx| {
+                        handle_ai_chat_action(
+                            this,
+                            crate::ai::chat::AiChatAction::ResizePanel(new_width),
+                            window,
+                            cx,
+                        );
+                    });
+                }
+            })
+            .on_drop(
+                {
+                    let entity = cx.entity();
+                    move |_drag: &crate::ai::chat::resize::PanelResizeDrag, window, cx| {
+                        let _ = entity.update(cx, |this, cx| {
+                            handle_ai_chat_action(
+                                this,
+                                crate::ai::chat::AiChatAction::PersistPanelWidth,
+                                window,
+                                cx,
+                            );
+                        });
+                    }
+                },
+            )
+            .on_drag_move({
+                let entity = cx.entity();
+                move |ev: &gpui::DragMoveEvent<crate::ai::chat::resize::InputResizeDrag>,
+                      window,
+                      cx| {
+                    let drag = ev.drag(cx);
+                    let cursor_y = f32::from(ev.event.position.y);
+                    let new_height = crate::ai::chat::resize::compute_input_height(drag, cursor_y);
+                    let _ = entity.update(cx, |this, cx| {
+                        handle_ai_chat_action(
+                            this,
+                            crate::ai::chat::AiChatAction::ResizeInput(new_height),
+                            window,
+                            cx,
+                        );
+                    });
+                }
+            })
+            .on_drop({
+                let entity = cx.entity();
+                move |_drag: &crate::ai::chat::resize::InputResizeDrag, window, cx| {
+                    let _ = entity.update(cx, |this, cx| {
+                        handle_ai_chat_action(
+                            this,
+                            crate::ai::chat::AiChatAction::PersistInputHeight,
+                            window,
+                            cx,
+                        );
+                    });
+                }
+            })
             .child(div().flex_grow(1.0).h_full().child(terminal_area))
             .children(panel)
             .child(sidebar::sidebar(
@@ -2474,14 +2617,14 @@ impl Render for ZenixApp {
                                 cx.notify();
                             });
                         }
-                     }),
-                     mcp_servers: mcp_ref,
-                     mcp_test_results: &self.mcp_test_results,
-                     api_test_results: &self.api_test_results,
-                     active_skills_subtab: self.active_skills_subtab,
-                     skill_search: &self.skill_search,
-                     skill_search_input: self.skill_search_input.as_ref(),
-                     market_skills: &self.market_skills,
+                    }),
+                    mcp_servers: mcp_ref,
+                    mcp_test_results: &self.mcp_test_results,
+                    api_test_results: &self.api_test_results,
+                    active_skills_subtab: self.active_skills_subtab,
+                    skill_search: &self.skill_search,
+                    skill_search_input: self.skill_search_input.as_ref(),
+                    market_skills: &self.market_skills,
                     market_loading: self.market_loading,
                     market_error: self.market_error.as_deref(),
                     terminal_cursor_blink: self.terminal_cursor_blink,
@@ -2642,11 +2785,7 @@ impl Render for ZenixApp {
 /// `data.messages`, sets streaming state, then spawns an async task that calls
 /// `OrchestratorEngine::chat_and_dispatch`. Stream events arrive via a tokio
 /// mpsc channel and are folded back into `data.messages[streaming_msg_idx]`.
-fn start_chat_streaming(
-    this: &mut ZenixApp,
-    text: String,
-    cx: &mut gpui::Context<'_, ZenixApp>,
-) {
+fn start_chat_streaming(this: &mut ZenixApp, text: String, cx: &mut gpui::Context<'_, ZenixApp>) {
     use crate::ai::engine::{ChatMessageRef, DispatchStreamEvent, OrchestratorEngine};
     use crate::ai::herdr::HerdrIpcClient;
 
@@ -2879,9 +3018,7 @@ fn start_chat_streaming(
                 ),
                 Err(e) => {
                     tracing::warn!(target: "zenixai", error = %e, "chat_and_dispatch failed");
-                    let _ = event_tx.send(DispatchStreamEvent::Error(format!(
-                        "Chat failed: {e}"
-                    )));
+                    let _ = event_tx.send(DispatchStreamEvent::Error(format!("Chat failed: {e}")));
                 }
             }
 
@@ -2952,17 +3089,20 @@ fn handle_dispatch_event(
             }
         }
         DispatchStreamEvent::Error(err) => {
-            if let Some(idx) = data.streaming_msg_idx {
-                let mut full = String::new();
-                if let Some(msg) = data.messages.get(idx) {
-                    if !msg.content.is_empty() {
-                        full.push_str(&msg.content);
-                        full.push_str("\n\n");
-                    }
-                }
-                full.push_str(&format!("⚠️ {err}"));
-                data.set_message_content(idx, full);
-            }
+            data.is_streaming = false;
+            data.streaming_msg_idx = None;
+            data.retry_last_prompt = data.last_user_prompt.clone();
+            let session_id = data.current_session_id.clone().unwrap_or_default();
+            let err_msg = crate::ai::session::ChatMessage {
+                id: 0,
+                session_id,
+                role: "error".into(),
+                content: err.clone(),
+                agent_activities: None,
+                timestamp: timestamp_now(),
+                sequence: data.messages.len() as i64,
+            };
+            data.push_message(err_msg);
             cx.notify();
         }
         DispatchStreamEvent::AgentComplete(result) => {
@@ -3001,7 +3141,7 @@ fn stop_chat_streaming(this: &mut ZenixApp, cx: &mut gpui::Context<'_, ZenixApp>
 fn handle_ai_chat_action(
     this: &mut ZenixApp,
     action: crate::ai::chat::AiChatAction,
-    _window: &mut gpui::Window,
+    window: &mut gpui::Window,
     cx: &mut gpui::Context<'_, ZenixApp>,
 ) {
     use crate::ai::chat::AiChatAction;
@@ -3025,13 +3165,15 @@ fn handle_ai_chat_action(
                         data.input_value = text.clone();
                     }
                     start_chat_streaming(this, text, cx);
+                    if let Some(input) = this.chat_input_entity.as_ref() {
+                        input.update(cx, |state, cx| state.set_value("", window, cx));
+                    }
                 }
             }
         }
         AiChatAction::NewChat => {
             if let Some(ref mut data) = this.ai_chat_panel {
-                let list_state =
-                    ListState::new(0, ListAlignment::Bottom, px(400.));
+                let list_state = ListState::new(0, ListAlignment::Bottom, px(400.));
                 list_state.set_follow_mode(FollowMode::Tail);
                 data.messages = std::rc::Rc::new(Vec::new());
                 data.list_state = list_state;
@@ -3043,50 +3185,46 @@ fn handle_ai_chat_action(
                 data.input_value = String::new();
                 data.last_user_prompt = None;
                 data.config_dropdown = None;
+                data.header_menu_open = false;
             }
             cx.notify();
         }
-        AiChatAction::ToggleHistory => {
+        AiChatAction::OpenDrawer(kind) => {
             if let Some(ref mut data) = this.ai_chat_panel {
-                data.show_history = !data.show_history;
-                if data.show_history {
-                    data.show_agents = false;
-                    data.config_dropdown = None;
-                }
+                data.drawer = Some(kind);
+                data.config_dropdown = None;
+                data.header_menu_open = false;
             }
             cx.notify();
         }
-        AiChatAction::ToggleAgents => {
+        AiChatAction::CloseDrawer => {
             if let Some(ref mut data) = this.ai_chat_panel {
-                data.show_agents = !data.show_agents;
-                if data.show_agents {
-                    data.show_history = false;
-                    data.config_dropdown = None;
-                }
+                data.drawer = None;
             }
             cx.notify();
+        }
+        AiChatAction::RetryLast => {
+            let prompt = this
+                .ai_chat_panel
+                .as_ref()
+                .and_then(|d| {
+                    d.retry_last_prompt
+                        .clone()
+                        .or_else(|| d.last_user_prompt.clone())
+                });
+            if let Some(prompt) = prompt {
+                start_chat_streaming(this, prompt, cx);
+            } else {
+                tracing::warn!(target: "zenixai", "retry requested but no last prompt");
+            }
         }
         AiChatAction::ToggleModelDropdown => {
             if let Some(ref mut data) = this.ai_chat_panel {
                 data.config_dropdown = match data.config_dropdown {
                     Some(crate::ai::chat::ConfigDropdownTarget::Model) => None,
                     _ => {
-                        data.show_history = false;
-                        data.show_agents = false;
+                        data.drawer = None;
                         Some(crate::ai::chat::ConfigDropdownTarget::Model)
-                    }
-                };
-            }
-            cx.notify();
-        }
-        AiChatAction::ToggleProviderDropdown => {
-            if let Some(ref mut data) = this.ai_chat_panel {
-                data.config_dropdown = match data.config_dropdown {
-                    Some(crate::ai::chat::ConfigDropdownTarget::Provider) => None,
-                    _ => {
-                        data.show_history = false;
-                        data.show_agents = false;
-                        Some(crate::ai::chat::ConfigDropdownTarget::Provider)
                     }
                 };
             }
@@ -3103,6 +3241,37 @@ fn handle_ai_chat_action(
             }
             cx.notify();
         }
+        AiChatAction::ToggleProviderDropdown => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                data.config_dropdown = match data.config_dropdown {
+                    Some(crate::ai::chat::ConfigDropdownTarget::Provider) => None,
+                    _ => {
+                        data.drawer = None;
+                        Some(crate::ai::chat::ConfigDropdownTarget::Provider)
+                    }
+                };
+            }
+            cx.notify();
+        }
+        AiChatAction::ToggleThinkingDropdown => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                data.config_dropdown = match data.config_dropdown {
+                    Some(crate::ai::chat::ConfigDropdownTarget::Thinking) => None,
+                    _ => {
+                        data.drawer = None;
+                        Some(crate::ai::chat::ConfigDropdownTarget::Thinking)
+                    }
+                };
+            }
+            cx.notify();
+        }
+        AiChatAction::SelectThinkingLevel(level) => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                data.thinking_level = level;
+                data.config_dropdown = None;
+            }
+            cx.notify();
+        }
         AiChatAction::SelectModel(model) => {
             if let Some(ref mut data) = this.ai_chat_panel {
                 data.selected_model = model;
@@ -3113,6 +3282,49 @@ fn handle_ai_chat_action(
         AiChatAction::SuggestionClick(text) => {
             if !text.trim().is_empty() {
                 start_chat_streaming(this, text, cx);
+            }
+        }
+        AiChatAction::OpenMenu => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                data.header_menu_open = !data.header_menu_open;
+            }
+            cx.notify();
+        }
+        AiChatAction::OpenSettings => {
+            this.show_settings = true;
+            if let Some(ref mut data) = this.ai_chat_panel {
+                data.header_menu_open = false;
+            }
+            cx.notify();
+        }
+        AiChatAction::SetHoveredMessage(id) => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                data.hovered_msg_id = id;
+            }
+            cx.notify();
+        }
+        AiChatAction::ResizePanel(new_width) => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                data.ai_panel_width = new_width.clamp(360.0, 720.0);
+            }
+            cx.notify();
+        }
+        AiChatAction::PersistPanelWidth => {
+            if let Some(ref data) = this.ai_chat_panel {
+                this.config.set_ai_panel_width(data.ai_panel_width);
+                let _ = this.config.save();
+            }
+        }
+        AiChatAction::ResizeInput(new_height) => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                data.input_height = new_height.clamp(60.0, 400.0);
+            }
+            cx.notify();
+        }
+        AiChatAction::PersistInputHeight => {
+            if let Some(ref data) = this.ai_chat_panel {
+                this.config.set_ai_input_height(data.input_height);
+                let _ = this.config.save();
             }
         }
     }

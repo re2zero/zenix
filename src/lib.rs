@@ -5,6 +5,16 @@
 
 rust_i18n::i18n!("locales");
 
+use std::sync::OnceLock;
+
+/// Handle to the tokio runtime created in `main.rs`.
+///
+/// Required because GPUI's async executor is not a tokio runtime, so
+/// `tokio::task::spawn` would panic ("no reactor running") when called
+/// from a GPUI-spawned task. Code that needs to run on tokio (e.g.
+/// `reqwest` async HTTP) fetches this handle and calls `.spawn()` on it.
+pub static TOKIO_HANDLE: OnceLock<tokio::runtime::Handle> = OnceLock::new();
+
 pub mod agent;
 pub mod ai;
 pub mod api_provider;

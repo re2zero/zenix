@@ -35,7 +35,7 @@ pub enum ThinkingLevel {
 
 impl Default for ThinkingLevel {
     fn default() -> Self {
-        ThinkingLevel::Medium
+        ThinkingLevel::Low
     }
 }
 
@@ -237,9 +237,20 @@ impl ApiProviderConfig {
     }
 
     /// URL for fetching available models.
+    ///
+    /// Derived from `endpoint_url` by locating the version prefix (e.g. `/v1/`)
+    /// and replacing the chat/messages path with `/models`. This avoids
+    /// double-pathing when `base_url` already includes `/v1`.
     pub fn models_url(&self) -> String {
+        let endpoint = self.endpoint_url();
+        if let Some(idx) = endpoint.find("/v1/") {
+            return format!("{}/models", &endpoint[..idx + 3]);
+        }
+        if let Some(idx) = endpoint.find("/v2/") {
+            return format!("{}/models", &endpoint[..idx + 3]);
+        }
         let base = self.base_url.trim_end_matches('/');
-        format!("{base}{}", self.format.models_path())
+        format!("{base}/models")
     }
 }
 
