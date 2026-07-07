@@ -2,7 +2,7 @@
 
 use gpui::{
     AnyElement, Entity, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _,
-    Styled as _, div, px, svg,
+    StatefulInteractiveElement as _, Styled as _, div, px, svg,
 };
 use gpui_component::{
     Theme,
@@ -38,8 +38,8 @@ pub(super) fn render_input_bar(
     let input_area: AnyElement = match input_entity {
         Some(entity) => Input::new(entity)
             .border_0()
-            .min_h(px(28.))
-            .max_h(px(data.input_height))
+            .min_h(px(data.input_height))
+            .max_h(px(400.))
             .into_any_element(),
         None => div()
             .min_h(px(28.))

@@ -38,6 +38,8 @@ pub enum AiChatAction {
     PersistPanelWidth,
     ResizeInput(f32),
     PersistInputHeight,
+    /// Start input-height drag (carries start-y in window coords).
+    BeginInputResize(f32, f32),
     ToggleProviderDropdown,
     ToggleThinkingDropdown,
     SelectThinkingLevel(ThinkingLevel),
@@ -176,7 +178,7 @@ impl Default for AiChatPanelData {
             selected_model: String::new(),
             available_models: Vec::new(),
             thinking_level: ThinkingLevel::default(),
-            input_height: 160.0,
+            input_height: 80.0,
             selected_workspace: None,
             workspaces: Vec::new(),
             config_dropdown: None,

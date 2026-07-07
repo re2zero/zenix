@@ -772,27 +772,6 @@ impl ZenixApp {
             return;
         }
 
-        // Check if click starts an input-height resize inside the AI panel.
-        if self.active_panel == Panel::AiChat && event.button == MouseButton::Left {
-            let bounds = window.bounds();
-            let ih = self
-                .ai_chat_panel
-                .as_ref()
-                .map(|d| d.input_height)
-                .unwrap_or(160.0);
-            let handle_y: f32 = f32::from(bounds.size.height) - ih - 3.0;
-            let click_y: f32 = f32::from(event.position.y);
-            if (click_y - handle_y).abs() < 6.0 {
-                self.input_resize_drag = Some(InputResizeDragState {
-                    start_y: click_y,
-                    start_height: ih,
-                });
-                self.panel_resize_drag = None;
-                cx.stop_propagation();
-                return;
-            }
-        }
-
         // Check if this click starts a panel resize (left edge of active panel).
         if self.active_panel != Panel::None && event.button == MouseButton::Left {
             let bounds = window.bounds();
@@ -3404,6 +3383,13 @@ fn handle_ai_chat_action(
                 this.config.set_ai_panel_width(data.ai_panel_width);
                 let _ = this.config.save();
             }
+        }
+        AiChatAction::BeginInputResize(start_y, start_height) => {
+            this.input_resize_drag = Some(InputResizeDragState {
+                start_y,
+                start_height,
+            });
+            cx.notify();
         }
         AiChatAction::ResizeInput(new_height) => {
             if let Some(ref mut data) = this.ai_chat_panel {

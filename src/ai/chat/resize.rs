@@ -1,8 +1,12 @@
+use std::rc::Rc;
+
 use gpui::{
-    AppContext as _, InteractiveElement as _, IntoElement, Stateful,
-    StatefulInteractiveElement as _, Styled, div, px,
+    AppContext as _, InteractiveElement as _, IntoElement, MouseButton, Stateful,
+    StatefulInteractiveElement as _, Styled, Window, div, px,
 };
 use gpui_component::Theme;
+
+use super::state::AiChatAction;
 
 /// Panel width constraints (matches config clamping).
 pub const MIN_PANEL_WIDTH: f32 = 360.0;
@@ -28,8 +32,13 @@ pub fn render_resize_handle(theme: &Theme) -> Stateful<gpui::Div> {
 
 /// Render the resize handle above the input area.
 ///
-/// Visual only — drag detection is handled by app-level mouse tracking.
-pub fn render_input_resize_handle(theme: &Theme) -> Stateful<gpui::Div> {
+/// Fires `BeginInputResize` on mouse-down so the app-level mouse-move
+/// handler can track the drag across the whole window.
+pub fn render_input_resize_handle(
+    theme: &Theme,
+    input_height: f32,
+    on_action: Rc<dyn Fn(AiChatAction, &mut Window, &mut gpui::App) + 'static>,
+) -> Stateful<gpui::Div> {
     div()
         .id("ai-input-resize-handle")
         .h(px(1.))
@@ -37,4 +46,15 @@ pub fn render_input_resize_handle(theme: &Theme) -> Stateful<gpui::Div> {
         .cursor_row_resize()
         .bg(theme.border)
         .hover(|style| style.bg(theme.accent))
+        .on_mouse_down(MouseButton::Left, {
+            move |ev, _window, cx| {
+                let start_y = f32::from(ev.position.y);
+                on_action(
+                    AiChatAction::BeginInputResize(start_y, input_height),
+                    _window,
+                    cx,
+                );
+                cx.stop_propagation();
+            }
+        })
 }

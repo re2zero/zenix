@@ -178,7 +178,11 @@ pub fn render_ai_chat_panel(
     };
     panel = panel.child(v_flex().flex_grow(1.0).min_h_0().child(content));
 
-    panel = panel.child(resize::render_input_resize_handle(theme));
+    panel = panel.child(resize::render_input_resize_handle(
+        theme,
+        data.input_height,
+        on_action.clone(),
+    ));
     panel = panel.child(input::render_input_bar(
         data,
         theme,
