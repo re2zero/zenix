@@ -143,7 +143,11 @@ pub fn tab_content(
 
 // ── General Tab ───────────────────────────────────────────────────────
 
-fn tab_general(locale: &str, on_locale_change: ActionCb<String>, theme: &gpui_component::Theme) -> impl IntoElement {
+fn tab_general(
+    locale: &str,
+    on_locale_change: ActionCb<String>,
+    theme: &gpui_component::Theme,
+) -> impl IntoElement {
     let loc = locale.to_string();
     let cb = Rc::new(on_locale_change);
     let config_dir = crate::platform::zenix_config_dir();
@@ -914,7 +918,11 @@ fn tab_skills_content(
                         .on_click(refresh_cb),
                 ),
         )
-        .child(zed_search_bar(&t("skills.search"), skill_search_input, theme))
+        .child(zed_search_bar(
+            &t("skills.search"),
+            skill_search_input,
+            theme,
+        ))
         .child(match active_subtab {
             SkillsSubTab::Installed => {
                 let filtered: Vec<&crate::skills::SkillInfo> = zenix_skills
@@ -1023,7 +1031,12 @@ fn tab_skills_content(
                                 .min_w_0()
                                 .overflow_x_hidden()
                                 .children(filtered.iter().map(|s| {
-                                    components::api_skill_card(s, &installed_names, on_skill_action, theme)
+                                    components::api_skill_card(
+                                        s,
+                                        &installed_names,
+                                        on_skill_action,
+                                        theme,
+                                    )
                                 }))
                                 .into_any_element()
                         })

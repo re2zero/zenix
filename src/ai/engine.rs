@@ -20,13 +20,12 @@ use std::time::Duration;
 /// so `tokio::task::spawn` called from a GPUI-spawned task would panic — use
 /// this helper instead.
 fn tokio_handle() -> tokio::runtime::Handle {
-    tokio::runtime::Handle::try_current()
-        .unwrap_or_else(|_| {
-            crate::TOKIO_HANDLE
-                .get()
-                .expect("TOKIO_HANDLE not initialized")
-                .clone()
-        })
+    tokio::runtime::Handle::try_current().unwrap_or_else(|_| {
+        crate::TOKIO_HANDLE
+            .get()
+            .expect("TOKIO_HANDLE not initialized")
+            .clone()
+    })
 }
 
 use anyhow::{Context, Result};
@@ -293,107 +292,108 @@ impl OrchestratorEngine {
         let api_key = self.api_key.clone();
         let on_event_clone = on_event;
 
-        let result = tokio_handle().spawn(async move {
-            let resp = http_client
-                .post(&endpoint)
-                .header("Authorization", format!("Bearer {api_key}"))
-                .header("Content-Type", "application/json")
-                .json(&payload)
-                .send()
-                .await
-                .context("HTTP request failed")
-                .map_err(AiError::from)?;
+        let result = tokio_handle()
+            .spawn(async move {
+                let resp = http_client
+                    .post(&endpoint)
+                    .header("Authorization", format!("Bearer {api_key}"))
+                    .header("Content-Type", "application/json")
+                    .json(&payload)
+                    .send()
+                    .await
+                    .context("HTTP request failed")
+                    .map_err(AiError::from)?;
 
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let text = resp.text().await.unwrap_or_default();
-                return Err(AiError::ApiError(format!("HTTP {status}: {text}")));
-            }
+                if !resp.status().is_success() {
+                    let status = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    return Err(AiError::ApiError(format!("HTTP {status}: {text}")));
+                }
 
-            // Parse SSE stream line-by-line.
-            // Supports both OpenAI format (choices[].delta.content, [DONE])
-            // and Anthropic format (type: "content_block_delta", text_delta.text, message_stop).
-            let mut stream = resp.bytes_stream();
-            let mut buffer = String::new();
-            let mut done = false;
+                // Parse SSE stream line-by-line.
+                // Supports both OpenAI format (choices[].delta.content, [DONE])
+                // and Anthropic format (type: "content_block_delta", text_delta.text, message_stop).
+                let mut stream = resp.bytes_stream();
+                let mut buffer = String::new();
+                let mut done = false;
 
-            while let Some(chunk) = stream.next().await {
-                let chunk = match chunk {
-                    Ok(c) => c,
-                    Err(e) => {
-                        on_event_clone(StreamEvent::Error(format!("stream error: {e}")));
-                        break;
-                    }
-                };
+                while let Some(chunk) = stream.next().await {
+                    let chunk = match chunk {
+                        Ok(c) => c,
+                        Err(e) => {
+                            on_event_clone(StreamEvent::Error(format!("stream error: {e}")));
+                            break;
+                        }
+                    };
 
-                let text = String::from_utf8_lossy(&chunk);
-                for ch in text.chars() {
-                    if ch == '\n' {
-                        if buffer.starts_with("data: ") {
-                            let data = &buffer[6..];
-                            if data.trim() == "[DONE]" {
-                                done = true;
-                                buffer.clear();
-                                continue;
-                            }
-                            if let Ok(sse_chunk) = serde_json::from_str::<SseChunk>(data) {
-                                if let Some(choices) = sse_chunk.choices {
-                                    for choice in choices {
-                                        if let Some(delta) = choice.delta {
-                                            if let Some(text) = delta.content {
-                                                on_event_clone(StreamEvent::Token(text));
+                    let text = String::from_utf8_lossy(&chunk);
+                    for ch in text.chars() {
+                        if ch == '\n' {
+                            if buffer.starts_with("data: ") {
+                                let data = &buffer[6..];
+                                if data.trim() == "[DONE]" {
+                                    done = true;
+                                    buffer.clear();
+                                    continue;
+                                }
+                                if let Ok(sse_chunk) = serde_json::from_str::<SseChunk>(data) {
+                                    if let Some(choices) = sse_chunk.choices {
+                                        for choice in choices {
+                                            if let Some(delta) = choice.delta {
+                                                if let Some(text) = delta.content {
+                                                    on_event_clone(StreamEvent::Token(text));
+                                                }
                                             }
                                         }
                                     }
-                                }
-                            } else if let Some(text) = parse_anthropic_sse_event(data) {
-                                if text == "__DONE__" {
-                                    done = true;
-                                } else if !text.is_empty() {
-                                    on_event_clone(StreamEvent::Token(text));
+                                } else if let Some(text) = parse_anthropic_sse_event(data) {
+                                    if text == "__DONE__" {
+                                        done = true;
+                                    } else if !text.is_empty() {
+                                        on_event_clone(StreamEvent::Token(text));
+                                    }
                                 }
                             }
+                            buffer.clear();
+                        } else {
+                            buffer.push(ch);
                         }
-                        buffer.clear();
-                    } else {
-                        buffer.push(ch);
+                    }
+                    if done {
+                        break;
                     }
                 }
-                if done {
-                    break;
-                }
-            }
 
-            // Handle any remaining partial line (no trailing newline)
-            if !buffer.is_empty() && buffer.starts_with("data: ") {
-                let data = &buffer[6..];
-                if data.trim() == "[DONE]" {
-                    done = true;
-                } else if let Ok(sse_chunk) = serde_json::from_str::<SseChunk>(data) {
-                    if let Some(choices) = sse_chunk.choices {
-                        for choice in choices {
-                            if let Some(delta) = choice.delta {
-                                if let Some(text) = delta.content {
-                                    on_event_clone(StreamEvent::Token(text));
-                                }
-                            }
-                        }
-                    }
-                } else if let Some(text) = parse_anthropic_sse_event(data) {
-                    if text == "__DONE__" {
+                // Handle any remaining partial line (no trailing newline)
+                if !buffer.is_empty() && buffer.starts_with("data: ") {
+                    let data = &buffer[6..];
+                    if data.trim() == "[DONE]" {
                         done = true;
-                    } else if !text.is_empty() {
-                        on_event_clone(StreamEvent::Token(text));
+                    } else if let Ok(sse_chunk) = serde_json::from_str::<SseChunk>(data) {
+                        if let Some(choices) = sse_chunk.choices {
+                            for choice in choices {
+                                if let Some(delta) = choice.delta {
+                                    if let Some(text) = delta.content {
+                                        on_event_clone(StreamEvent::Token(text));
+                                    }
+                                }
+                            }
+                        }
+                    } else if let Some(text) = parse_anthropic_sse_event(data) {
+                        if text == "__DONE__" {
+                            done = true;
+                        } else if !text.is_empty() {
+                            on_event_clone(StreamEvent::Token(text));
+                        }
                     }
                 }
-            }
 
-            if !done {
-                on_event_clone(StreamEvent::Done);
-            }
-            Ok(())
-        })
-        .await;
+                if !done {
+                    on_event_clone(StreamEvent::Done);
+                }
+                Ok(())
+            })
+            .await;
 
         match result {
             Ok(inner_result) => inner_result,
@@ -633,119 +633,124 @@ impl OrchestratorEngine {
         let api_key = self.api_key.clone();
         let on_event_clone = on_event;
 
-        let result = tokio_handle().spawn(async move {
-            let resp = http_client
-                .post(&endpoint)
-                .header("Authorization", format!("Bearer {api_key}"))
-                .header("Content-Type", "application/json")
-                .send()
-                .await
-                .context("HTTP request failed")
-                .map_err(AiError::from)?;
+        let result = tokio_handle()
+            .spawn(async move {
+                let resp = http_client
+                    .post(&endpoint)
+                    .header("Authorization", format!("Bearer {api_key}"))
+                    .header("Content-Type", "application/json")
+                    .send()
+                    .await
+                    .context("HTTP request failed")
+                    .map_err(AiError::from)?;
 
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let text = resp.text().await.unwrap_or_default();
-                return Err(AiError::ApiError(format!("HTTP {status}: {text}")));
-            }
+                if !resp.status().is_success() {
+                    let status = resp.status();
+                    let text = resp.text().await.unwrap_or_default();
+                    return Err(AiError::ApiError(format!("HTTP {status}: {text}")));
+                }
 
-            let mut stream = resp.bytes_stream();
-            let mut buffer = String::new();
-            let mut done = false;
-            let mut tool_calls: Vec<(String, serde_json::Value)> = Vec::new();
+                let mut stream = resp.bytes_stream();
+                let mut buffer = String::new();
+                let mut done = false;
+                let mut tool_calls: Vec<(String, serde_json::Value)> = Vec::new();
 
-            while let Some(chunk) = stream.next().await {
-                let chunk = match chunk {
-                    Ok(c) => c,
-                    Err(e) => {
-                        on_event_clone(StreamEvent::Error(format!("stream error: {e}")));
-                        break;
-                    }
-                };
+                while let Some(chunk) = stream.next().await {
+                    let chunk = match chunk {
+                        Ok(c) => c,
+                        Err(e) => {
+                            on_event_clone(StreamEvent::Error(format!("stream error: {e}")));
+                            break;
+                        }
+                    };
 
-                for byte in chunk {
-                    if byte == b'\n' {
-                        if buffer.starts_with("data: ") {
-                            let data = &buffer[6..];
-                            if data.trim() == "[DONE]" {
-                                done = true;
-                                buffer.clear();
-                                continue;
-                            }
-                            if let Ok(sse_chunk) = serde_json::from_str::<SseChunkWithTools>(data) {
-                                if let Some(choices) = sse_chunk.choices {
-                                    for choice in choices {
-                                        if let Some(ref delta) = choice.delta {
-                                            // Content tokens
-                                            if let Some(ref text) = delta.content {
-                                                on_event_clone(StreamEvent::Token(text.clone()));
-                                            }
-                                            // Tool calls
-                                            for (name, args) in parse_sse_tool_calls(delta) {
-                                                on_event_clone(StreamEvent::ToolCall(
-                                                    name.clone(),
-                                                    args.clone(),
-                                                ));
-                                                tool_calls.push((name, args));
+                    for byte in chunk {
+                        if byte == b'\n' {
+                            if buffer.starts_with("data: ") {
+                                let data = &buffer[6..];
+                                if data.trim() == "[DONE]" {
+                                    done = true;
+                                    buffer.clear();
+                                    continue;
+                                }
+                                if let Ok(sse_chunk) =
+                                    serde_json::from_str::<SseChunkWithTools>(data)
+                                {
+                                    if let Some(choices) = sse_chunk.choices {
+                                        for choice in choices {
+                                            if let Some(ref delta) = choice.delta {
+                                                // Content tokens
+                                                if let Some(ref text) = delta.content {
+                                                    on_event_clone(StreamEvent::Token(
+                                                        text.clone(),
+                                                    ));
+                                                }
+                                                // Tool calls
+                                                for (name, args) in parse_sse_tool_calls(delta) {
+                                                    on_event_clone(StreamEvent::ToolCall(
+                                                        name.clone(),
+                                                        args.clone(),
+                                                    ));
+                                                    tool_calls.push((name, args));
+                                                }
                                             }
                                         }
                                     }
-                                }
-                            } else if let Some(text) = parse_anthropic_sse_event(data) {
-                                if text == "__DONE__" {
-                                    done = true;
-                                } else if !text.is_empty() {
-                                    on_event_clone(StreamEvent::Token(text));
+                                } else if let Some(text) = parse_anthropic_sse_event(data) {
+                                    if text == "__DONE__" {
+                                        done = true;
+                                    } else if !text.is_empty() {
+                                        on_event_clone(StreamEvent::Token(text));
+                                    }
                                 }
                             }
+                            buffer.clear();
+                        } else {
+                            buffer.push(byte as char);
                         }
-                        buffer.clear();
-                    } else {
-                        buffer.push(byte as char);
+                    }
+                    if done {
+                        break;
                     }
                 }
-                if done {
-                    break;
-                }
-            }
 
-            // Handle remaining partial line
-            if !buffer.is_empty() && buffer.starts_with("data: ") {
-                let data = &buffer[6..];
-                if data.trim() == "[DONE]" {
-                    done = true;
-                } else if let Ok(sse_chunk) = serde_json::from_str::<SseChunkWithTools>(data) {
-                    if let Some(choices) = sse_chunk.choices {
-                        for choice in choices {
-                            if let Some(ref delta) = choice.delta {
-                                if let Some(ref text) = delta.content {
-                                    on_event_clone(StreamEvent::Token(text.clone()));
-                                }
-                                for (name, args) in parse_sse_tool_calls(delta) {
-                                    on_event_clone(StreamEvent::ToolCall(
-                                        name.clone(),
-                                        args.clone(),
-                                    ));
-                                    tool_calls.push((name, args));
-                                }
-                            }
-                        }
-                    }
-                } else if let Some(text) = parse_anthropic_sse_event(data) {
-                    if text == "__DONE__" {
+                // Handle remaining partial line
+                if !buffer.is_empty() && buffer.starts_with("data: ") {
+                    let data = &buffer[6..];
+                    if data.trim() == "[DONE]" {
                         done = true;
-                    } else if !text.is_empty() {
-                        on_event_clone(StreamEvent::Token(text));
+                    } else if let Ok(sse_chunk) = serde_json::from_str::<SseChunkWithTools>(data) {
+                        if let Some(choices) = sse_chunk.choices {
+                            for choice in choices {
+                                if let Some(ref delta) = choice.delta {
+                                    if let Some(ref text) = delta.content {
+                                        on_event_clone(StreamEvent::Token(text.clone()));
+                                    }
+                                    for (name, args) in parse_sse_tool_calls(delta) {
+                                        on_event_clone(StreamEvent::ToolCall(
+                                            name.clone(),
+                                            args.clone(),
+                                        ));
+                                        tool_calls.push((name, args));
+                                    }
+                                }
+                            }
+                        }
+                    } else if let Some(text) = parse_anthropic_sse_event(data) {
+                        if text == "__DONE__" {
+                            done = true;
+                        } else if !text.is_empty() {
+                            on_event_clone(StreamEvent::Token(text));
+                        }
                     }
                 }
-            }
 
-            if !done {
-                on_event_clone(StreamEvent::Done);
-            }
-            Ok(tool_calls)
-        })
-        .await;
+                if !done {
+                    on_event_clone(StreamEvent::Done);
+                }
+                Ok(tool_calls)
+            })
+            .await;
 
         match result {
             Ok(inner_result) => inner_result,

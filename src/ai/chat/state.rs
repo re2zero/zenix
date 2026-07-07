@@ -43,6 +43,14 @@ pub enum AiChatAction {
     ToggleProviderDropdown,
     ToggleThinkingDropdown,
     SelectThinkingLevel(ThinkingLevel),
+    // ── Keyboard shortcuts (Phase 7.2) ──────────────────────────
+    /// Esc: stop streaming or clear input.
+    Escape,
+    /// Ctrl+L: clear all messages (keeps session).
+    ClearChat,
+    /// ↑/↓: navigate input history (Alt+Up/Down already bound at app level).
+    HistoryPrev,
+    HistoryNext,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

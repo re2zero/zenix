@@ -5,8 +5,7 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, div, px, svg,
 };
 use gpui_component::{
-    Theme,
-    h_flex,
+    Theme, h_flex,
     input::{Input, InputState},
     scroll::ScrollableElement as _,
     v_flex,
@@ -78,21 +77,19 @@ pub(super) fn render_input_bar(
         div()
             .relative()
             .child(model_btn)
-            .child(
-                gpui::deferred(
-                    div()
-                        .absolute()
-                        .bottom(px(26.))
-                        .left(px(-4.))
-                        .bg(bg)
-                        .border_1()
-                        .border_color(border)
-                        .rounded_md()
-                        .shadow_md()
-                        .p(px(4.))
-                        .child(render_model_dropdown(data, theme, on_action.clone())),
-                ),
-            )
+            .child(gpui::deferred(
+                div()
+                    .absolute()
+                    .bottom(px(26.))
+                    .left(px(-4.))
+                    .bg(bg)
+                    .border_1()
+                    .border_color(border)
+                    .rounded_md()
+                    .shadow_md()
+                    .p(px(4.))
+                    .child(render_model_dropdown(data, theme, on_action.clone())),
+            ))
             .into_any_element()
     } else {
         model_btn
@@ -109,21 +106,19 @@ pub(super) fn render_input_bar(
         div()
             .relative()
             .child(thinking_btn)
-            .child(
-                gpui::deferred(
-                    div()
-                        .absolute()
-                        .bottom(px(26.))
-                        .right(px(0.))
-                        .bg(bg)
-                        .border_1()
-                        .border_color(border)
-                        .rounded_md()
-                        .shadow_md()
-                        .p(px(4.))
-                        .child(render_thinking_dropdown(data, theme, on_action.clone())),
-                ),
-            )
+            .child(gpui::deferred(
+                div()
+                    .absolute()
+                    .bottom(px(26.))
+                    .right(px(0.))
+                    .bg(bg)
+                    .border_1()
+                    .border_color(border)
+                    .rounded_md()
+                    .shadow_md()
+                    .p(px(4.))
+                    .child(render_thinking_dropdown(data, theme, on_action.clone())),
+            ))
             .into_any_element()
     } else {
         thinking_btn
@@ -193,13 +188,15 @@ pub(super) fn render_input_bar(
                 .justify_between()
                 .items_center()
                 .px(px(4.))
-                .child(super::txt(px(10.)).text_color(mu).child(
-                    if data.is_streaming {
-                        "streaming · Esc 中止"
-                    } else {
-                        "Enter 发送 · Shift+Enter 换行 · ↑↓ 历史"
-                    },
-                ))
+                .child(
+                    super::txt(px(10.))
+                        .text_color(mu)
+                        .child(if data.is_streaming {
+                            "streaming · Esc 中止"
+                        } else {
+                            "Enter 发送 · Shift+Enter 换行 · ↑↓ 历史"
+                        }),
+                )
                 .child(
                     super::txt(px(10.))
                         .text_color(mu)
@@ -291,17 +288,11 @@ pub(super) fn render_model_dropdown(
                             cx,
                         )
                     })
-                    .child(
-                        div()
-                            .w(px(4.))
-                            .h(px(4.))
-                            .rounded_full()
-                            .bg(if is_selected {
-                                accent
-                            } else {
-                                gpui::transparent_black()
-                            }),
-                    )
+                    .child(div().w(px(4.)).h(px(4.)).rounded_full().bg(if is_selected {
+                        accent
+                    } else {
+                        gpui::transparent_black()
+                    }))
                     .child(
                         super::txt(px(11.))
                             .text_color(if is_selected { fg } else { mu })
@@ -414,17 +405,11 @@ pub(super) fn render_thinking_dropdown(
                 .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                     on_select(AiChatAction::SelectThinkingLevel(lvl), window, cx)
                 })
-                .child(
-                    div()
-                        .w(px(4.))
-                        .h(px(4.))
-                        .rounded_full()
-                        .bg(if is_selected {
-                            accent
-                        } else {
-                            gpui::transparent_black()
-                        }),
-                )
+                .child(div().w(px(4.)).h(px(4.)).rounded_full().bg(if is_selected {
+                    accent
+                } else {
+                    gpui::transparent_black()
+                }))
                 .child(
                     super::txt(px(12.))
                         .text_color(if is_selected { fg } else { mu })

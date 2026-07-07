@@ -262,7 +262,11 @@ fn suggestion_chip(
         .on_mouse_down(MouseButton::Left, move |_, window, cx| {
             on_click(AiChatAction::SuggestionClick(label_str.clone()), window, cx)
         })
-        .child(super::txt(px(13.)).text_color(accent).child(icon.to_string()))
+        .child(
+            super::txt(px(13.))
+                .text_color(accent)
+                .child(icon.to_string()),
+        )
         .child(
             super::txt(px(12.))
                 .text_color(fg)

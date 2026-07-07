@@ -4,13 +4,12 @@
 //! ChatMessage and renders a foldable card showing agent_name / status /
 //! summary. Reuses the same visual language as `agent_block.rs`.
 
-use gpui::{
-    AnyElement, IntoElement, ParentElement as _, Styled as _, div, px,
-    prelude::FluentBuilder as _,
-};
-use gpui_component::{Theme, h_flex, v_flex};
 use crate::ai::markdown;
 use crate::ai::session::ChatMessage;
+use gpui::{
+    AnyElement, IntoElement, ParentElement as _, Styled as _, div, prelude::FluentBuilder as _, px,
+};
+use gpui_component::{Theme, h_flex, v_flex};
 
 struct ToolMeta {
     agent_name: String,
@@ -35,10 +34,7 @@ fn parse_meta(msg: &ChatMessage) -> ToolMeta {
                 .and_then(|n| n.as_str())
                 .unwrap_or("unknown")
                 .to_string(),
-            summary: v
-                .get("summary")
-                .and_then(|n| n.as_str())
-                .map(String::from),
+            summary: v.get("summary").and_then(|n| n.as_str()).map(String::from),
             is_running: v
                 .get("is_running")
                 .and_then(|n| n.as_bool())
@@ -98,7 +94,11 @@ pub(super) fn render(msg: &ChatMessage, theme: &Theme, group_count: Option<usize
                     h_flex()
                         .gap(px(4.))
                         .items_center()
-                        .child(super::txt(px(11.)).text_color(status_color).child(status_icon))
+                        .child(
+                            super::txt(px(11.))
+                                .text_color(status_color)
+                                .child(status_icon),
+                        )
                         .child(super::txt(px(11.)).text_color(mu).child(label)),
                 )
                 .when_some(group_count, |this, count| {

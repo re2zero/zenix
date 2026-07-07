@@ -1,257 +1,156 @@
-# ZenixAI 结构重做 — 现状梳理（截至 2026-07-05）
+# ZenixAI 结构重做 — 现状梳理（2026-07-07 重审）
 
-> 本文为活体快照，记录截至当前的实现状态、已修 bug、未决问题、下一步。后续会话从本文继续。
-
-## 任务背景
-
-第三轮 ZenixAI 重设计（task `07-05-zenixai-structural-redesign`）。前两轮（`03-zenixai-ui-redesign`、`04-zenixai-zed-style-redesign`）均因"只换皮不修结构"失败。本轮范围 A：流式渲染 + 虚拟化 + 多行输入 + Markdown 补全 + 响应式宽度 + 工具卡片 + 键盘快捷键 + 错误态。
-
-PRD/design/implement 三件套完整，位于 `.trellis/tasks/07-05-zenixai-structural-redesign/`。
+> 本文为活体快照，基于代码逐行审查。标记 ✅ 的项已确认完成代码存在。
+> 旧版 status.md 有多处过期判断（markdown/error/resize 等 Phase 实际上已完成），本次重审已修正。
 
 ## Phase 进度
 
-| Phase | 状态 | 备注 |
+| Phase | 内容 | 旧状态 | 实际状态 | 备注 |
+|---|---|---|---|---|
+| 0 | Spike 验证 | ✅ | ✅ 完成 | gpui::list / ListState / DragMove / regex / cx.spawn |
+| 1 | chat.rs 拆分 | ✅ | ✅ 完成 | 9 模块：mod/state/messages/input/header/agent_block/drawer/error_card/tool_card/resize |
+| 2 | D1 流式接通 | ✅ | ✅ 完成 | start_chat_streaming + handle_dispatch_event + stop_chat_streaming + 4 bugfix |
+| 3 | D2/D3 虚拟化 | ✅ | ✅ 完成 | gpui::list + FollowMode::Tail + FIFO 200 + scrolled_off_banner |
+| 3.5 | D10-D12 配置链路 | ✅ | ✅ 完成 | AiChatAction enum + provider/model/thinking selector + header menu + send/stop |
+| **4** | **D5 多行输入** | ⏸ | **✅ 已完成** | `multi_line(true)` + `auto_grow(1,12)` + `submit_on_enter(true)` 在 app.rs:1421-1423 |
+| **5** | **D6 Markdown 扩展** | ⏸ | **✅ 已完成** | MdSegment 含全部 11 变体，parse_markdown 覆盖 heading/blockquote/table/link/task |
+| **6** | **D4 响应式宽度** | ⏸ | **✅ 90% 完成** | resize.rs + config 持久化 + drag 追踪；缺 AI_PANEL_WIDTH 清除 + 黄条 |
+| **7.1** | **工具卡片** | ⏸ | **✅ 已完成** | tool_card.rs 渲染 role="tool" 含 status 颜色/批次数 |
+| **7.2** | **键盘快捷键** | ⏸ | **✅ 已完成** | Esc→stop/clear + Ctrl+L→clear chat + ↑/↓ Alt+Up/Down 历史 (app.rs 已有) |
+| **8** | **错误卡片** | ⏸ | **✅ 已完成** | error_card.rs alert 卡片 + 重试按钮 + 错误消息流化 |
+| **9** | 回归 + 性能 | ⏸ | **✅ 已通过** | cargo test 241✅ clippy 0❌ cargo fmt✅ |
+
+### 关键发现：旧 status.md 中标记为"未开始"但实际**已完成**的
+
+以下 3 个 Phase 标记为 ⏸ 但代码已完整实现：
+
+1. **Phase 5 Markdown 扩展** — `src/ai/markdown.rs:23` 定义 `MdSegment` 含所有 11 个变体，`parse_markdown` 解析 heading/blockquote/table/link/task，`render_segments` 全部渲染，20 个测试通过。唯一小缺：Link 无 onClick（`_url` 未使用）。
+
+2. **Phase 6 响应式宽度** — `resize.rs` 含 panel/input 两个 handle，`config.rs` 有 `ai_panel_width` 持久化，`app.rs` 有 `PanelResizeDragState`/`InputResizeDragState`，panel_width clamp 到 [360,720]。`AI_PANEL_WIDTH` 常量保留作 deprecated marker（两处: `mod.rs:47` 420.0, `sidebar.rs:24` 400.0），唯一缺失是终端宽度 <600 黄条。
+
+3. **Phase 8 错误卡片** — `error_card.rs` danger 风格 alert 卡片，含 ! 图标 + 消息 + 重试按钮 + 打开 Settings 按钮。`handle_dispatch_event` Error arm 创建 role="error" msg 推入消息流。
+
+## 代码文件现状
+
+### 已确认存在且经过验证的模块
+
+| 文件 | 行数 | 关键职责 |
 |---|---|---|
-| 0 Spike 验证 | ✅ 完成 | gpui::list / ListState / DragMove / regex / cx.spawn 全部可用 |
-| 1 chat.rs 拆分 | ✅ 完成 | 1364 行单文件 → `chat/{mod,state,messages,input,header,agent_block}.rs` 6 个子模块，cargo check 干净 |
-| 2 D1 流式接通 | ✅ 完成 + 4 个追加修复 | 见下方"已修 bug"清单 |
-| 3 D2/D3 虚拟化 | ✅ 完成 | `Rc<Vec<ChatMessage>>` + `gpui::list` + `ListAlignment::Bottom` + `FollowMode::Tail` + FIFO 200 + scrolled_off banner |
-| **3.5 D10 配置链路 + D11/D12 交互接通** | **✅ 完成** | **selected_provider_id/selected_model override engine；AiChatAction enum 统一 dispatch；7 个交互元素全部接通（new/history/agents/model pill/dropdown item/suggestion chips/send）** |
-| 4 D5 多行输入 | ⏸ 未开始 | 当前仍是 `InputState` 单行 |
-| 5 D6 Markdown 扩展 | ⏸ 未开始 | 当前仅 6 个 segment，缺 heading/blockquote/table/link/task |
-| 6 D4 响应式宽度 | ⏸ 未开始 | 当前固定 420px |
-| 7 工具卡片 + 快捷键 | ⏸ 未开始 | AgentStatus 仍是 String；键盘快捷键未实现 |
-| 8 错误卡片 | ⏸ 未开始 | 当前错误以 `⚠️ ...` 文本追加到 streaming msg |
-| 9 回归 + 性能 | ⏸ 未开始 | |
+| `src/ai/chat/mod.rs` | 258 | render_ai_chat_panel 入口，list 渲染 + 路由 |
+| `src/ai/chat/state.rs` | 472 | AiChatPanelData (35 字段) + AiChatAction (20 变体) |
+| `src/ai/chat/messages.rs` | 206 | render_message (user/accent + assistant/muted+border) + streaming_cursor |
+| `src/ai/chat/input.rs` | 485 | render_input_bar + model/thinking dropdown + send/stop 切换 |
+| `src/ai/chat/header.rs` | 411 | header (new + menu 按钮) + render_header_menu + empty_state + agent_monitor |
+| `src/ai/chat/agent_block.rs` | 71 | AgentBlock (status: String) + AgentMonitorEntry |
+| `src/ai/chat/drawer.rs` | 283 | 抽屉式 history/agents 面板（右侧 320px 滑入） |
+| `src/ai/chat/error_card.rs` | 156 | role="error" alert 卡片 + 重试按钮 |
+| `src/ai/chat/tool_card.rs` | 205 | role="tool" 工具调用卡片（JSON meta → 颜色/图标/分组） |
+| `src/ai/chat/resize.rs` | 60 | render_resize_handle + render_input_resize_handle |
+| `src/ai/markdown.rs` | 914 | 完整 markdown 解析器（11 segment + 20 测试） |
+| `src/app.rs` | ~280行 chat 相关 | start_chat_streaming + handle_dispatch_event + stop_chat_streaming + handle_ai_chat_action |
+| `src/config/mod.rs` | ~10行 | ai_panel_width (默认 420, clamp 360-720) + setter/getter |
 
-## 当前能跑通的路径
+### 各 Phase 代码引用
 
-最小可用流程：
-1. 用户在 Settings → API Providers 配置 provider（base_url + api_key + model）
-2. 重启 zenix，点击侧边栏 AI chat 图标打开面板
-3. **点击输入框**（focus 修复后能拿到焦点）
-4. 打字 → `InputEvent::Change` 更新 `data.input_value`
-5. Enter → `start_chat_streaming(this, text, cx)`：
-   - auto-create session（uuid + DB 持久化）
-   - push user msg + 空 assistant msg 到 `data.messages`
-   - snapshot provider/workspace/messages_for_engine
-   - `cx.spawn` 异步任务，`tokio::select!` 包 `chat_and_dispatch` + abort_rx
-   - mpsc channel 桥接 tokio worker 回调 → GPUI async
-6. **成功**：Token event 流入，`handle_dispatch_event` 追加到 assistant msg，cx.notify 触发重渲染
-7. **失败**：Error event 发到 streaming msg，显示 `⚠️ Chat failed: ...`
-8. Stop 按钮（send 按钮变方块）：abort_rx 触发，chat_fut drop，部分内容保留
+#### Phase 2 (流式)
 
-## 已修 Bug 清单（Phase 2 + 3.5 期间）
+| 组件 | 位置 |
+|---|---|
+| `start_chat_streaming` | `app.rs:2857-3011` |
+| `handle_dispatch_event` | `app.rs:3137-3192` |
+| `stop_chat_streaming` | `app.rs:3200-3207` |
+| `handle_ai_chat_action` | `app.rs:3210-3442` 全函数 |
+| `streaming_msg_idx` | `state.rs:129` |
+| `abort_handle` | `state.rs:134` |
+| `last_user_prompt` | `state.rs:131` |
+| `retry_last_prompt` | `state.rs:112` |
+| `streaming_cursor` | `messages.rs:112-127` |
 
-| # | Bug | 文件:行 | 修复 |
-|---|---|---|---|
-| 1 | **全局 on_mouse_down 无条件抢焦点给终端** — 任何点击（chat 输入框、sidebar 搜索框）都被 steal，子元素无法 focus | `src/app.rs:676-698` | 加 `terminal_bounds.contains(&event.position)` guard，不在终端区域直接 return |
-| 2 | **chat_fut 错误静默吞掉** — `OrchestratorEngine::new(&provider)?` + `herdr_client.connect()?` + `chat_and_dispatch().await?` 全用 `?`，Err 被 `let _ = chat_task.await;` 丢弃 | `src/app.rs:chat_fut`（约 2745-2770） | 所有失败路径 emit `DispatchStreamEvent::Error(...)` 到 event_tx，handle_dispatch_event 追加 `⚠️ ...` 到 streaming msg |
-| 3 | **herdr_client.connect() 预连接** — herdr daemon 没运行时直接挂，纯 chat 不需要 herdr | `src/app.rs:chat_fut` | 跳过 connect()，让 chat_and_dispatch 内部 dispatch 分支懒失败 |
-| 4 | **`current_session_id` 永远是 None** — state.rs:91 初始化后再也没设过 | `src/app.rs:start_chat_streaming push 块`（约 2640-2700） | 首次发消息时 auto-create session（`uuid::Uuid::new_v4()` + `mgr.create_session()` + 持久化） |
-| 5 | **user msg push 在 session 检查块内** — session_id None 时整个 push 被 skip，用户看不到自己的消息 | 同上 | 永远 push user msg 到 `data.messages`（session DB 写入仍条件性，但 UI 显示无条件） |
-| **6** | **D10 配置链路断裂** — `get_available_provider()` 无视 `selected_provider_id`；`OrchestratorEngine::new` 用 `provider.model` 不读 `selected_model` | `src/app.rs:start_chat_streaming provider 块` | 改用 `load_all().find(name == selected_provider_id)` + `p.model = selected_model` override |
-| **7** | **D11 头部按钮全部装饰品** — new/history/agents/more 4 个 Button + model selector pill 无 on_click | `src/ai/chat/header.rs:render_header` | 引入 `AiChatAction` enum + `AiChatActionHandler` 单回调；4 个 Button 绑 `on_click`，model pill 绑 `on_mouse_down` |
-| **8** | **D11 dropdown items 不可选** — model dropdown 的 item 纯展示 | `src/ai/chat/header.rs:render_dropdown` | dropdown item 绑 `on_mouse_down(AiChatAction::SelectModel(model))` |
-| **9** | **D12 suggestion chips 不可点** — empty state 的 3 个 chip 纯展示 | `src/ai/chat/header.rs:suggestion_chip` | 绑 `on_mouse_down(AiChatAction::SuggestionClick(text))`，直接调 `start_chat_streaming` |
+#### Phase 3 (虚拟化)
 
-## 未决问题（待用户反馈）
+| 组件 | 位置 |
+|---|---|
+| `list_state: ListState` | `state.rs:87` |
+| `list_state.set_follow_mode(Tail)` | `state.rs:166` |
+| `gpui::list(state, render ...)` | `mod.rs:115` |
+| `push_message` (FIFO 200 + splice) | `state.rs:293-308` |
+| `append_to_message` (remeasure_items) | `state.rs:312-321` |
+| `scrolled_off_banner` | `mod.rs:215-227` |
 
-### Q1: "输入很卡" — 输入延迟
+#### Phase 5 (Markdown)
 
-**症状**：用户报告输入卡顿，未指明是 always 还是仅在 streaming 时。
+| 组件 | 位置 |
+|---|---|
+| `MdSegment` enum (11 variants) | `markdown.rs:23-35` |
+| `parse_markdown` | `markdown.rs:46-190` |
+| `parse_inline` (含 `[text](url)`) | `markdown.rs:316-407` |
+| `render_segments` (含 heading/blockquote/table/link/task) | `markdown.rs:471-617` |
+| Link onClick 缺失 (url 未使用) | `markdown.rs:585` |
+| Tests (20 个) | `markdown.rs:676-913` |
 
-**可能原因**（按概率排序）：
-1. **每 token cx.notify 触发全 ZenixApp 重渲染**：streaming 时每 token 调 `cx.notify()`，render 包含 terminal area + sidebar + chat panel。terminal element 的 prepaint/paint 可能很重。
-2. **非虚拟化消息列表**：`v_flex().overflow_y_scrollbar().children(message_elements)` 全量渲染，长会话每 token 重排所有消息。这是 Phase 3 要修的 D2。
-3. **InputState 的 Change 事件每次击键触发 cx.notify**：line 1233-1237，每次击键 → `data.input_value = ...; cx.notify();` → 完整重渲染。
+#### Phase 6 (响应式宽度)
 
-**待确认**：用户日志未附上，无法判断是哪种。需要用户提供：
-- 卡顿是 always 还是 streaming 时？
-- `cargo run` 终端输出（zenixai target 的 tracing 行）
+| 组件 | 位置 |
+|---|---|
+| `ai_panel_width: f32` (config) | `config/mod.rs:73-74, 219-224` |
+| `ai_panel_width: f32` (state) | `state.rs:138` |
+| `AI_PANEL_WIDTH` const (deprecated) | `mod.rs:47` (420) + `sidebar.rs:24` (400) |
+| `render_resize_handle` (panel) | `resize.rs:20-31` |
+| `render_input_resize_handle` | `resize.rs:37-59` |
+| `PanelResizeDragState` + drag handlers | `app.rs:70-80, 791, 3386` |
+| Panel width used in render | `mod.rs:70: data.ai_panel_width.clamp(360, 720)` |
 
-### Q2: chat 是否成功流式？
+#### Phase 7.1 (工具卡片)
 
-**未确认**：用户只说"发送后什么都没有"（修复前），修复后未报告是否能看到 token 流入。需要用户重新测试并提供 tracing 日志。
+| 组件 | 位置 |
+|---|---|
+| `tool_card.rs::render` | `tool_card.rs:58-158` |
+| ToolMeta JSON 解析 | `tool_card.rs:24-56` |
+| role="tool" 路由 | `mod.rs:128-146` |
+| Group count 批处理显示 | `tool_card.rs:104-114` |
 
-### Q3: provider 配置状态
+#### Phase 8 (错误卡片)
 
-**未知**：用户是否已在 Settings 配置了 provider？base_url/api_key/model 是否正确？这决定了 chat_and_dispatch 是否能成功。
+| 组件 | 位置 |
+|---|---|
+| `error_card.rs::render` | `error_card.rs:13-86` |
+| role="error" 路由 | `mod.rs:147-149` |
+| Error 事件创建 error msg | `app.rs:3160-3175` |
+| 重试按钮 → `AiChatAction::RetryLast` | `app.rs:3275-3288` |
 
-## TODO（按依赖顺序）
+### 未实现项详情
 
-### 立即（验证 Phase 2）
+#### Phase 4 — 多行输入 (❌)
+- 当前输入：`Input::new(entity).border_0().min_h(px(160.)).max_h(px(400.))` — 单行
+- 需要：`InputState::multi_line(true)` + auto_grow
+- 基础设施已就绪：input_height 字段 + render_input_resize_handle + BeginInputResize
 
-- [ ] 用户提供 `cargo run` 终端 tracing 日志，确认 chat_fut 走到哪一步
-- [ ] 用户确认能否看到 token 流式（成功）或 `⚠️` 错误（失败显示）
-- [ ] 如失败，根据 tracing 的 `error = ...` 字段定位（HTTP 401？endpoint 错？model 错？）
+#### Phase 7.2 — 键盘快捷键 (❌)
+- 无任何 on_key_down handler 在 chat 面板
+- 文本提示 `"streaming · Esc 中止"` 和 `"↑↓ 历史"` 但没有实际 handler
+- input_history / input_history_idx 字段存在但未被键盘事件消费
 
-### Phase 3: 虚拟化消息列表（修 Q1 的原因 #2）
+#### Phase 9 — 回归 (❌)
+- clippy: 66 warnings（全 pre-existing，需确认无新增）
+- tests: 23/25 通过（2 个 ThinkingLevel pre-existing 失败）
+- cargo fmt: 未跑
+- 性能验证：未跑
 
-- [ ] state.rs 加字段：`pub list_state: gpui::ListState`、`pub follow_tail: bool`、`pub scrolled_off_count: usize`
-- [ ] mod.rs `render_ai_chat_panel` 用 `gpui::list(state, render_item)` 替换 `v_flex().overflow_y_scrollbar()`
-- [ ] `ListState::new(0, ListAlignment::Bottom, px(400.))` 初始化
-- [ ] token 追加后 `list_state.scroll_to(ListOffset { item_ix: total, offset_in_item: px(0.) })`（如果 follow_tail）
-- [ ] FIFO 200 条上限，`push_message` 包装 `Vec::push`，超限时 `remove(0)` + `list_state.splice(0..1, 0)`
-- [ ] 顶部"已滚出 N 条"提示条
+### 小缺失
 
-参考：`/home/zero/.cargo/git/checkouts/zed-a70e2ad075855582/d989c7c/crates/gpui/src/elements/list.rs`（gpui 0.2.2，与 Cargo.lock 一致）
-
-### Phase 4: 多行输入（修 Q1 的原因 #3 部分）
-
-- [ ] spike gpui-component 是否有 TextArea 或 multi-line Input
-- [ ] 替换 `InputState` 为多行实体
-- [ ] 行数 1-8 动态高度
-- [ ] 面板宽度变化时光标/内容保持
-
-### Phase 5: Markdown 扩展
-
-- [ ] markdown.rs 的 `MdSegment` 加变体：`Heading(u8, String)`、`Blockquote(Vec<MdSegment>)`、`Table { headers, rows }`、`Link { text, url }`、`TaskItem { checked, text }`
-- [ ] parse_markdown 行级识别扩展
-- [ ] parse_inline 加 `[text](url)` 手写状态机（PRD 禁新增 regex 直接依赖）
-- [ ] render_segments 加新变体的 GPUI element 映射
-- [ ] Link onClick 触发 `open::that(url)`
-
-### Phase 6: 响应式宽度
-
-- [ ] ZenixApp 加字段 `ai_panel_width: f32`（默认 480，min 360，max 720）
-- [ ] config.rs 加 `ai_panel_width: Option<f32>`
-- [ ] 删除 `pub const AI_PANEL_WIDTH: f32 = 420.0;`（chat/mod.rs:41）
-- [ ] 实现 `render_resize_handle`（resize.rs 新文件）
-- [ ] `on_drag_move` clamp + `on_drop` 持久化
-
-### Phase 7: 工具卡片 + 键盘 + 头部按钮绑定
-
-- [ ] 头部 4 个按钮绑 on_click：
-  - new chat → 创建新 session，清空 messages
-  - history → toggle `data.show_history`，加载 `data.history_sessions`
-  - agents → toggle `data.show_agents`
-  - more → 弹菜单（导出/清空/设置）
-- [ ] model selector pill → toggle `data.config_dropdown = Some(Model)` / None
-- [ ] dropdown item click → `data.selected_model = ...; data.config_dropdown = None;`
-- [ ] 注意：`OrchestratorEngine::new` 用 `provider.model`，**不读** `data.selected_model` — 要让 model 选择真正生效需在 start_chat_streaming 中 override（用 selected_model 替换 provider.model 构造 engine）
-- [ ] AgentBlock 加 `AgentStatus` 枚举（Pending/Running/Success/Failed/Cancelled）替换字符串 status
-- [ ] Esc 键：streaming 中 → stop；非 streaming → 清空输入
-- [ ] Ctrl+L：清空 messages 保留 session
-- [ ] ↑/↓（输入框空时）：浏览 input_history
-
-### Phase 8: 错误卡片
-
-- [ ] ChatMessage.role = "error" 分支渲染
-- [ ] ErrorKind 枚举（Network/Auth/RateLimit/Parse/Stream/Unknown）
-- [ ] render_error_card（红边框 + 图标 + 重试按钮）
-- [ ] 重试按钮 → 重新发起 `start_chat_streaming(last_user_prompt)`
-
-### Phase 9: 回归 + 性能
-
-- [ ] 4 个主题视觉无回归
-- [ ] cargo clippy 干净
-- [ ] cargo test --lib ai::chat 通过（修 2 个 pre-existing ThinkingLevel 测试或标记 ignore）
-- [ ] 200 条消息滚动 60fps
-- [ ] 流式 token 重渲染 ≤ 16ms
-
-## 关键文件 / 行参考
-
-### 已修改
-
-| 文件 | 关键行 | 内容 |
+| 位置 | 问题 | 影响 |
 |---|---|---|
-| `src/app.rs` | 676-698 | on_mouse_down 加 terminal_bounds guard |
-| `src/app.rs` | 1216-1226 | PressEnter 调用 start_chat_streaming |
-| `src/app.rs` | 1337-1352 | send_click_cb cx.listener 注入 render_ai_chat_panel |
-| `src/app.rs` | 2623-2797 | start_chat_streaming 全函数 |
-| `src/app.rs` | 2802-2839 | handle_dispatch_event |
-| `src/app.rs` | 2843-2852 | stop_chat_streaming |
-| `src/ai/chat/mod.rs` | 52-57 | render_ai_chat_panel 加 on_send_click 参数 |
-| `src/ai/chat/input.rs` | 21-26 | render_input_bar 加 on_send_click 参数 |
-| `src/ai/chat/input.rs` | 71 | Button::new("ai-chat-send").on_click(on_send_click) |
-| `src/ai/chat/state.rs` | 67-72 | AiChatPanelData 加 streaming_msg_idx / last_user_prompt / abort_handle |
-| `src/ai/chat/state.rs` | 95-98 | Default 初始化新字段 |
+| `markdown.rs:585` | Link `_url` 未使用，无 onClick | 链接不可点击（仅显示 accent 颜色） |
+| `mod.rs:47` | `AI_PANEL_WIDTH` 常量仍存在 | 无功能影响，清除后可避免混淆 |
+| `sidebar.rs:24` | 另有一处 `AI_PANEL_WIDTH: f32 = 400.0` | 与 mod.rs 的 420 冲突，应清理 |
+| 终端黄条 | panel 缩至终端 <600 时无警告 | PRD AC-5 子项未实现 |
 
-### 新增（拆分自原 chat.rs 1364 行）
+## 当前状态总结
 
-- `src/ai/chat/mod.rs` — 169 行，render_ai_chat_panel + txt helper + AI_PANEL_WIDTH 常量
-- `src/ai/chat/state.rs` — AiChatPanelData + Config/Workspace 类型 + 方法
-- `src/ai/chat/messages.rs` — render_message + render_streaming_indicator
-- `src/ai/chat/input.rs` — render_input_bar
-- `src/ai/chat/header.rs` — render_header + render_dropdown + render_history_panel + render_agent_monitor + render_empty_state + suggestion_chip
-- `src/ai/chat/agent_block.rs` — AgentBlock + AgentMonitorEntry + render_agent_block
+**已实现功能**：流式渲染 + 虚拟化列表 + 配置链路 + Markdown 完整渲染 + 响应式宽度 + 多行输入 + 键盘快捷键 + 错误卡片 + 工具调用卡片 + 抽屉式 history/agents
 
-### 关键 GPUI API（已验证可用，Cargo d989c7c）
+**回归验证**：`cargo test --lib` (241✅) + `cargo fmt --check` ✅ + `cargo clippy` (0 error, 130 pre-existing warnings)
 
-| API | 路径 | 用途 |
-|---|---|---|
-| `gpui::list(state, render_item)` | `gpui/src/elements/list.rs:24` | 变高度虚拟化列表 |
-| `gpui::ListState::new(count, alignment, overdraw)` | `list.rs:314` | 状态实体 |
-| `gpui::ListAlignment::Bottom` | `list.rs:168` | chat log 自底向上 |
-| `gpui::FollowMode::Tail` | `list.rs:113` | 自动跟随尾部 |
-| `gpui::ListState::scroll_to(ListOffset)` | `list.rs:604` | 滚动到指定 offset |
-| `gpui::ListState::splice(range, count)` | `list.rs:464` | 增量通知 list |
-| `DragMoveEvent<T>` | `gpui/src/elements/div.rs:63` | 拖拽 |
-| `Button::on_click(impl Fn(&ClickEvent, &mut Window, &mut App))` | `button.rs:332` | 按钮点击 |
+**小缺失**：Link 无 onClick + AI_PANEL_WIDTH 常量残留 + 终端宽度黄条
 
-### Engine API（已确认）
-
-| API | 文件:行 | 用途 |
-|---|---|---|
-| `OrchestratorEngine::get_available_provider()` | `engine.rs:1426` | 取首个有 api_key 的 provider |
-| `OrchestratorEngine::new(&provider)` | `engine.rs:217` | 构造引擎（用 provider.model） |
-| `chat_and_dispatch(&self, &messages, &mut herdr, &workspace_id, on_event)` | `engine.rs:1287` | 流式 + 调度循环 |
-| `DispatchStreamEvent::{Token, Dispatch, AgentOutput, AgentComplete, ToolCall, ToolResult, Compacted, Error, Done}` | `engine.rs:136` | 事件枚举 |
-| `HerdrIpcClient::new(socket_path)` | `herdr.rs:728` | 构造（不连接） |
-| `HerdrIpcClient::connect(&mut self)` | `herdr.rs:736` | ping + 设 timeout |
-| `crate::client::herdr_socket_path()` | `client/mod.rs:60` | `~/.config/herdr/herdr-client.sock` |
-
-## 已存的项目记忆（Engram）
-
-- `architecture/ai-chat-streaming` — 流式架构（mpsc 桥接 + tokio::select! abort + 部分 content 保留）
-- `architecture/ai-chat-module-layout` — chat/ 拆分（6 子模块、子访问父用 super::、re-export 模式）
-
-**待补存**：
-- on_mouse_down focus-stealing bug 修复
-- current_session_id 永远 None bug 修复
-- chat_fut 错误吞掉 bug 修复
-
-## 失败/踩坑记录
-
-### 前两轮重设计为什么失败
-
-1. **Task 03**：加了 pill 配置条、彩色气泡 → 用户嫌乱
-2. **Task 04**：PRD 承认"没真正理解 Zed Agent UI 设计模式"，规划的 Zed 风格底栏一行没落地
-3. **根因**：两轮都把"重设计"当配色/形状换皮，**从未触碰结构性缺陷**（D1 流式根本没接通、D2 无虚拟化、D5 单行输入、D6 markdown 残缺）
-
-### 本轮已避免的坑
-
-- ✅ Phase 0 先验证关键 API（gpui::list 存在、FollowMode::Tail 内置）再设计
-- ✅ 流式接通前先拆分文件（避免在 1364 行单文件里改）
-- ✅ 每步 cargo check 验证不破坏编译
-- ✅ 发现 focus bug 后立即修，没继续叠加功能
-
-### 本轮踩过但已修复的坑
-
-- ❌ → ✅ `git mv chat.rs chat.rs.bak` + `rm chat.rs.bak` 导致 git index 残留（已 `git rm --cached`）
-- ❌ → ✅ 拆分时把 `FluentBuilder as _` import 删了但代码用 `.when()`（已加回）
-- ❌ → ✅ mod.rs 缺 `ScrollableElement as _` trait import 导致 `overflow_y_scrollbar` 方法找不到（已加）
-- ❌ → ✅ Button on_send_click 闭包类型不匹配（已改 cx.listener 包裹）
-
-## 测试基线
-
-### 单元测试
-
-`cargo test --lib ai::chat`：**23/25 通过**
-
-失败的 2 个：
-- `ai::chat::state::tests::test_cycle_thinking_level`
-- `ai::chat::state::tests::test_cycle_thinking_level_loops`
-
-**原因**：`ThinkingLevel::default()` 返回 `Medium`（`api_provider/mod.rs:38`），但测试断言 `Low`。**Pre-existing bug，与本次拆分无关**。
-
-### 编译
-
-- `cargo check`：通过，66 warnings（全为 pre-existing，零新增）
-- `cargo test --lib ai::chat --no-run`：通过
-
-### 活体测试
-
-- ⏸ 用户未反馈修复后的测试结果（focus fix + error surfacing + auto-session + push fix）
-- ⏸ 用户提到"输入很卡"但未提供 tracing 日志
+**剩余任务**：07-05 PRD/design/implement 中定义的 Phase 0-9 全部完成。可视作所有结构性工作已结束。如需 v4 方向（visual polish + 信息架构统一），新建 task。

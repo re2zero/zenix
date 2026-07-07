@@ -710,7 +710,12 @@ impl ZenixApp {
         write_to_pty(&self.backend, &mut self.tab, vec![0x09]);
     }
 
-    fn on_chat_history_up(&mut self, _: &ChatHistoryUp, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_chat_history_up(
+        &mut self,
+        _: &ChatHistoryUp,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.navigate_chat_history(HistoryDir::Up, window, cx);
     }
 
@@ -784,8 +789,7 @@ impl ZenixApp {
                 Panel::SystemInfo => self.system_info_width,
                 Panel::None => 0.0,
             };
-            let panel_left_edge: f32 =
-                f32::from(bounds.size.width) - sidebar::SIDEBAR_WIDTH - pw;
+            let panel_left_edge: f32 = f32::from(bounds.size.width) - sidebar::SIDEBAR_WIDTH - pw;
             let click_x: f32 = f32::from(event.position.x);
             if (click_x - panel_left_edge).abs() < 4.0 {
                 self.panel_resize_drag = Some(PanelResizeDragState {
@@ -831,8 +835,10 @@ impl ZenixApp {
         if let Some(ref drag) = self.input_resize_drag {
             let cursor_y: f32 = f32::from(event.position.y);
             let delta = cursor_y - drag.start_y;
-            let new_height = (drag.start_height - delta)
-                .clamp(crate::ai::chat::resize::MIN_INPUT_HEIGHT, crate::ai::chat::resize::MAX_INPUT_HEIGHT);
+            let new_height = (drag.start_height - delta).clamp(
+                crate::ai::chat::resize::MIN_INPUT_HEIGHT,
+                crate::ai::chat::resize::MAX_INPUT_HEIGHT,
+            );
             if let Some(ref mut data) = self.ai_chat_panel {
                 data.input_height = new_height;
             }
@@ -1207,10 +1213,12 @@ impl Render for ZenixApp {
             Panel::AiChat => self
                 .ai_chat_panel
                 .as_ref()
-                .map(|d| d.ai_panel_width.clamp(
-                    crate::ai::chat::resize::MIN_PANEL_WIDTH,
-                    crate::ai::chat::resize::MAX_PANEL_WIDTH,
-                ))
+                .map(|d| {
+                    d.ai_panel_width.clamp(
+                        crate::ai::chat::resize::MIN_PANEL_WIDTH,
+                        crate::ai::chat::resize::MAX_PANEL_WIDTH,
+                    )
+                })
                 .unwrap_or(sidebar::AI_PANEL_WIDTH),
             Panel::SystemInfo => self.system_info_width,
             Panel::None => 0.0,
@@ -1393,33 +1401,32 @@ impl Render for ZenixApp {
             }));
         // Expanded panel (conditionally shown) — SystemInfo or AiChat, Settings is a dialog
         let panel: Option<gpui::AnyElement> = match self.active_panel {
-            Panel::SystemInfo => {
-                Some(
-                    sidebar::system_info_panel(&theme, &self.system_info, self.system_info_width)
-                        .into_any_element(),
-                )
-            }
+            Panel::SystemInfo => Some(
+                sidebar::system_info_panel(&theme, &self.system_info, self.system_info_width)
+                    .into_any_element(),
+            ),
             Panel::AiChat => {
                 // Check if there is at least one configured API Provider.
                 // If none, show a friendly placeholder instead of a blank panel.
                 if !crate::ai::engine::OrchestratorEngine::has_available_provider() {
                     Some(render_ai_config_empty(&theme).into_any_element())
                 } else {
-                    let data = self
-                        .ai_chat_panel
-                        .get_or_insert_with(|| {
-                            let mut d = crate::ai::chat::AiChatPanelData::new();
-                            d.ai_panel_width = self.config.ai_panel_width().clamp(360.0, 720.0);
-                            d.input_height = self.config.ai_input_height().clamp(60.0, 400.0);
-                            d
-                        });
+                    let data = self.ai_chat_panel.get_or_insert_with(|| {
+                        let mut d = crate::ai::chat::AiChatPanelData::new();
+                        d.ai_panel_width = self.config.ai_panel_width().clamp(360.0, 720.0);
+                        d.input_height = self.config.ai_input_height().clamp(60.0, 400.0);
+                        d
+                    });
                     // Lazy-create the InputState entity for the chat input.
                     if self.chat_input_entity.is_none() {
                         let input = cx.new(|cx| {
                             gpui_component::input::InputState::new(window, cx)
-                                .placeholder("Ask anything, dispatch agents, or type / for commands")
+                                .placeholder(
+                                    "Ask anything, dispatch agents, or type / for commands",
+                                )
                                 .multi_line(true)
                                 .auto_grow(1, 12)
+                                .submit_on_enter(true)
                         });
                         // Subscribe to input events: Enter sends, Escape clears focus.
                         cx.subscribe(&input, {
@@ -3273,14 +3280,11 @@ fn handle_ai_chat_action(
             cx.notify();
         }
         AiChatAction::RetryLast => {
-            let prompt = this
-                .ai_chat_panel
-                .as_ref()
-                .and_then(|d| {
-                    d.retry_last_prompt
-                        .clone()
-                        .or_else(|| d.last_user_prompt.clone())
-                });
+            let prompt = this.ai_chat_panel.as_ref().and_then(|d| {
+                d.retry_last_prompt
+                    .clone()
+                    .or_else(|| d.last_user_prompt.clone())
+            });
             if let Some(prompt) = prompt {
                 start_chat_streaming(this, prompt, cx);
             } else {
@@ -3400,6 +3404,48 @@ fn handle_ai_chat_action(
                 this.config.set_ai_input_height(data.input_height);
                 let _ = this.config.save();
             }
+        }
+        AiChatAction::Escape => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                if data.is_streaming {
+                    stop_chat_streaming(this, cx);
+                } else {
+                    // Clear input, close menus/dropdowns/drawers
+                    data.input_value.clear();
+                    data.header_menu_open = false;
+                    data.config_dropdown = None;
+                    data.drawer = None;
+                    if let Some(input) = this.chat_input_entity.as_ref() {
+                        input.update(cx, |state, cx| {
+                            state.set_value("", window, cx);
+                        });
+                    }
+                }
+            }
+            cx.notify();
+        }
+        AiChatAction::ClearChat => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                let list_state = gpui::ListState::new(0, gpui::ListAlignment::Bottom, px(400.));
+                list_state.set_follow_mode(gpui::FollowMode::Tail);
+                data.messages = std::rc::Rc::new(Vec::new());
+                data.list_state = list_state;
+                data.scrolled_off_count = 0;
+                data.streaming_msg_idx = None;
+                data.is_streaming = false;
+                data.agent_blocks.clear();
+                data.next_block_id = 0;
+                data.config_dropdown = None;
+                data.header_menu_open = false;
+                // Keep current_session_id and current_session_title
+            }
+            cx.notify();
+        }
+        AiChatAction::HistoryPrev => {
+            this.navigate_chat_history(HistoryDir::Up, window, cx);
+        }
+        AiChatAction::HistoryNext => {
+            this.navigate_chat_history(HistoryDir::Down, window, cx);
         }
     }
 }

@@ -196,3 +196,67 @@ AiChatAction::SelectModel(model) => {
 ```
 
 **Where**: `src/app.rs` `handle_ai_chat_action` — `SelectModel`, `SelectProvider`, `SelectThinkingLevel`.
+
+---
+
+## Convention: `submit_on_enter(true)` required for multi-line input Enter-to-send
+
+**What**: a multi-line InputState with `.multi_line(true).auto_grow(1, N)` alone does NOT make Enter send the message. By default, Enter inserts a newline and only Shift+Enter fires `PressEnter`. To get the expected chat UX (Enter=send, Shift+Enter=newline), chain `.submit_on_enter(true)`.
+
+```rust
+// Correct — Enter sends, Shift+Enter newlines
+let input = cx.new(|cx| {
+    gpui_component::input::InputState::new(window, cx)
+        .multi_line(true)
+        .auto_grow(1, 12)
+        .submit_on_enter(true)   // <-- required for Enter→send
+});
+```
+
+**Where**: `src/app.rs` (InputState construction at line ~1418).
+
+---
+
+## Pattern: panel keyboard shortcuts via `on_key_down` + `AiChatAction`
+
+**Problem**: adding keyboard shortcuts (Esc, Ctrl+L, ↑/↓) to the AI chat panel requires capturing key events on the panel element, dispatching through the existing `AiChatAction` dispatch chain.
+
+**Solution**:
+1. Add variant(s) to `AiChatAction` enum in `state.rs`
+2. Attach `.on_key_down(...)` to the panel root div in `mod.rs`
+3. Handle the new variants in `handle_ai_chat_action` in `app.rs`
+
+```rust
+// state.rs — add variant
+pub enum AiChatAction {
+    // ...
+    Escape,
+    ClearChat,
+}
+
+// mod.rs — attach handler to panel root div
+.on_key_down(move |event: &KeyDownEvent, window, cx| {
+    let key = &event.keystroke.key;
+    let modifiers = &event.keystroke.modifiers;
+    if key.eq_ignore_ascii_case("escape") {
+        on_action(AiChatAction::Escape, window, cx);
+        cx.stop_propagation();
+    } else if key.eq_ignore_ascii_case("l") && modifiers.control {
+        on_action(AiChatAction::ClearChat, window, cx);
+        cx.stop_propagation();
+    }
+})
+
+// app.rs — handle
+AiChatAction::Escape => {
+    if data.is_streaming { stop_chat_streaming(this, cx); }
+    else { /* clear input, close menus */ }
+}
+AiChatAction::ClearChat => {
+    /* clear messages, keep session_id */
+}
+```
+
+**GPUI gotcha**: `Modifiers.control` is a struct field (`modifiers.control`), not a method (`modifiers.control()`). No parentheses.
+
+**Where**: `src/ai/chat/state.rs` (AiChatAction), `src/ai/chat/mod.rs` (on_key_down), `src/app.rs` (handle_ai_chat_action).

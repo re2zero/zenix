@@ -35,7 +35,7 @@ pub use state::{
 };
 
 use gpui::{
-    Entity, InteractiveElement as _, IntoElement, ParentElement as _,
+    Entity, InteractiveElement as _, IntoElement, KeyDownEvent, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, div, px,
 };
 use gpui_component::{Theme, input::InputState, v_flex};
@@ -67,10 +67,10 @@ pub fn render_ai_chat_panel(
 
     let has_messages = !data.messages.is_empty();
 
-    let panel_width = data.ai_panel_width.clamp(
-        resize::MIN_PANEL_WIDTH,
-        resize::MAX_PANEL_WIDTH,
-    );
+    let panel_width = data
+        .ai_panel_width
+        .clamp(resize::MIN_PANEL_WIDTH, resize::MAX_PANEL_WIDTH);
+    let panel_key_action = on_action.clone();
     let mut panel = div()
         .id("ai-chat-panel")
         .relative()
@@ -81,7 +81,18 @@ pub fn render_ai_chat_panel(
         .flex_col()
         .bg(bg)
         .border_l_1()
-        .border_color(border);
+        .border_color(border)
+        .on_key_down(move |event: &KeyDownEvent, window, cx| {
+            let key = &event.keystroke.key;
+            let modifiers = &event.keystroke.modifiers;
+            if key.eq_ignore_ascii_case("escape") {
+                panel_key_action(AiChatAction::Escape, window, cx);
+                cx.stop_propagation();
+            } else if key.eq_ignore_ascii_case("l") && modifiers.control {
+                panel_key_action(AiChatAction::ClearChat, window, cx);
+                cx.stop_propagation();
+            }
+        });
 
     panel = panel.child(header::render_header(data, theme, on_action.clone()));
 
@@ -134,11 +145,7 @@ pub fn render_ai_chat_panel(
                                 count += 1;
                                 j += 1;
                             }
-                            if count > 1 {
-                                Some(count)
-                            } else {
-                                None
-                            }
+                            if count > 1 { Some(count) } else { None }
                         } else {
                             None
                         };

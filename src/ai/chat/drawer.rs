@@ -4,7 +4,7 @@ use gpui::{
     AnyElement, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, Styled as _,
     div, hsla, px,
 };
-use gpui_component::{scroll::ScrollableElement as _, Theme, h_flex, v_flex};
+use gpui_component::{Theme, h_flex, scroll::ScrollableElement as _, v_flex};
 
 use crate::ai::session::Session;
 

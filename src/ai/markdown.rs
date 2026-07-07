@@ -10,10 +10,8 @@
 //! Output is a `Vec<AnyElement>` (GPUI segments) suitable for rendering
 //! inside a chat bubble.
 
-use gpui::{
-    AnyElement, FontWeight, IntoElement, ParentElement as _, Styled as _, div, px,
-};
 use gpui::prelude::FluentBuilder as _;
+use gpui::{AnyElement, FontWeight, IntoElement, ParentElement as _, Styled as _, div, px};
 use gpui_component::{Theme, h_flex, v_flex};
 
 // ── Segment types ───────────────────────────────────────────────────────
@@ -29,7 +27,10 @@ pub enum MdSegment {
     ListItem(String),
     Heading(u8, String),
     Blockquote(String),
-    Table { headers: Vec<String>, rows: Vec<Vec<String>> },
+    Table {
+        headers: Vec<String>,
+        rows: Vec<Vec<String>>,
+    },
     Link(String, String),
     Task(bool, String),
 }
@@ -275,11 +276,7 @@ fn split_table_row(line: &str) -> Vec<String> {
 
 /// A table separator cell: only `-` and `:` allowed, at least one `-`.
 fn is_separator_cell(cell: &str) -> bool {
-    !cell.is_empty()
-        && cell
-            .chars()
-            .all(|c| c == '-' || c == ':')
-        && cell.contains('-')
+    !cell.is_empty() && cell.chars().all(|c| c == '-' || c == ':') && cell.contains('-')
 }
 
 /// Detect a table: current line contains `|` and next line is a separator.
@@ -594,7 +591,11 @@ fn render_segments(segments: &[MdSegment], theme: &Theme) -> Vec<AnyElement> {
                 h_flex()
                     .gap(px(8.))
                     .items_start()
-                    .child(txt(px(13.)).text_color(box_color).child(box_char.to_string()))
+                    .child(
+                        txt(px(13.))
+                            .text_color(box_color)
+                            .child(box_char.to_string()),
+                    )
                     .child(
                         txt(px(13.))
                             .text_color(fg)
@@ -605,7 +606,9 @@ fn render_segments(segments: &[MdSegment], theme: &Theme) -> Vec<AnyElement> {
             }
             MdSegment::Table { headers, rows } => {
                 let col_count = headers.len();
-                let mut grid = v_flex().gap(px(0.)).child(render_table_row(headers, true, theme));
+                let mut grid = v_flex()
+                    .gap(px(0.))
+                    .child(render_table_row(headers, true, theme));
                 for row in rows.iter() {
                     let padded = pad_row(row, col_count);
                     grid = grid.child(render_table_row(&padded, false, theme));
@@ -630,11 +633,7 @@ fn render_table_row(cells: &[String], is_header: bool, theme: &Theme) -> AnyElem
     let border = gpui::rgba(0xFFFFFF18);
     let header_bg = gpui::rgba(0xFFFFFF0C);
     let row = h_flex();
-    let row = if is_header {
-        row.bg(header_bg)
-    } else {
-        row
-    };
+    let row = if is_header { row.bg(header_bg) } else { row };
     let count = cells.len();
     let mut row = row;
     for (i, cell) in cells.iter().enumerate() {
@@ -888,9 +887,9 @@ mod tests {
     #[test]
     fn test_link() {
         let segments = parse_markdown("see [docs](https://example.com) now");
-        let has_link = segments
-            .iter()
-            .any(|s| matches!(s, MdSegment::Link(t, u) if t == "docs" && u == "https://example.com"));
+        let has_link = segments.iter().any(
+            |s| matches!(s, MdSegment::Link(t, u) if t == "docs" && u == "https://example.com"),
+        );
         assert!(has_link, "should parse link, got {:?}", segments);
     }
 
