@@ -361,7 +361,7 @@ pub(super) fn render_model_dropdown(
 
     v_flex()
         .absolute()
-        .bottom(px(54.))
+        .bottom(px(data.input_height + 20.))
         .left(px(12.))
         .w(px(220.))
         .max_h(px(320.))
@@ -432,7 +432,7 @@ pub(super) fn render_thinking_dropdown(
         .collect();
     v_flex()
         .absolute()
-        .bottom(px(54.))
+        .bottom(px(data.input_height + 20.))
         .right(px(12.))
         .w(px(140.))
         .bg(bg)

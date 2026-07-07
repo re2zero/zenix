@@ -67,67 +67,21 @@ pub fn render_ai_chat_panel(
 
     let has_messages = !data.messages.is_empty();
 
-    let panel_width = data.ai_panel_width.clamp(360.0, 720.0);
+    let panel_width = data.ai_panel_width.clamp(
+        resize::MIN_PANEL_WIDTH,
+        resize::MAX_PANEL_WIDTH,
+    );
     let mut panel = div()
         .id("ai-chat-panel")
         .relative()
         .w(px(panel_width))
+        .flex_none()
         .h_full()
         .flex()
         .flex_col()
         .bg(bg)
         .border_l_1()
-        .border_color(border)
-        .on_drag_move({
-            let on_action = on_action.clone();
-            move |ev: &gpui::DragMoveEvent<crate::ai::chat::resize::PanelResizeDrag>,
-                  window,
-                  cx| {
-                let drag = ev.drag(cx);
-                let cursor_x = f32::from(ev.event.position.x);
-                let new_width = crate::ai::chat::resize::compute_resized_width(drag, cursor_x);
-                on_action(
-                    crate::ai::chat::AiChatAction::ResizePanel(new_width),
-                    window,
-                    cx,
-                );
-            }
-        })
-        .on_drop({
-            let on_action = on_action.clone();
-            move |_drag: &crate::ai::chat::resize::PanelResizeDrag, window, cx| {
-                on_action(
-                    crate::ai::chat::AiChatAction::PersistPanelWidth,
-                    window,
-                    cx,
-                );
-            }
-        })
-        .on_drag_move({
-            let on_action = on_action.clone();
-            move |ev: &gpui::DragMoveEvent<crate::ai::chat::resize::InputResizeDrag>,
-                  window,
-                  cx| {
-                let drag = ev.drag(cx);
-                let cursor_y = f32::from(ev.event.position.y);
-                let new_height = crate::ai::chat::resize::compute_input_height(drag, cursor_y);
-                on_action(
-                    crate::ai::chat::AiChatAction::ResizeInput(new_height),
-                    window,
-                    cx,
-                );
-            }
-        })
-        .on_drop({
-            let on_action = on_action.clone();
-            move |_drag: &crate::ai::chat::resize::InputResizeDrag, window, cx| {
-                on_action(
-                    crate::ai::chat::AiChatAction::PersistInputHeight,
-                    window,
-                    cx,
-                );
-            }
-        });
+        .border_color(border);
 
     panel = panel.child(header::render_header(data, theme, on_action.clone()));
 
@@ -224,7 +178,7 @@ pub fn render_ai_chat_panel(
     };
     panel = panel.child(v_flex().flex_grow(1.0).min_h_0().child(content));
 
-    panel = panel.child(resize::render_input_resize_handle(data.input_height, theme));
+    panel = panel.child(resize::render_input_resize_handle(theme));
     panel = panel.child(input::render_input_bar(
         data,
         theme,
@@ -264,7 +218,7 @@ pub fn render_ai_chat_panel(
         )));
     }
 
-    panel = panel.child(resize::render_resize_handle(panel_width, theme));
+    panel = panel.child(resize::render_resize_handle(theme));
 
     panel
 }

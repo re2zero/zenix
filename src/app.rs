@@ -66,6 +66,24 @@ enum HistoryDir {
     Down,
 }
 
+/// Tracks an in-progress panel-resize drag when gpui's `on_drag` is unreliable.
+struct PanelResizeDragState {
+    /// Cursor X at drag start (window coords).
+    start_x: f32,
+    /// Panel width at drag start.
+    start_width: f32,
+    /// Which panel is being resized.
+    target: Panel,
+}
+
+/// Tracks an in-progress input-height resize drag.
+struct InputResizeDragState {
+    /// Cursor Y at drag start (window coords).
+    start_y: f32,
+    /// Input height at drag start.
+    start_height: f32,
+}
+
 pub struct ZenixApp {
     focus_handle: FocusHandle,
     backend: Option<BackendTx>,
@@ -133,6 +151,13 @@ pub struct ZenixApp {
     ai_chat_panel: Option<crate::ai::chat::AiChatPanelData>,
     chat_input_entity: Option<gpui::Entity<gpui_component::input::InputState>>,
     pending_clear_chat_input: bool,
+    /// Resizable width for the system-info panel (starts at default).
+    system_info_width: f32,
+    /// When `Some(start_x)`, a panel-resize drag is in progress.
+    /// We track this ourselves because gpui's `on_drag` does not reliably fire
+    /// on absolutely-positioned resize handles inside a flex layout.
+    panel_resize_drag: Option<PanelResizeDragState>,
+    input_resize_drag: Option<InputResizeDragState>,
     agent_polling: bool,
     pub cursor_visible: bool,
     single_instance_rx: Option<std::sync::mpsc::Receiver<crate::single_instance::Signal>>,
@@ -293,6 +318,9 @@ impl ZenixApp {
             ai_chat_panel: None,
             chat_input_entity: None,
             pending_clear_chat_input: false,
+            system_info_width: sidebar::PANEL_WIDTH,
+            panel_resize_drag: None,
+            input_resize_drag: None,
             agent_polling: false,
             single_instance_rx,
         };
@@ -394,7 +422,7 @@ impl ZenixApp {
                     }
                 }
                 BackendEvent::TitleChanged { title, .. } => {
-                    tracing::info!("terminal title: {title}");
+                    tracing::debug!("terminal title: {title}");
                 }
                 BackendEvent::Closed { reason, .. } => {
                     tracing::warn!("pty closed: {reason}");
@@ -743,6 +771,54 @@ impl ZenixApp {
         if self.show_settings {
             return;
         }
+
+        // Check if click starts an input-height resize inside the AI panel.
+        if self.active_panel == Panel::AiChat && event.button == MouseButton::Left {
+            let bounds = window.bounds();
+            let ih = self
+                .ai_chat_panel
+                .as_ref()
+                .map(|d| d.input_height)
+                .unwrap_or(160.0);
+            let handle_y: f32 = f32::from(bounds.size.height) - ih - 3.0;
+            let click_y: f32 = f32::from(event.position.y);
+            if (click_y - handle_y).abs() < 6.0 {
+                self.input_resize_drag = Some(InputResizeDragState {
+                    start_y: click_y,
+                    start_height: ih,
+                });
+                self.panel_resize_drag = None;
+                cx.stop_propagation();
+                return;
+            }
+        }
+
+        // Check if this click starts a panel resize (left edge of active panel).
+        if self.active_panel != Panel::None && event.button == MouseButton::Left {
+            let bounds = window.bounds();
+            let pw: f32 = match self.active_panel {
+                Panel::AiChat => self
+                    .ai_chat_panel
+                    .as_ref()
+                    .map(|d| d.ai_panel_width)
+                    .unwrap_or(sidebar::AI_PANEL_WIDTH),
+                Panel::SystemInfo => self.system_info_width,
+                Panel::None => 0.0,
+            };
+            let panel_left_edge: f32 =
+                f32::from(bounds.size.width) - sidebar::SIDEBAR_WIDTH - pw;
+            let click_x: f32 = f32::from(event.position.x);
+            if (click_x - panel_left_edge).abs() < 4.0 {
+                self.panel_resize_drag = Some(PanelResizeDragState {
+                    start_x: click_x,
+                    start_width: pw,
+                    target: self.active_panel,
+                });
+                cx.stop_propagation();
+                return;
+            }
+        }
+
         // Only route clicks to the terminal when they actually land inside the
         // terminal area. Without this guard, every click anywhere in the
         // window (including the chat panel) calls `window.focus(&self.focus_handle)`,
@@ -765,12 +841,49 @@ impl ZenixApp {
     fn on_mouse_move(
         &mut self,
         event: &MouseMoveEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.show_settings {
             return;
         }
+
+        // Handle input height resize drag.
+        if let Some(ref drag) = self.input_resize_drag {
+            let cursor_y: f32 = f32::from(event.position.y);
+            let delta = cursor_y - drag.start_y;
+            let new_height = (drag.start_height - delta)
+                .clamp(crate::ai::chat::resize::MIN_INPUT_HEIGHT, crate::ai::chat::resize::MAX_INPUT_HEIGHT);
+            if let Some(ref mut data) = self.ai_chat_panel {
+                data.input_height = new_height;
+            }
+            cx.notify();
+            return;
+        }
+
+        // Handle active panel resize drag.
+        if let Some(ref drag) = self.panel_resize_drag {
+            let cursor_x: f32 = f32::from(event.position.x);
+            let delta = cursor_x - drag.start_x;
+            use crate::ai::chat::resize::{
+                MAX_INPUT_HEIGHT, MAX_PANEL_WIDTH, MIN_INPUT_HEIGHT, MIN_PANEL_WIDTH,
+            };
+            let new_width = (drag.start_width - delta).clamp(MIN_PANEL_WIDTH, MAX_PANEL_WIDTH);
+            match drag.target {
+                Panel::AiChat => {
+                    if let Some(ref mut data) = self.ai_chat_panel {
+                        data.ai_panel_width = new_width;
+                    }
+                }
+                Panel::SystemInfo => {
+                    self.system_info_width = new_width;
+                }
+                Panel::None => {}
+            }
+            cx.notify();
+            return;
+        }
+
         if self.terminal_selecting {
             if event.pressed_button == Some(MouseButton::Left) {
                 if self.update_terminal_selection(event.position) {
@@ -795,6 +908,34 @@ impl ZenixApp {
         if self.show_settings {
             return;
         }
+
+        // End input height resize drag.
+        if self.input_resize_drag.take().is_some() {
+            if let Some(ref data) = self.ai_chat_panel {
+                self.config.set_ai_input_height(data.input_height);
+            }
+            cx.notify();
+            return;
+        }
+
+        // End panel resize drag.
+        if let Some(drag) = self.panel_resize_drag.take() {
+            match drag.target {
+                Panel::AiChat => {
+                    if let Some(ref data) = self.ai_chat_panel {
+                        self.config.set_ai_panel_width(data.ai_panel_width);
+                    }
+                }
+                Panel::SystemInfo => {
+                    // system_info_width persists in memory for the session;
+                    // config persistence added later if needed.
+                }
+                Panel::None => {}
+            }
+            cx.notify();
+            return;
+        }
+
         if self.terminal_selecting {
             self.terminal_selecting = false;
             cx.notify();
@@ -1084,8 +1225,15 @@ impl Render for ZenixApp {
         self.terminal_descent = descent;
         // Calculate available width for terminal (account for sidebar + panel)
         let panel_w = match self.active_panel {
-            Panel::AiChat => sidebar::AI_PANEL_WIDTH,
-            Panel::SystemInfo => sidebar::PANEL_WIDTH,
+            Panel::AiChat => self
+                .ai_chat_panel
+                .as_ref()
+                .map(|d| d.ai_panel_width.clamp(
+                    crate::ai::chat::resize::MIN_PANEL_WIDTH,
+                    crate::ai::chat::resize::MAX_PANEL_WIDTH,
+                ))
+                .unwrap_or(sidebar::AI_PANEL_WIDTH),
+            Panel::SystemInfo => self.system_info_width,
             Panel::None => 0.0,
         };
         let sidebar_w = sidebar::SIDEBAR_WIDTH + panel_w;
@@ -1267,7 +1415,10 @@ impl Render for ZenixApp {
         // Expanded panel (conditionally shown) — SystemInfo or AiChat, Settings is a dialog
         let panel: Option<gpui::AnyElement> = match self.active_panel {
             Panel::SystemInfo => {
-                Some(sidebar::system_info_panel(&theme, &self.system_info).into_any_element())
+                Some(
+                    sidebar::system_info_panel(&theme, &self.system_info, self.system_info_width)
+                        .into_any_element(),
+                )
             }
             Panel::AiChat => {
                 // Check if there is at least one configured API Provider.
@@ -1277,9 +1428,12 @@ impl Render for ZenixApp {
                 } else {
                     let data = self
                         .ai_chat_panel
-                        .get_or_insert_with(crate::ai::chat::AiChatPanelData::new);
-                    data.ai_panel_width = self.config.ai_panel_width().clamp(360.0, 720.0);
-                    data.input_height = self.config.ai_input_height().clamp(60.0, 400.0);
+                        .get_or_insert_with(|| {
+                            let mut d = crate::ai::chat::AiChatPanelData::new();
+                            d.ai_panel_width = self.config.ai_panel_width().clamp(360.0, 720.0);
+                            d.input_height = self.config.ai_input_height().clamp(60.0, 400.0);
+                            d
+                        });
                     // Lazy-create the InputState entity for the chat input.
                     if self.chat_input_entity.is_none() {
                         let input = cx.new(|cx| {
@@ -1564,70 +1718,6 @@ impl Render for ZenixApp {
             .on_mouse_up(MouseButton::Middle, cx.listener(Self::on_mouse_up))
             .on_mouse_up(MouseButton::Right, cx.listener(Self::on_mouse_up))
             .on_scroll_wheel(cx.listener(Self::on_scroll))
-            .on_drag_move({
-                let entity = cx.entity();
-                move |ev: &gpui::DragMoveEvent<crate::ai::chat::resize::PanelResizeDrag>,
-                      window,
-                      cx| {
-                    let drag = ev.drag(cx);
-                    let cursor_x = f32::from(ev.event.position.x);
-                    let new_width = crate::ai::chat::resize::compute_resized_width(drag, cursor_x);
-                    let _ = entity.update(cx, |this, cx| {
-                        handle_ai_chat_action(
-                            this,
-                            crate::ai::chat::AiChatAction::ResizePanel(new_width),
-                            window,
-                            cx,
-                        );
-                    });
-                }
-            })
-            .on_drop(
-                {
-                    let entity = cx.entity();
-                    move |_drag: &crate::ai::chat::resize::PanelResizeDrag, window, cx| {
-                        let _ = entity.update(cx, |this, cx| {
-                            handle_ai_chat_action(
-                                this,
-                                crate::ai::chat::AiChatAction::PersistPanelWidth,
-                                window,
-                                cx,
-                            );
-                        });
-                    }
-                },
-            )
-            .on_drag_move({
-                let entity = cx.entity();
-                move |ev: &gpui::DragMoveEvent<crate::ai::chat::resize::InputResizeDrag>,
-                      window,
-                      cx| {
-                    let drag = ev.drag(cx);
-                    let cursor_y = f32::from(ev.event.position.y);
-                    let new_height = crate::ai::chat::resize::compute_input_height(drag, cursor_y);
-                    let _ = entity.update(cx, |this, cx| {
-                        handle_ai_chat_action(
-                            this,
-                            crate::ai::chat::AiChatAction::ResizeInput(new_height),
-                            window,
-                            cx,
-                        );
-                    });
-                }
-            })
-            .on_drop({
-                let entity = cx.entity();
-                move |_drag: &crate::ai::chat::resize::InputResizeDrag, window, cx| {
-                    let _ = entity.update(cx, |this, cx| {
-                        handle_ai_chat_action(
-                            this,
-                            crate::ai::chat::AiChatAction::PersistInputHeight,
-                            window,
-                            cx,
-                        );
-                    });
-                }
-            })
             .child(div().flex_grow(1.0).h_full().child(terminal_area))
             .children(panel)
             .child(sidebar::sidebar(
@@ -3076,7 +3166,7 @@ fn handle_dispatch_event(
     };
     match event {
         DispatchStreamEvent::Token(text) => {
-            tracing::info!(
+            tracing::trace!(
                 target: "zenixai",
                 len = text.len(),
                 streaming_idx = ?data.streaming_msg_idx,
@@ -3113,7 +3203,7 @@ fn handle_dispatch_event(
         // handled (or deferred to later phases). Done is consumed by the
         // spawn loop's event_rx.recv() returning None after channel close.
         other => {
-            tracing::info!(
+            tracing::debug!(
                 target: "zenixai",
                 event = ?std::mem::discriminant(&other),
                 "other dispatch event"

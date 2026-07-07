@@ -96,7 +96,7 @@ fn icon_btn(id: &str, icon: &str, active: bool, cb: ThemeCallback) -> impl IntoE
 // System info panel
 // ═══════════════════════════════════════════════════════════════════════
 
-pub fn system_info_panel(theme: &Theme, info: &SystemInfo) -> impl IntoElement {
+pub fn system_info_panel(theme: &Theme, info: &SystemInfo, width: f32) -> impl IntoElement {
     let th = theme.clone();
     let ac = th.primary;
     let mu = th.muted_foreground;
@@ -118,12 +118,8 @@ pub fn system_info_panel(theme: &Theme, info: &SystemInfo) -> impl IntoElement {
         })
         .collect();
 
-    let mut panel = v_flex()
-        .w(px(PANEL_WIDTH))
-        .h_full()
-        .bg(th.background)
-        .border_l_1()
-        .border_color(th.border)
+    let mut content = v_flex()
+        .size_full()
         .p(px(16.))
         .gap(px(14.))
         .overflow_y_scrollbar()
@@ -190,7 +186,7 @@ pub fn system_info_panel(theme: &Theme, info: &SystemInfo) -> impl IntoElement {
 
     // Swap
     if info.swap_total_gb > 0.0 {
-        panel = panel.child(Separator::horizontal()).child(subsec(
+        content = content.child(Separator::horizontal()).child(subsec(
             &t("system.swap"),
             vec![progress_bar(
                 info.swap_percent,
@@ -210,7 +206,7 @@ pub fn system_info_panel(theme: &Theme, info: &SystemInfo) -> impl IntoElement {
             .iter()
             .map(|ni| net_iface(ni, mu))
             .collect();
-        panel = panel
+        content = content
             .child(Separator::horizontal())
             .child(subsec(&t("system.network"), rows));
     }
@@ -222,12 +218,37 @@ pub fn system_info_panel(theme: &Theme, info: &SystemInfo) -> impl IntoElement {
             .iter()
             .map(|dm| disk_mount(dm, mu))
             .collect();
-        panel = panel
+        content = content
             .child(Separator::horizontal())
             .child(subsec(&t("system.disk"), rows));
     }
 
-    panel
+    // Outer container needed for the absolutely-positioned resize handle.
+    div()
+        .relative()
+        .w(px(width))
+        .flex_none()
+        .h_full()
+        .child(
+            div()
+                .id("sysinfo-resize-handle")
+                .absolute()
+                .left(px(0.))
+                .top(px(0.))
+                .h_full()
+                .w(px(2.))
+                .cursor_col_resize()
+                .bg(th.border)
+                .hover(|style| style.bg(th.accent)),
+        )
+        .child(
+            v_flex()
+                .size_full()
+                .bg(th.background)
+                .border_l_1()
+                .border_color(th.border)
+                .child(content),
+        )
 }
 fn core_grid(data: &[(f32, gpui::Hsla)], theme: &Theme) -> AnyElement {
     if data.is_empty() {
