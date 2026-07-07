@@ -3302,8 +3302,6 @@ fn handle_ai_chat_action(
         AiChatAction::SelectProvider(name) => {
             if let Some(ref mut data) = this.ai_chat_panel {
                 data.selected_provider_id = name;
-                data.config_dropdown = None;
-                // Reset model discovery so the new provider's models are fetched.
                 data.available_models.clear();
                 data.selected_model.clear();
                 data.models_fetch_attempted = false;

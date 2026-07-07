@@ -25,6 +25,7 @@ pub(super) fn render_input_bar(
     on_action: AiChatActionHandler,
 ) -> AnyElement {
     let th = theme.clone();
+    let bg = th.background;
     let mu = th.muted_foreground;
     let border = th.border;
     let muted_bg = th.muted;
@@ -73,6 +74,30 @@ pub(super) fn render_input_bar(
         on_model,
         AiChatAction::ToggleModelDropdown,
     );
+    let model_btn_with_popover: AnyElement = if is_model_open {
+        div()
+            .relative()
+            .child(model_btn)
+            .child(
+                gpui::deferred(
+                    div()
+                        .absolute()
+                        .bottom(px(26.))
+                        .left(px(-4.))
+                        .bg(bg)
+                        .border_1()
+                        .border_color(border)
+                        .rounded_md()
+                        .shadow_md()
+                        .p(px(4.))
+                        .child(render_model_dropdown(data, theme, on_action.clone())),
+                ),
+            )
+            .into_any_element()
+    } else {
+        model_btn
+    };
+
     let thinking_btn = tool_button(
         thinking_label,
         is_thinking_open,
@@ -80,6 +105,29 @@ pub(super) fn render_input_bar(
         on_thinking,
         AiChatAction::ToggleThinkingDropdown,
     );
+    let thinking_btn_with_popover: AnyElement = if is_thinking_open {
+        div()
+            .relative()
+            .child(thinking_btn)
+            .child(
+                gpui::deferred(
+                    div()
+                        .absolute()
+                        .bottom(px(26.))
+                        .right(px(0.))
+                        .bg(bg)
+                        .border_1()
+                        .border_color(border)
+                        .rounded_md()
+                        .shadow_md()
+                        .p(px(4.))
+                        .child(render_thinking_dropdown(data, theme, on_action.clone())),
+                ),
+            )
+            .into_any_element()
+    } else {
+        thinking_btn
+    };
 
     let send_btn = div()
         .id("input-send")
@@ -126,8 +174,8 @@ pub(super) fn render_input_bar(
                     h_flex()
                         .gap(px(4.))
                         .items_center()
-                        .child(model_btn)
-                        .child(thinking_btn),
+                        .child(model_btn_with_popover)
+                        .child(thinking_btn_with_popover),
                 )
                 .child(send_btn),
         );
@@ -207,23 +255,10 @@ pub(super) fn render_model_dropdown(
     let th = theme.clone();
     let fg = th.foreground;
     let mu = th.muted_foreground;
-    let bg = th.background;
     let border = th.border;
     let accent = th.accent;
 
     let mut items: Vec<AnyElement> = Vec::new();
-
-    items.push(
-        div()
-            .px(px(10.))
-            .py(px(6.))
-            .child(
-                super::txt(px(10.))
-                    .text_color(mu)
-                    .child("Select a model..."),
-            )
-            .into_any_element(),
-    );
 
     if data.available_providers.len() > 1
         || (data.available_providers.len() == 1
@@ -338,40 +373,10 @@ pub(super) fn render_model_dropdown(
         }
     }
 
-    items.push(
-        h_flex()
-            .w_full()
-            .mt(px(2.))
-            .px(px(10.))
-            .py(px(6.))
-            .border_t_1()
-            .border_color(border)
-            .justify_between()
-            .child(super::txt(px(11.)).text_color(mu).child("Configure"))
-            .child(
-                h_flex()
-                    .px(px(4.))
-                    .py(px(1.))
-                    .rounded_sm()
-                    .bg(th.muted)
-                    .child(super::txt(px(9.)).text_color(mu).child("Ctrl-Alt-C")),
-            )
-            .into_any_element(),
-    );
-
     v_flex()
-        .absolute()
-        .bottom(px(data.input_height + 20.))
-        .left(px(12.))
         .w(px(220.))
         .max_h(px(320.))
         .overflow_y_scrollbar()
-        .bg(bg)
-        .border_1()
-        .border_color(border)
-        .rounded_md()
-        .shadow_md()
-        .p(px(4.))
         .gap(px(2.))
         .children(items)
         .into_any_element()
@@ -385,8 +390,6 @@ pub(super) fn render_thinking_dropdown(
     let th = theme.clone();
     let fg = th.foreground;
     let mu = th.muted_foreground;
-    let bg = th.background;
-    let border = th.border;
     let accent = th.accent;
     let levels = [
         (ThinkingLevel::Low, "low"),
@@ -431,16 +434,7 @@ pub(super) fn render_thinking_dropdown(
         })
         .collect();
     v_flex()
-        .absolute()
-        .bottom(px(data.input_height + 20.))
-        .right(px(12.))
         .w(px(140.))
-        .bg(bg)
-        .border_1()
-        .border_color(border)
-        .rounded_md()
-        .shadow_md()
-        .p(px(4.))
         .gap(px(2.))
         .child(
             super::txt(px(9.))

@@ -190,21 +190,6 @@ pub fn render_ai_chat_panel(
         on_action.clone(),
     ));
 
-    match data.config_dropdown {
-        Some(state::ConfigDropdownTarget::Model)
-        | Some(state::ConfigDropdownTarget::Provider) => {
-            panel = panel.child(gpui::deferred(
-                input::render_model_dropdown(data, theme, on_action.clone()),
-            ));
-        }
-        Some(state::ConfigDropdownTarget::Thinking) => {
-            panel = panel.child(gpui::deferred(
-                input::render_thinking_dropdown(data, theme, on_action.clone()),
-            ));
-        }
-        None => {}
-    }
-
     if data.header_menu_open {
         panel = panel.child(gpui::deferred(header::render_header_menu(
             data,
