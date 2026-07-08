@@ -238,8 +238,7 @@ impl RoleRegistry {
             return Ok(Vec::new());
         }
         let content = std::fs::read_to_string(&path).context("read roles.json")?;
-        let roles: Vec<RoleDef> =
-            serde_json::from_str(&content).context("parse roles.json")?;
+        let roles: Vec<RoleDef> = serde_json::from_str(&content).context("parse roles.json")?;
         Ok(roles)
     }
 
@@ -247,8 +246,7 @@ impl RoleRegistry {
     pub fn save(roles: &[RoleDef]) -> Result<()> {
         let dir = Self::roles_dir();
         std::fs::create_dir_all(&dir).context("create roles dir")?;
-        let content =
-            serde_json::to_string_pretty(roles).context("serialize roles")?;
+        let content = serde_json::to_string_pretty(roles).context("serialize roles")?;
         std::fs::write(Self::roles_json_path(), &content).context("write roles.json")?;
         Ok(())
     }
@@ -300,10 +298,12 @@ impl RoleRegistry {
             .with_context(|| format!("role '{role_id}' not found"))?;
 
         let path = Self::roles_dir().join(&role.template_file);
-        let content =
-            std::fs::read_to_string(&path).with_context(|| {
-                format!("read template file '{}' for role '{role_id}'", role.template_file)
-            })?;
+        let content = std::fs::read_to_string(&path).with_context(|| {
+            format!(
+                "read template file '{}' for role '{role_id}'",
+                role.template_file
+            )
+        })?;
         Ok(content)
     }
 

@@ -11,8 +11,8 @@ use gpui_component::{
     v_flex,
 };
 
-use crate::api_provider::ThinkingLevel;
 use crate::ai::workers::WorkerInstance;
+use crate::api_provider::ThinkingLevel;
 
 use super::state::{AiChatAction, AiChatActionHandler, AiChatPanelData, ConfigDropdownTarget};
 
@@ -177,7 +177,8 @@ pub(super) fn render_input_bar(
                 .child(send_btn),
         );
 
-    let mention = super::mention_popup::render_mention_popup(data, workers, theme, on_action.clone());
+    let mention =
+        super::mention_popup::render_mention_popup(data, workers, theme, on_action.clone());
 
     let bar = v_flex()
         .relative()

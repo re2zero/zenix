@@ -23,7 +23,11 @@ pub(super) fn render_message(msg: &ChatMessage, theme: &Theme, ctx: &RenderCtx) 
 
     let segments = markdown::render_markdown(&msg.content, theme);
     let body: AnyElement = if is_user {
-        v_flex().gap(px(2.)).w_full().children(segments).into_any_element()
+        v_flex()
+            .gap(px(2.))
+            .w_full()
+            .children(segments)
+            .into_any_element()
     } else {
         let mut container = v_flex().gap(px(2.)).w_full().children(segments);
         if ctx.is_streaming_tail {

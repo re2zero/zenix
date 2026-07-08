@@ -6,8 +6,8 @@ pub mod herdr;
 pub mod markdown;
 pub mod roles;
 pub mod session;
-pub mod workers;
 pub mod tools;
+pub mod workers;
 
 // Re-export compactor types for public API
 #[allow(unused_imports)]

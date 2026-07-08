@@ -63,7 +63,9 @@ pub fn render_mention_popup(
         return div().into_any_element();
     }
 
-    let selected_idx = data.mention_selected_idx.min(matching.len().saturating_sub(1));
+    let selected_idx = data
+        .mention_selected_idx
+        .min(matching.len().saturating_sub(1));
 
     let items: Vec<AnyElement> = matching
         .iter()
@@ -71,7 +73,10 @@ pub fn render_mention_popup(
         .map(|item| {
             let is_selected = item.abs_idx == selected_idx;
             let wn = item.worker_name.clone();
-            let dt = format!("{} — {} ({})", item.worker_name, item.cli_name, item.role_id);
+            let dt = format!(
+                "{} — {} ({})",
+                item.worker_name, item.cli_name, item.role_id
+            );
             let sc = match item.status_label.as_str() {
                 "running" => accent,
                 "starting" => mu,
@@ -90,7 +95,11 @@ pub fn render_mention_popup(
                 .rounded_md()
                 .cursor_pointer()
                 .hover(move |st| st.bg(list_hover))
-                .bg(if is_selected { th.list_hover } else { gpui::transparent_black() })
+                .bg(if is_selected {
+                    th.list_hover
+                } else {
+                    gpui::transparent_black()
+                })
                 .on_mouse_down(MouseButton::Left, {
                     let wn2 = wn.clone();
                     let cb2 = cb.clone();
@@ -100,7 +109,11 @@ pub fn render_mention_popup(
                     }
                 })
                 .child(div().w(px(6.)).h(px(6.)).rounded_full().bg(sc))
-                .child(super::txt(px(11.)).text_color(if is_selected { accent } else { fg }).child(dt))
+                .child(
+                    super::txt(px(11.))
+                        .text_color(if is_selected { accent } else { fg })
+                        .child(dt),
+                )
                 .into_any_element()
         })
         .collect();

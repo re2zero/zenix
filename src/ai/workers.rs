@@ -177,7 +177,10 @@ impl WorkerRegistry {
     pub fn cancel_by_pane(&self, pane_id: &str) {
         let mut inner = self.inner.lock().unwrap();
         if let Some(worker) = inner.workers.iter_mut().find(|w| w.pane_id == pane_id) {
-            if matches!(worker.status, WorkerStatus::Starting | WorkerStatus::Running) {
+            if matches!(
+                worker.status,
+                WorkerStatus::Starting | WorkerStatus::Running
+            ) {
                 worker.status = WorkerStatus::Cancelled;
             }
         }
@@ -239,7 +242,13 @@ mod tests {
     #[test]
     fn test_update_status() {
         let reg = make_registry();
-        let id = reg.register("w1".into(), "c".into(), "r".into(), "p1".into(), "t1".into());
+        let id = reg.register(
+            "w1".into(),
+            "c".into(),
+            "r".into(),
+            "p1".into(),
+            "t1".into(),
+        );
         reg.update_status(id, WorkerStatus::Running);
         assert_eq!(reg.get(id).unwrap().status, WorkerStatus::Running);
     }
@@ -247,7 +256,13 @@ mod tests {
     #[test]
     fn test_append_output() {
         let reg = make_registry();
-        reg.register("w1".into(), "c".into(), "r".into(), "p1".into(), "t1".into());
+        reg.register(
+            "w1".into(),
+            "c".into(),
+            "r".into(),
+            "p1".into(),
+            "t1".into(),
+        );
         reg.append_output("p1", "hello");
         reg.append_output("p1", " world");
         assert_eq!(reg.get_by_pane("p1").unwrap().output_history, "hello world");
@@ -268,7 +283,10 @@ mod tests {
         let reg = make_registry();
         reg.register("a".into(), "c".into(), "r".into(), "p1".into(), "t1".into());
         reg.cancel_by_pane("p1");
-        assert_eq!(reg.get_by_pane("p1").unwrap().status, WorkerStatus::Cancelled);
+        assert_eq!(
+            reg.get_by_pane("p1").unwrap().status,
+            WorkerStatus::Cancelled
+        );
     }
 
     #[test]

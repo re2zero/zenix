@@ -12,9 +12,7 @@ use gpui_component::{
 
 use crate::i18n::t;
 
-use super::state::{
-    AiChatAction, AiChatActionHandler, AiChatPanelData, ConfigDropdownTarget,
-};
+use super::state::{AiChatAction, AiChatActionHandler, AiChatPanelData, ConfigDropdownTarget};
 
 // ── Header ──────────────────────────────────────────────────────────────
 
@@ -80,8 +78,7 @@ pub(super) fn render_header(
                 ),
         );
 
-    let header = v_flex()
-        .child(header_bar);
+    let header = v_flex().child(header_bar);
 
     let header = header.child(render_workspace_bar(data, theme, on_action.clone()));
 
@@ -117,9 +114,7 @@ fn render_workspace_bar(
         .items_center()
         .px(px(12.))
         .py(px(4.))
-        .child(
-            svg().path("icons/folder.svg").size(px(10.)).text_color(mu),
-        )
+        .child(svg().path("icons/folder.svg").size(px(10.)).text_color(mu))
         .child(
             super::txt(px(10.))
                 .text_color(if workspace_bound { fg } else { mu })
@@ -311,7 +306,7 @@ pub(super) fn render_empty_state(
                         .font_weight(gpui::FontWeight::BOLD)
                         .text_color(accent)
                         .child("Z⚡"),
-                )
+                ),
         )
         .child(
             super::txt(px(17.))
