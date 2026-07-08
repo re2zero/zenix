@@ -150,6 +150,7 @@ pub struct ZenixApp {
     pending_confirm: Option<crate::ui::settings::PendingConfirm>,
     ai_chat_panel: Option<crate::ai::chat::AiChatPanelData>,
     chat_input_entity: Option<gpui::Entity<gpui_component::input::InputState>>,
+    worker_registry: crate::ai::workers::WorkerRegistry,
     pending_clear_chat_input: bool,
     /// Resizable width for the system-info panel (starts at default).
     system_info_width: f32,
@@ -317,6 +318,7 @@ impl ZenixApp {
             pending_confirm: None,
             ai_chat_panel: None,
             chat_input_entity: None,
+            worker_registry: crate::ai::workers::WorkerRegistry::new(),
             pending_clear_chat_input: false,
             system_info_width: sidebar::PANEL_WIDTH,
             panel_resize_drag: None,
@@ -517,6 +519,32 @@ impl ZenixApp {
             }
             self.launch_attempts = 1;
             self.status = t("status.waiting").replace("%{n}", "1");
+        }
+    }
+
+    fn fetch_workspaces(&self) -> Vec<crate::ai::chat::WorkspaceOption> {
+        let socket = crate::client::herdr_socket_path();
+        if !herdr::is_socket_ready(&socket) {
+            return Vec::new();
+        }
+        let mut client = crate::ai::herdr::HerdrIpcClient::new(socket);
+        match client.list_workspaces() {
+            Ok(workspaces) => workspaces
+                .into_iter()
+                .map(|ws| {
+                    let label = if let Some(ref wt) = ws.worktree {
+                        format!("{} ({})", ws.label, wt.checkout_path)
+                    } else {
+                        ws.label.clone()
+                    };
+                    crate::ai::chat::WorkspaceOption {
+                        id: ws.workspace_id.clone(),
+                        label,
+                        focused: ws.focused,
+                    }
+                })
+                .collect(),
+            Err(_) => Vec::new(),
         }
     }
 
@@ -850,9 +878,7 @@ impl ZenixApp {
         if let Some(ref drag) = self.panel_resize_drag {
             let cursor_x: f32 = f32::from(event.position.x);
             let delta = cursor_x - drag.start_x;
-            use crate::ai::chat::resize::{
-                MAX_INPUT_HEIGHT, MAX_PANEL_WIDTH, MIN_INPUT_HEIGHT, MIN_PANEL_WIDTH,
-            };
+            use crate::ai::chat::resize::{MAX_PANEL_WIDTH, MIN_PANEL_WIDTH};
             let new_width = (drag.start_width - delta).clamp(MIN_PANEL_WIDTH, MAX_PANEL_WIDTH);
             match drag.target {
                 Panel::AiChat => {
@@ -1411,10 +1437,22 @@ impl Render for ZenixApp {
                 if !crate::ai::engine::OrchestratorEngine::has_available_provider() {
                     Some(render_ai_config_empty(&theme).into_any_element())
                 } else {
+                    let panel_width = self.config.ai_panel_width().clamp(360.0, 720.0);
+                    let input_height = self.config.ai_input_height().clamp(60.0, 400.0);
+                    let workspaces = self.fetch_workspaces();
+
                     let data = self.ai_chat_panel.get_or_insert_with(|| {
                         let mut d = crate::ai::chat::AiChatPanelData::new();
-                        d.ai_panel_width = self.config.ai_panel_width().clamp(360.0, 720.0);
-                        d.input_height = self.config.ai_input_height().clamp(60.0, 400.0);
+                        d.ai_panel_width = panel_width;
+                        d.input_height = input_height;
+                        if !workspaces.is_empty() {
+                            d.workspaces = workspaces.clone();
+                            if let Some(ref focused) = workspaces.iter().find(|w| w.focused) {
+                                d.selected_workspace = Some(focused.id.clone());
+                            } else {
+                                d.selected_workspace = Some(workspaces[0].id.clone());
+                            }
+                        }
                         d
                     });
                     // Lazy-create the InputState entity for the chat input.
@@ -1422,7 +1460,7 @@ impl Render for ZenixApp {
                         let input = cx.new(|cx| {
                             gpui_component::input::InputState::new(window, cx)
                                 .placeholder(
-                                    "Ask anything, dispatch agents, or type / for commands",
+                                    "Dispatch agents or type @ to mention a worker",
                                 )
                                 .multi_line(true)
                                 .auto_grow(1, 12)
@@ -1464,7 +1502,24 @@ impl Render for ZenixApp {
                                     }
                                     gpui_component::input::InputEvent::Change => {
                                         if let Some(ref mut data) = this.ai_chat_panel {
-                                            data.input_value = _input.read(cx).value().to_string();
+                                            let val = _input.read(cx).value().to_string();
+                                            data.input_value = val.clone();
+                                            // Detect @ for mention popup
+                                            if let Some(at_pos) = val.rfind('@') {
+                                                let rest = &val[at_pos + 1..];
+                                                let is_word = rest.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-');
+                                                if at_pos == 0 || val.as_bytes()[at_pos - 1] == b' ' {
+                                                    data.show_mention_popup = !rest.is_empty() || is_word;
+                                                    if data.show_mention_popup {
+                                                        data.mention_query = rest.to_string();
+                                                        data.mention_selected_idx = 0;
+                                                    }
+                                                } else {
+                                                    data.show_mention_popup = false;
+                                                }
+                                            } else {
+                                                data.show_mention_popup = false;
+                                            }
                                         }
                                         cx.notify();
                                     }
@@ -1613,8 +1668,14 @@ impl Render for ZenixApp {
                             });
                         });
                     Some(
-                        crate::ai::chat::render_ai_chat_panel(data, &theme, input_ref, on_action)
-                            .into_any_element(),
+                        crate::ai::chat::render_ai_chat_panel(
+                            data,
+                            &theme,
+                            input_ref,
+                            on_action,
+                            self.worker_registry.clone(),
+                        )
+                        .into_any_element(),
                     )
                 }
             }
@@ -2873,6 +2934,11 @@ fn start_chat_streaming(this: &mut ZenixApp, text: String, cx: &mut gpui::Contex
         return;
     }
 
+    // Lock the workspace binding on first send.
+    if let Some(ref mut data) = this.ai_chat_panel {
+        data.workspace_bound = true;
+    }
+
     // 1. Push user message + empty assistant placeholder.
     let streaming_msg_idx = {
         let Some(ref mut data) = this.ai_chat_panel else {
@@ -3240,7 +3306,50 @@ fn handle_ai_chat_action(
                     if let Some(ref mut data) = this.ai_chat_panel {
                         data.input_value = text.clone();
                     }
-                    start_chat_streaming(this, text, cx);
+                    // Check for @mention routing
+                    let is_mention = text.starts_with('@');
+                    if is_mention {
+                        let mention_text = text.clone();
+                        let socket = crate::client::herdr_socket_path();
+                        if herdr::is_socket_ready(&socket) {
+                            let mut herdr = crate::ai::herdr::HerdrIpcClient::new(socket);
+                            // Extract worker name (text between @ and first space)
+                            if let Some(end) = mention_text[1..].find(' ') {
+                                let worker_name = mention_text[1..=end].trim();
+                                let msg_body = mention_text[end + 1..].trim();
+                                let workers = this.worker_registry.active_workers();
+                                if let Some(worker) = workers.iter().find(|w| w.worker_name == worker_name) {
+                                    // Send directly to worker's pane
+                                    let _ = herdr.send_pane_text(&worker.pane_id, msg_body);
+                                    // Add a user message to chat showing the mention
+                                    if let Some(ref mut data) = this.ai_chat_panel {
+                                        let session_id = data.current_session_id.clone().unwrap_or_default();
+                                        let user_msg = crate::ai::session::ChatMessage {
+                                            id: crate::app::timestamp_now().parse().unwrap_or(0),
+                                            session_id,
+                                            role: "user".into(),
+                                            content: format!("→ {}: {}", worker_name, msg_body),
+                                            agent_activities: None,
+                                            timestamp: crate::app::timestamp_now(),
+                                            sequence: data.messages.len() as i64,
+                                        };
+                                        data.push_message(user_msg);
+                                        data.workspace_bound = true;
+                                    }
+                                } else {
+                                    // Worker not found — fall through to normal chat
+                                    start_chat_streaming(this, text, cx);
+                                }
+                            } else {
+                                // Just "@worker_name" with no message — fall through
+                                start_chat_streaming(this, text, cx);
+                            }
+                        } else {
+                            start_chat_streaming(this, text, cx);
+                        }
+                    } else {
+                        start_chat_streaming(this, text, cx);
+                    }
                     if let Some(input) = this.chat_input_entity.as_ref() {
                         input.update(cx, |state, cx| state.set_value("", window, cx));
                     }
@@ -3429,6 +3538,95 @@ fn handle_ai_chat_action(
                 let _ = this.config.save();
             }
         }
+        AiChatAction::ToggleWorkspaceDropdown => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                data.config_dropdown = match data.config_dropdown {
+                    Some(crate::ai::chat::ConfigDropdownTarget::Workspace) => None,
+                    _ => {
+                        data.drawer = None;
+                        Some(crate::ai::chat::ConfigDropdownTarget::Workspace)
+                    }
+                };
+            }
+            cx.notify();
+        }
+        AiChatAction::SelectWorkspace(id) => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                if !data.workspace_bound {
+                    let ws = data.workspaces.iter().find(|w| w.id == id).cloned();
+                    if let Some(w) = ws {
+                        data.selected_workspace = Some(w.id);
+                    }
+                    data.config_dropdown = None;
+                }
+            }
+            cx.notify();
+        }
+        AiChatAction::ShowMentionPopup(query) => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                data.show_mention_popup = true;
+                data.mention_query = query;
+                data.mention_selected_idx = 0;
+            }
+            cx.notify();
+        }
+        AiChatAction::HideMentionPopup => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                data.show_mention_popup = false;
+                data.mention_query.clear();
+            }
+            cx.notify();
+        }
+        AiChatAction::MentionNext => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                let workers = this.worker_registry.active_workers();
+                let matching = count_matching_workers(&workers, &data.mention_query);
+                if matching > 0 {
+                    data.mention_selected_idx = (data.mention_selected_idx + 1) % matching;
+                }
+            }
+            cx.notify();
+        }
+        AiChatAction::MentionPrev => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                let workers = this.worker_registry.active_workers();
+                let matching = count_matching_workers(&workers, &data.mention_query);
+                if matching > 0 {
+                    data.mention_selected_idx = if data.mention_selected_idx == 0 {
+                        matching - 1
+                    } else {
+                        data.mention_selected_idx - 1
+                    };
+                }
+            }
+            cx.notify();
+        }
+        AiChatAction::MentionConfirm => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                let workers = this.worker_registry.active_workers();
+                let query = data.mention_query.to_lowercase();
+                let matching: Vec<&crate::ai::workers::WorkerInstance> = workers
+                    .iter()
+                    .filter(|w| {
+                        query.is_empty()
+                            || w.worker_name.to_lowercase().contains(&query)
+                            || w.cli_name.to_lowercase().contains(&query)
+                            || w.role_id.to_lowercase().contains(&query)
+                    })
+                    .collect();
+                let idx = data.mention_selected_idx.min(matching.len().saturating_sub(1));
+                if let Some(worker) = matching.get(idx) {
+                    let mention = format!("@{} ", worker.worker_name);
+                    if let Some(at_pos) = data.input_value.rfind('@') {
+                        let before = &data.input_value[..at_pos];
+                        data.input_value = before.to_string() + &mention;
+                    }
+                    data.show_mention_popup = false;
+                    data.mention_query.clear();
+                }
+            }
+            cx.notify();
+        }
         AiChatAction::Escape => {
             if let Some(ref mut data) = this.ai_chat_panel {
                 if data.is_streaming {
@@ -3439,6 +3637,7 @@ fn handle_ai_chat_action(
                     data.header_menu_open = false;
                     data.config_dropdown = None;
                     data.drawer = None;
+                    data.show_mention_popup = false;
                     if let Some(input) = this.chat_input_entity.as_ref() {
                         input.update(cx, |state, cx| {
                             state.set_value("", window, cx);
@@ -3478,6 +3677,23 @@ fn handle_ai_chat_action(
 ///
 /// Shown instead of the chat panel to guide users to Settings → Extensions
 /// → API Providers.
+/// Count how many active workers match the mention query.
+fn count_matching_workers(
+    workers: &[crate::ai::workers::WorkerInstance],
+    query: &str,
+) -> usize {
+    let q = query.to_lowercase();
+    workers
+        .iter()
+        .filter(|w| {
+            q.is_empty()
+                || w.worker_name.to_lowercase().contains(&q)
+                || w.cli_name.to_lowercase().contains(&q)
+                || w.role_id.to_lowercase().contains(&q)
+        })
+        .count()
+}
+
 fn render_ai_config_empty(theme: &gpui_component::Theme) -> gpui::AnyElement {
     use gpui::{div, px};
     use gpui_component::v_flex;

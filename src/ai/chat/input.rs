@@ -2,7 +2,7 @@
 
 use gpui::{
     AnyElement, Entity, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, div, px, svg,
+    Styled as _, div, px, svg,
 };
 use gpui_component::{
     Theme, h_flex,
@@ -12,16 +12,18 @@ use gpui_component::{
 };
 
 use crate::api_provider::ThinkingLevel;
+use crate::ai::workers::WorkerInstance;
 
 use super::state::{AiChatAction, AiChatActionHandler, AiChatPanelData, ConfigDropdownTarget};
 
-const PLACEHOLDER: &str = "Ask anything, dispatch agents, or type / for commands";
+const PLACEHOLDER: &str = "Dispatch agents or type @ to mention a worker";
 
 pub(super) fn render_input_bar(
     data: &AiChatPanelData,
     theme: &Theme,
     input_entity: Option<&Entity<InputState>>,
     on_action: AiChatActionHandler,
+    workers: &[WorkerInstance],
 ) -> AnyElement {
     let th = theme.clone();
     let bg = th.background;
@@ -175,13 +177,16 @@ pub(super) fn render_input_bar(
                 .child(send_btn),
         );
 
-    let mut bar = v_flex()
+    let mention = super::mention_popup::render_mention_popup(data, workers, theme, on_action.clone());
+
+    let bar = v_flex()
         .relative()
         .gap(px(6.))
         .px(px(10.))
         .py(px(8.))
         .border_t_1()
         .border_color(border)
+        .child(mention)
         .child(wrapper)
         .child(
             h_flex()
@@ -449,7 +454,8 @@ mod tests {
     fn test_render_input_bar_returns_element() {
         let data = AiChatPanelData::default();
         let theme = test_theme();
-        let _element = render_input_bar(&data, &theme, None, noop_handler());
+        let workers: Vec<crate::ai::workers::WorkerInstance> = Vec::new();
+        let _element = render_input_bar(&data, &theme, None, noop_handler(), &workers);
     }
 
     #[test]

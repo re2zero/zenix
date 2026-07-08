@@ -12,7 +12,9 @@ use gpui_component::{
 
 use crate::i18n::t;
 
-use super::state::{AiChatAction, AiChatActionHandler, AiChatPanelData};
+use super::state::{
+    AiChatAction, AiChatActionHandler, AiChatPanelData, ConfigDropdownTarget,
+};
 
 // ── Header ──────────────────────────────────────────────────────────────
 
@@ -78,7 +80,126 @@ pub(super) fn render_header(
                 ),
         );
 
-    header_bar.into_any_element()
+    let header = v_flex()
+        .child(header_bar);
+
+    let header = header.child(render_workspace_bar(data, theme, on_action.clone()));
+
+    header.into_any_element()
+}
+
+/// Workspace selector bar — shows current workspace and dropdown.
+fn render_workspace_bar(
+    data: &AiChatPanelData,
+    theme: &Theme,
+    on_action: AiChatActionHandler,
+) -> AnyElement {
+    let th = theme.clone();
+    let fg = th.foreground;
+    let mu = th.muted_foreground;
+    let border = th.border;
+    let accent = th.accent;
+    let bg = th.background;
+
+    let ws_label: String = data
+        .selected_workspace
+        .as_deref()
+        .unwrap_or("workspace")
+        .to_string();
+    let is_open = data.config_dropdown == Some(ConfigDropdownTarget::Workspace);
+    let workspace_bound = data.workspace_bound;
+    let ws_empty = data.workspaces.is_empty();
+
+    let on_toggle = on_action.clone();
+
+    let bar = h_flex()
+        .gap(px(4.))
+        .items_center()
+        .px(px(12.))
+        .py(px(4.))
+        .child(
+            svg().path("icons/folder.svg").size(px(10.)).text_color(mu),
+        )
+        .child(
+            super::txt(px(10.))
+                .text_color(if workspace_bound { fg } else { mu })
+                .child(ws_label.clone()),
+        );
+
+    let bar: AnyElement = if workspace_bound || ws_empty {
+        bar.into_any_element()
+    } else {
+        bar.cursor_pointer()
+            .hover(|st| st.bg(th.list_hover))
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                on_toggle(AiChatAction::ToggleWorkspaceDropdown, window, cx)
+            })
+            .into_any_element()
+    };
+
+    let dropdown: AnyElement = if is_open && !workspace_bound {
+        let items: Vec<(String, String)> = data
+            .workspaces
+            .iter()
+            .map(|ws| (ws.id.clone(), ws.label.clone()))
+            .collect();
+        let selected = data.selected_workspace.clone();
+        let on_select = on_action.clone();
+        let th2 = th.clone();
+
+        let list_items: Vec<AnyElement> = items
+            .into_iter()
+            .map(|(ws_id, ws_label)| {
+                let is_sel = selected.as_deref() == Some(&ws_id);
+                let cb = on_select.clone();
+                let id2 = ws_id.clone();
+                let lb2 = ws_label.clone();
+                let fg2 = fg;
+                let accent2 = accent;
+                h_flex()
+                    .items_center()
+                    .gap(px(8.))
+                    .px(px(10.))
+                    .py(px(5.))
+                    .rounded_md()
+                    .cursor_pointer()
+                    .hover(|st| st.bg(th2.list_hover))
+                    .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                        cb(AiChatAction::SelectWorkspace(id2.clone()), window, cx)
+                    })
+                    .child(div().w(px(4.)).h(px(4.)).rounded_full().bg(if is_sel {
+                        accent2
+                    } else {
+                        gpui::transparent_black()
+                    }))
+                    .child(super::txt(px(11.)).text_color(fg2).child(lb2))
+                    .into_any_element()
+            })
+            .collect();
+        gpui::deferred(
+            div()
+                .absolute()
+                .left(px(12.))
+                .top(px(100.))
+                .bg(bg)
+                .border_1()
+                .border_color(border)
+                .rounded_md()
+                .shadow_md()
+                .p(px(4.))
+                .min_w(px(180.))
+                .child(v_flex().gap(px(2.)).children(list_items)),
+        )
+        .into_any_element()
+    } else {
+        div().into_any_element()
+    };
+
+    v_flex()
+        .relative()
+        .child(bar)
+        .child(dropdown)
+        .into_any_element()
 }
 
 pub(super) fn render_header_menu(
@@ -351,7 +472,6 @@ pub(super) fn render_agent_monitor(data: &AiChatPanelData, theme: &Theme) -> Any
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai::session::Session;
     use gpui_component::Theme;
 
     fn test_theme() -> Theme {

@@ -22,6 +22,7 @@ mod drawer;
 mod error_card;
 mod header;
 mod input;
+mod mention_popup;
 mod messages;
 pub mod resize;
 mod state;
@@ -39,6 +40,8 @@ use gpui::{
     StatefulInteractiveElement as _, Styled as _, div, px,
 };
 use gpui_component::{Theme, input::InputState, v_flex};
+
+use crate::ai::workers::WorkerRegistry;
 
 /// Width of the AI chat panel.
 ///
@@ -60,6 +63,7 @@ pub fn render_ai_chat_panel(
     theme: &Theme,
     input_entity: Option<&Entity<InputState>>,
     on_action: state::AiChatActionHandler,
+    worker_registry: WorkerRegistry,
 ) -> impl IntoElement {
     let th = theme.clone();
     let bg = th.background;
@@ -190,11 +194,13 @@ pub fn render_ai_chat_panel(
         data.input_height,
         on_action.clone(),
     ));
+    let workers_for_input = worker_registry.active_workers();
     panel = panel.child(input::render_input_bar(
         data,
         theme,
         input_entity,
         on_action.clone(),
+        &workers_for_input,
     ));
 
     if data.header_menu_open {
@@ -260,6 +266,7 @@ mod tests {
     fn test_render_ai_chat_panel_returns_element() {
         let data = AiChatPanelData::default();
         let theme = test_theme();
-        let _element = render_ai_chat_panel(&data, &theme, None, noop_handler());
+        let registry = crate::ai::workers::WorkerRegistry::new();
+        let _element = render_ai_chat_panel(&data, &theme, None, noop_handler(), registry);
     }
 }

@@ -43,6 +43,22 @@ pub enum AiChatAction {
     ToggleProviderDropdown,
     ToggleThinkingDropdown,
     SelectThinkingLevel(ThinkingLevel),
+    // ── Workspace selection ───────────────────────────────────
+    /// Open workspace dropdown.
+    ToggleWorkspaceDropdown,
+    /// Select a workspace by ID.
+    SelectWorkspace(String),
+    // ── @ Mention ──────────────────────────────────────────────
+    /// Show/hide @ mention popup with query filter.
+    ShowMentionPopup(String),
+    /// Hide the @ mention popup.
+    HideMentionPopup,
+    /// Select the next item in the mention list.
+    MentionNext,
+    /// Select the previous item in the mention list.
+    MentionPrev,
+    /// Confirm the selected mention item.
+    MentionConfirm,
     // ── Keyboard shortcuts (Phase 7.2) ──────────────────────────
     /// Esc: stop streaming or clear input.
     Escape,
@@ -69,6 +85,7 @@ pub enum ConfigDropdownTarget {
     Model,
     Provider,
     Thinking,
+    Workspace,
 }
 
 // ── AgentBlock / AgentMonitorEntry re-exports ──────────────────────────
@@ -108,6 +125,7 @@ pub struct AiChatPanelData {
     pub thinking_level: ThinkingLevel,
     pub input_height: f32,
     pub selected_workspace: Option<String>,
+    pub workspace_bound: bool,
     pub workspaces: Vec<WorkspaceOption>,
 
     // ── Dropdown state ────────────────────────────────────────────
@@ -159,6 +177,11 @@ pub struct AiChatPanelData {
     // ── Input history (Phase 3 R10) ──────────────────────────────
     pub input_history: Vec<String>,
     pub input_history_idx: Option<usize>,
+
+    // ── @ Mention popup ──────────────────────────────────────────
+    pub show_mention_popup: bool,
+    pub mention_query: String,
+    pub mention_selected_idx: usize,
 }
 
 /// A workspace option for the config bar dropdown.
@@ -166,6 +189,7 @@ pub struct AiChatPanelData {
 pub struct WorkspaceOption {
     pub id: String,
     pub label: String,
+    pub focused: bool,
 }
 
 impl Default for AiChatPanelData {
@@ -188,6 +212,7 @@ impl Default for AiChatPanelData {
             thinking_level: ThinkingLevel::default(),
             input_height: 160.0,
             selected_workspace: None,
+            workspace_bound: false,
             workspaces: Vec::new(),
             config_dropdown: None,
             drawer: None,
@@ -209,6 +234,9 @@ impl Default for AiChatPanelData {
             available_providers: Vec::new(),
             input_history: Vec::new(),
             input_history_idx: None,
+            show_mention_popup: false,
+            mention_query: String::new(),
+            mention_selected_idx: 0,
         }
     }
 }
@@ -436,6 +464,7 @@ mod tests {
         let opt = WorkspaceOption {
             id: "ws-1".into(),
             label: "Main Project".into(),
+            focused: false,
         };
         assert_eq!(opt.id, "ws-1");
         assert_eq!(opt.label, "Main Project");
