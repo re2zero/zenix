@@ -1459,9 +1459,7 @@ impl Render for ZenixApp {
                     if self.chat_input_entity.is_none() {
                         let input = cx.new(|cx| {
                             gpui_component::input::InputState::new(window, cx)
-                                .placeholder(
-                                    "Dispatch agents or type @ to mention a worker",
-                                )
+                                .placeholder("Dispatch agents or type @ to mention a worker")
                                 .multi_line(true)
                                 .auto_grow(1, 12)
                                 .submit_on_enter(true)
@@ -1507,9 +1505,13 @@ impl Render for ZenixApp {
                                             // Detect @ for mention popup
                                             if let Some(at_pos) = val.rfind('@') {
                                                 let rest = &val[at_pos + 1..];
-                                                let is_word = rest.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-');
-                                                if at_pos == 0 || val.as_bytes()[at_pos - 1] == b' ' {
-                                                    data.show_mention_popup = !rest.is_empty() || is_word;
+                                                let is_word = rest.chars().all(|c| {
+                                                    c.is_alphanumeric() || c == '_' || c == '-'
+                                                });
+                                                if at_pos == 0 || val.as_bytes()[at_pos - 1] == b' '
+                                                {
+                                                    data.show_mention_popup =
+                                                        !rest.is_empty() || is_word;
                                                     if data.show_mention_popup {
                                                         data.mention_query = rest.to_string();
                                                         data.mention_selected_idx = 0;
@@ -3066,6 +3068,16 @@ fn start_chat_streaming(this: &mut ZenixApp, text: String, cx: &mut gpui::Contex
         .as_ref()
         .and_then(|d| d.selected_workspace.clone())
         .unwrap_or_else(|| "default".to_string());
+    let workspace_label = this
+        .ai_chat_panel
+        .as_ref()
+        .and_then(|d| {
+            d.workspaces
+                .iter()
+                .find(|w| Some(w.id.as_str()) == d.selected_workspace.as_deref())
+                .map(|w| w.label.clone())
+        })
+        .unwrap_or_default();
     let socket_path = crate::client::herdr_socket_path();
     let messages_for_engine: Vec<ChatMessageRef> = this
         .ai_chat_panel
@@ -3120,8 +3132,23 @@ fn start_chat_streaming(this: &mut ZenixApp, text: String, cx: &mut gpui::Contex
                 "chat_fut start"
             );
 
+            // ── Build dynamic system prompt ──────────────────────────
+            let roles_summary = crate::ai::roles::RoleRegistry::list_roles()
+                .unwrap_or_default()
+                .iter()
+                .map(|r| format!("- {} ({}) — {}", r.name, r.id, r.description))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let workspace_info = if !workspace_label.is_empty() {
+                format!("当前会话绑定到 workspace: {workspace_label}")
+            } else {
+                String::new()
+            };
+            let system_prompt =
+                crate::ai::engine::build_system_prompt(&roles_summary, &workspace_info);
+
             let engine = match OrchestratorEngine::new(&provider) {
-                Ok(e) => e,
+                Ok(e) => e.with_system_prompt(system_prompt),
                 Err(e) => {
                     tracing::warn!(target: "zenixai", error = %e, "engine init failed");
                     let _ = event_tx.send(DispatchStreamEvent::Error(format!(
@@ -3139,6 +3166,7 @@ fn start_chat_streaming(this: &mut ZenixApp, text: String, cx: &mut gpui::Contex
             // dispatch fires and herdr is down, execute_agent_task will
             // surface the error via AgentComplete at that point.
             let mut herdr_client = HerdrIpcClient::new(socket_path);
+            let compactor = crate::ai::compactor::Compactor::default_compactor();
 
             tracing::info!(target: "zenixai", "calling chat_and_dispatch");
             let result = engine
@@ -3146,6 +3174,7 @@ fn start_chat_streaming(this: &mut ZenixApp, text: String, cx: &mut gpui::Contex
                     &messages_for_engine,
                     &mut herdr_client,
                     &workspace_id,
+                    &compactor,
                     move |ev| {
                         let _ = event_tx_for_cb.send(ev);
                     },
@@ -3318,12 +3347,15 @@ fn handle_ai_chat_action(
                                 let worker_name = mention_text[1..=end].trim();
                                 let msg_body = mention_text[end + 1..].trim();
                                 let workers = this.worker_registry.active_workers();
-                                if let Some(worker) = workers.iter().find(|w| w.worker_name == worker_name) {
+                                if let Some(worker) =
+                                    workers.iter().find(|w| w.worker_name == worker_name)
+                                {
                                     // Send directly to worker's pane
                                     let _ = herdr.send_pane_text(&worker.pane_id, msg_body);
                                     // Add a user message to chat showing the mention
                                     if let Some(ref mut data) = this.ai_chat_panel {
-                                        let session_id = data.current_session_id.clone().unwrap_or_default();
+                                        let session_id =
+                                            data.current_session_id.clone().unwrap_or_default();
                                         let user_msg = crate::ai::session::ChatMessage {
                                             id: crate::app::timestamp_now().parse().unwrap_or(0),
                                             session_id,
@@ -3614,7 +3646,9 @@ fn handle_ai_chat_action(
                             || w.role_id.to_lowercase().contains(&query)
                     })
                     .collect();
-                let idx = data.mention_selected_idx.min(matching.len().saturating_sub(1));
+                let idx = data
+                    .mention_selected_idx
+                    .min(matching.len().saturating_sub(1));
                 if let Some(worker) = matching.get(idx) {
                     let mention = format!("@{} ", worker.worker_name);
                     if let Some(at_pos) = data.input_value.rfind('@') {
@@ -3678,10 +3712,7 @@ fn handle_ai_chat_action(
 /// Shown instead of the chat panel to guide users to Settings → Extensions
 /// → API Providers.
 /// Count how many active workers match the mention query.
-fn count_matching_workers(
-    workers: &[crate::ai::workers::WorkerInstance],
-    query: &str,
-) -> usize {
+fn count_matching_workers(workers: &[crate::ai::workers::WorkerInstance], query: &str) -> usize {
     let q = query.to_lowercase();
     workers
         .iter()

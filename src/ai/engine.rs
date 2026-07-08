@@ -38,8 +38,73 @@ use crate::ai::herdr::{HerdrIpcClient, ReadSource};
 use crate::ai::tools::{Tool, ToolCall, ToolResult};
 use crate::api_provider::ApiProviderConfig;
 
-/// System prompt defining the orchestrator's role.
-pub const SYSTEM_PROMPT: &str = "你是 ZenixAI 编排器。你负责理解用户需求、规划任务分解、将具体执行工作分配给专业 Agent CLI（如 Claude Code、Codex、OpenCode 等）。你不直接写代码或运行命令，只负责规划、调度和结果汇总。用中文回复。";
+/// Default system prompt used when no dynamic prompt is provided.
+pub const DEFAULT_SYSTEM_PROMPT: &str = "你是 ZenixAI 编排器。你负责理解用户需求、规划任务分解、将具体执行工作分配给专业 Agent CLI（如 Claude Code、Codex、OpenCode 等）。你不直接写代码或运行命令，只负责规划、调度和结果汇总。用中文回复。";
+
+/// Build a dynamic system prompt that includes roles, workspace, and tools.
+///
+/// `roles_summary` — a newline-separated list of available roles and descriptions.
+/// `workspace_info` — description of the currently bound workspace.
+/// If both are empty, the default prompt is returned unchanged.
+pub fn build_system_prompt(roles_summary: &str, workspace_info: &str) -> String {
+    let has_roles = !roles_summary.is_empty();
+    let has_workspace = !workspace_info.is_empty();
+
+    if !has_roles && !has_workspace {
+        return DEFAULT_SYSTEM_PROMPT.to_string();
+    }
+
+    let mut prompt = String::with_capacity(2048);
+    prompt.push_str("你是 ZenixAI 编排器。你负责理解用户需求、规划任务分解、将具体执行工作分配给专业 Agent CLI。你不直接写代码或运行命令，只负责规划、调度和结果汇总。用中文回复。\n\n");
+
+    if has_roles {
+        prompt.push_str("## 可用角色\n");
+        prompt.push_str(roles_summary);
+        prompt.push_str("\n\n");
+    }
+
+    prompt.push_str(
+        "## 可用工具\n\
+        - read_file: 读取文件内容（最大 50KB）\n\
+        - read_directory: 递归列出目录结构（最大 3 层）\n\
+        - search_files: 递归搜索匹配 glob 模式的文件\n\
+        - list_agents: 查看 herdr 中所有 Agent 的运行状态\n\
+        - start_agent: 在 herdr 中启动一个 Agent CLI\n\
+        - send_instruction: 向指定 Agent 发送文本指令\n\
+        - read_output: 读取指定 Agent 的最新输出\n\
+        - split_pane: 在 herdr 中分割窗格\n\
+        - arrange_grid: 将多个 pane 按网格布局排列\n\
+        - read_memory: 读取进程内记忆\n\
+        - write_memory: 写入进程内记忆\n\
+        - search_memory: 搜索进程内记忆\n\n",
+    );
+
+    if has_workspace {
+        prompt.push_str("## 当前工作空间\n");
+        prompt.push_str(workspace_info);
+        prompt.push_str("\n\n");
+    }
+
+    prompt.push_str("## Agent Dispatch 格式\n\
+        当你需要分配任务给 Agent 时，在回复中包含以下 JSON：\n\n\
+        ```json\n\
+        {\n  \"agents\": [\n    {\n      \"agent_name\": \"opencode\",\n      \"role\": \"frontend-developer\",\n      \"worker_name\": \"oc_task(frontend)\",\n      \"instruction\": \"具体的任务描述\",\n      \"cwd\": \"/home/user/project\"\n    }\n  ]\n}\n\
+        ```\n\n\
+        worker_name 的标识部分请根据任务内容生成简短有意义的名字，格式: <cli缩写>_<标识>(<角色缩写>)。\n\n\
+        ## 工作流\n\
+        1. 分析用户需求\n\
+        2. 规划任务分解\n\
+        3. 选择角色和 Agent CLI\n\
+        4. 分配任务（并行任务一次分配）\n\
+        5. 收集执行结果\n\
+        6. 汇总报告\n\n\
+        ## 约束\n\
+        - 你不直接写代码或运行命令\n\
+        - 你只负责规划、调度和结果汇总\n\
+        - 用中文回复");
+
+    prompt
+}
 
 /// Lightweight chat message reference for the engine (no session/sequence).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -175,6 +240,9 @@ pub struct OrchestratorEngine {
     endpoint_url: String,
     model: String,
     api_key: String,
+    /// System prompt used for all LLM calls.
+    /// Set via `new()` or `with_system_prompt()`.
+    pub system_prompt: String,
 }
 
 /// SSE response chunk from the LLM API.
@@ -229,6 +297,7 @@ impl OrchestratorEngine {
     ///
     /// Validates that the provider has a valid base_url, api_key, and model
     /// configured. The HTTP client uses a 120-second timeout.
+    /// Uses `DEFAULT_SYSTEM_PROMPT` unless overridden via `with_system_prompt()`.
     pub fn new(provider: &ApiProviderConfig) -> Result<Self, AiError> {
         if provider.base_url.is_empty() {
             return Err(AiError::ConfigMissing("base_url is empty".into()));
@@ -252,7 +321,14 @@ impl OrchestratorEngine {
             endpoint_url: provider.endpoint_url(),
             model: provider.model.clone(),
             api_key: provider.api_key.clone(),
+            system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
         })
+    }
+
+    /// Override the system prompt for all subsequent LLM calls.
+    pub fn with_system_prompt(mut self, prompt: String) -> Self {
+        self.system_prompt = prompt;
+        self
     }
 
     /// Send a streaming chat request to the LLM API.
@@ -272,7 +348,7 @@ impl OrchestratorEngine {
             if messages.is_empty() || messages.first().map(|m| m.role.as_str()) != Some("system") {
                 let mut prefixed = vec![ChatMessageRef {
                     role: "system".into(),
-                    content: SYSTEM_PROMPT.into(),
+                    content: self.system_prompt.clone(),
                 }];
                 prefixed.extend(messages.iter().cloned());
                 prefixed
@@ -411,7 +487,7 @@ impl OrchestratorEngine {
             if messages.is_empty() || messages.first().map(|m| m.role.as_str()) != Some("system") {
                 let mut prefixed = vec![ChatMessageRef {
                     role: "system".into(),
-                    content: SYSTEM_PROMPT.into(),
+                    content: self.system_prompt.clone(),
                 }];
                 prefixed.extend(messages.iter().cloned());
                 prefixed
@@ -774,7 +850,7 @@ impl OrchestratorEngine {
             if messages.is_empty() || messages.first().map(|m| m.role.as_str()) != Some("system") {
                 let mut prefixed = vec![ChatMessageRef {
                     role: "system".into(),
-                    content: SYSTEM_PROMPT.into(),
+                    content: self.system_prompt.clone(),
                 }];
                 prefixed.extend(messages.iter().cloned());
                 prefixed
@@ -1309,6 +1385,7 @@ impl OrchestratorEngine {
         messages: &[ChatMessageRef],
         herdr_client: &mut HerdrIpcClient,
         workspace_id: &str,
+        compactor: &crate::ai::compactor::Compactor,
         on_event: impl Fn(DispatchStreamEvent) + Send + Sync + 'static,
     ) -> Result<String, AiError> {
         let mut dispatch_count = 0u32;
@@ -1320,6 +1397,32 @@ impl OrchestratorEngine {
         let on_event: Arc<dyn Fn(DispatchStreamEvent) + Send + Sync + 'static> = Arc::new(on_event);
 
         loop {
+            // ── Compaction check (mirrors chat_with_tools) ──────────
+            let refs: Vec<crate::ai::compactor::MessageRef> = loop_messages
+                .iter()
+                .map(crate::ai::compactor::MessageRef::from)
+                .collect();
+            if compactor.should_compress(&refs) {
+                let compacted = compactor.compress_messages(&refs);
+                on_event(DispatchStreamEvent::Compacted(
+                    crate::ai::engine::CompactionInfo {
+                        original_count: compacted.original_count,
+                        compressed_count: compacted.compressed_count,
+                        kept_count: compacted.kept_count,
+                        before_tokens: compacted.before_tokens,
+                        after_tokens: compacted.after_tokens,
+                    },
+                ));
+                loop_messages = compacted
+                    .kept_messages
+                    .iter()
+                    .map(|m| ChatMessageRef {
+                        role: m.role.to_string(),
+                        content: m.content.to_string(),
+                    })
+                    .collect();
+            }
+
             // Phase 1: LLM call with streaming
             let on_event_clone = Arc::clone(&on_event);
             let response_text = self
@@ -1328,24 +1431,74 @@ impl OrchestratorEngine {
 
             // Phase 2: Parse dispatch
             if let Some(directive) = parse_dispatch_directive(&response_text) {
-                // Phase 3: Execute agents (sync herdr calls)
+                // Phase 3: Execute agents (parallel dispatch)
                 on_event(DispatchStreamEvent::Dispatch(directive.clone()));
 
                 let tasks = directive.to_tasks();
-                let mut agent_results = Vec::new();
-
-                for task in &tasks {
+                let task_count = tasks.len();
+                let agent_results: Vec<AgentResult> = if task_count <= 1 {
+                    // Single agent — execute directly (no spawn overhead)
+                    let task = tasks.into_iter().next().unwrap();
                     let on_event_clone = Arc::clone(&on_event);
                     let result = execute_agent_task(
                         herdr_client,
-                        task,
+                        &task,
                         workspace_id,
                         DEFAULT_AGENT_TIMEOUT_MS,
                         move |ev| on_event_clone(ev),
                     );
-                    agent_results.push(result.clone());
-                    on_event(DispatchStreamEvent::AgentComplete(result));
-                }
+                    on_event(DispatchStreamEvent::AgentComplete(result.clone()));
+                    vec![result]
+                } else {
+                    // Multiple agents — execute concurrently via std::thread
+                    let mut handles = Vec::with_capacity(task_count);
+                    for task in &tasks {
+                        // Each thread gets its own IPC client connection
+                        let agent_name = task.agent_name.clone();
+                        let instruction = task.instruction.clone();
+                        let cwd = task.cwd.clone();
+                        let ws = workspace_id.to_string();
+                        let socket = herdr_client.socket_path().to_path_buf();
+
+                        let on_ev = Arc::clone(&on_event);
+                        handles.push(std::thread::spawn(move || {
+                            let mut client = HerdrIpcClient::new(socket);
+                            let at = AgentTask {
+                                agent_name,
+                                instruction,
+                                cwd,
+                                pane_id: None,
+                            };
+                            let result = execute_agent_task(
+                                &mut client,
+                                &at,
+                                &ws,
+                                DEFAULT_AGENT_TIMEOUT_MS,
+                                move |ev| on_ev(ev),
+                            );
+                            result
+                        }));
+                    }
+
+                    let mut results = Vec::with_capacity(task_count);
+                    for handle in handles {
+                        let result = handle.join().unwrap_or_else(|_| AgentResult {
+                            agent_name: "unknown".into(),
+                            pane_id: String::new(),
+                            exit_status: "crashed".into(),
+                            output: "Agent thread panicked".into(),
+                            summary: None,
+                        });
+                        results.push(result);
+                    }
+
+                    // Emit AgentComplete for each result (after all are done)
+                    for r in &results {
+                        on_event(DispatchStreamEvent::AgentComplete(r.clone()));
+                    }
+
+                    results
+                };
 
                 dispatch_count += 1;
 
@@ -1371,7 +1524,7 @@ impl OrchestratorEngine {
                 loop_messages = vec![
                     ChatMessageRef {
                         role: "system".into(),
-                        content: SYSTEM_PROMPT.into(),
+                        content: self.system_prompt.clone(),
                     },
                     ChatMessageRef {
                         role: "user".into(),

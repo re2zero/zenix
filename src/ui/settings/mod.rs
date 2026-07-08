@@ -100,6 +100,11 @@ pub enum McpAction {
 }
 
 #[derive(Clone)]
+pub enum RoleAction {
+    Delete { role_id: String },
+}
+
+#[derive(Clone)]
 pub enum ApiProviderAction {
     ShowAddForm,
     CancelForm,
@@ -209,6 +214,7 @@ pub enum ExtensionSubTab {
     Api = 0,
     Mcp,
     Skills,
+    Roles,
 }
 
 /// Sub-tab for the Skills tab within Extensions.

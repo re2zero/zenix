@@ -9,9 +9,25 @@
 ```
 src/ai/
 ├── mod.rs          # Module root, re-exports
-├── chat.rs         # Chat panel UI (AiChatPanelData, AgentBlock, AgentMonitorEntry, config bar, history, search)
+├── chat/           # Chat panel UI (10-module directory)
+│   ├── mod.rs      # Panel layout + render_ai_chat_panel
+│   ├── state.rs    # AiChatPanelData, WorkspaceOption, AiChatAction
+│   ├── header.rs   # Header + workspace dropdown + empty state
+│   ├── input.rs    # Input bar + @ mention detection + routing
+│   ├── messages.rs # Single-message rendering + streaming indicator
+│   ├── agent_block.rs  # AgentBlock, AgentMonitorEntry types
+│   ├── tool_card.rs    # Tool call result cards
+│   ├── error_card.rs   # Error message card
+│   ├── drawer.rs   # History + Agents drawer overlays
+│   ├── resize.rs   # Panel + input resize handles
+│   └── mention_popup.rs # @ worker mention popup overlay
+├── roles.rs        # RoleRegistry, RoleDef, built-in templates
+├── workers.rs      # WorkerRegistry, WorkerInstance, WorkerStatus
 ├── session.rs      # SQLite 持久化 (CRUD、FTS5 搜索)
 ├── engine.rs       # 编排器引擎 (LLM API、SSE 流式、调度循环)
+├── tools.rs        # 12 个内置工具 + Tool trait + ToolExecutor
+├── compactor.rs    # 会话压缩 (token 估算 + 自动压缩 + 配置隔离)
+├── markdown.rs     # 轻量级 Markdown 渲染 (无外部依赖)
 ├── herdr.rs        # Herdr IPC 客户端 (Unix socket、JSON-line)
 └── error.rs        # AiError 枚举 + user_friendly + retryable
 ```
@@ -195,43 +211,80 @@ pub async fn chat_and_dispatch(
     messages: &[ChatMessageRef],
     herdr_client: &mut HerdrIpcClient,
     workspace_id: &str,
+    compactor: &Compactor,
     on_event: impl Fn(DispatchStreamEvent) + Send + Sync + 'static,
 ) -> Result<String, AiError>
 ```
 
 **流程**:
-1. **Phase 1**: LLM 调用 (SSE 流式) → 收集完整响应文本
-2. **Phase 2**: 解析调度指令 (`parse_dispatch_directive`)
-3. **Phase 3**: 执行 Agent (`execute_agent_task`)
-4. **Phase 4**: 汇总结果 → 返回 LLM 生成最终回复
-5. **Loop**: 如果 LLM 再次调度，重复 Phase 1-4（最多 5 轮）
+1. **Compaction**: 每次循环开始时检查消息列表 token 用量，触发压缩
+2. **Phase 1**: LLM 调用 (SSE 流式) → 收集完整响应文本
+3. **Phase 2**: 解析调度指令 (`parse_dispatch_directive`)
+4. **Phase 3**: 执行 Agent — **单 agent 直接执行，多 agent 并行** (`std::thread::spawn`)
+5. **Phase 4**: 汇总结果 → 返回 LLM 生成最终回复
+6. **Loop**: 如果 LLM 再次调度，重复 Phase 1-4（最多 5 轮）
+
+**关键变更**: system prompt 使用 `self.system_prompt`（动态构建），不再使用 `SYSTEM_PROMPT` 常量。
 
 ```rust
 loop {
+    // ── Compaction check ──────────
+    if compactor.should_compress(&refs) {
+        loop_messages = compactor.compress_messages(&refs).kept_messages;
+        on_event(DispatchStreamEvent::Compacted(info));
+    }
+
     let response_text = self.call_llm_collect(&loop_messages, ...).await?;
     
     if let Some(directive) = parse_dispatch_directive(&response_text) {
-        // Execute agents
-        for task in directive.to_tasks() {
-            let result = execute_agent_task(herdr_client, &task, workspace_id, TIMEOUT)?;
-            on_event(DispatchStreamEvent::AgentComplete(result));
-        }
+        // Parallel dispatch: single agent = direct, multiple = thread pool
+        let agent_results = if task_count <= 1 {
+            execute_agent_task(herdr_client, &task, workspace_id, TIMEOUT, ...)
+        } else {
+            // Each thread gets own HerdrIpcClient from socket_path
+            handles.push(std::thread::spawn(move || {
+                let mut client = HerdrIpcClient::new(socket);
+                execute_agent_task(&mut client, &task, &ws, TIMEOUT, ...)
+            }));
+            handles.join().map(|r| r.unwrap_or_else(|| crash_result))
+        };
         
         // Build summary for next LLM round
         let summary = agent_results.join("\n\n---\n\n");
         loop_messages = vec![
-            ChatMessageRef { role: "system", content: SYSTEM_PROMPT },
+            ChatMessageRef { role: "system", content: self.system_prompt.clone() },
             ChatMessageRef { role: "user", content: format!("Agent results:\n{summary}") },
         ];
     } else {
-        // No dispatch — final response
         final_response = response_text;
         break;
     }
 }
 ```
 
-### 3.3 调度指令解析
+### 3.3 动态 System Prompt
+
+`OrchestratorEngine` 使用 `system_prompt: String` 字段（非 `const`），通过 `build_system_prompt()` 构建。
+
+```rust
+pub fn build_system_prompt(roles_summary: &str, workspace_info: &str) -> String;
+```
+
+**构建时机**: `start_chat_streaming()` 中 LLM 调用前构建一次，通过 `engine.with_system_prompt()` 注入。
+
+**注入内容**:
+| 部分 | 来源 | 说明 |
+|------|------|------|
+| 编排器角色定义 | 内嵌 | `DEFAULT_SYSTEM_PROMPT` 常量 |
+| 可用角色列表 | `RoleRegistry::list_roles()` | 每行 `- 角色名 (id) — 描述` |
+| 可用工具列表 | 内嵌 | 12 个工具的 name + description 硬编码 |
+| 工作空间信息 | `AiChatPanelData.selected_workspace` | `当前会话绑定到 workspace: xxx` |
+| Dispatch JSON 格式 | 内嵌 | 含 worker_name 格式说明 |
+| 工作流 + 约束 | 内嵌 | 6 步流程 + 约束条件 |
+
+**降级行为**: 若 roles_summary 和 workspace_info 均为空，返回 `DEFAULT_SYSTEM_PROMPT`。
+
+### 3.4 调度指令解析
 
 #### JSON 格式 (优先)
 
@@ -506,9 +559,11 @@ let config = ConfigStore::load().context("load config")?;
 | 模块 | 必需测试 |
 |------|----------|
 | `herdr.rs` | JSON 序列化/反序列化 round-trip（所有关键类型）、请求 ID 生成、响应解析（success/error/empty/invalid）、17 种 RPC 方法 wire protocol 校验 |
-| `engine.rs` | `parse_dispatch_directive`（JSON code block、inline JSON、text format、malformed input）、`AgentResult` 构造、`execute_agent_task` 错误路径、`chat_and_dispatch` 调度循环 |
+| `engine.rs` | `parse_dispatch_directive`（JSON code block、inline JSON、text format、malformed input）、`AgentResult` 构造、`execute_agent_task` 错误路径、`chat_and_dispatch` 调度循环、`build_system_prompt` 输出结构 |
+| `roles.rs` | `RoleDef` serde round-trip、内置模板数量/唯一性、frontmatter 格式、`RoleRegistry` 路径、seed + load、create/delete |
+| `workers.rs` | 注册/状态更新/取消/cleanup、`send_to_worker` 路径、输出追加 |
 | `session.rs` | CRUD、FTS5 搜索（含特殊字符）、ON DELETE CASCADE、搜索范围过滤（仅 user 消息） |
-| `chat.rs` | `AiChatPanelData` 构造、`AgentBlock` 折叠状态管理、`AgentMonitorEntry::from_herdr` 转换、底部栏按钮渲染、config bar pill-style selectors、history panel, agent monitor, search bar |
+| `chat/` | `AiChatPanelData` 构造、`AgentBlock` 折叠状态管理、`AgentMonitorEntry::from_herdr` 转换、底部栏按钮渲染、config bar pill-style selectors、history panel, agent monitor, search bar、workspace 选择绑定、@ mention popup |
 
 ### 8.2 测试断言点
 
@@ -556,7 +611,7 @@ fn test_parse_dispatch_directive_none() {
 
 ### 10.1 当前限制
 
-- **单 Agent 串行执行**: `chat_and_dispatch` 按顺序执行 Agent，不支持并行
+- **herdr 并行依赖**: 并行 dispatch 使用 `std::thread::spawn` + 独立 `HerdrIpcClient` 实例（因 client 非 `Send`），若 herdr 不支持并发连接可能产生竞态
 - **AI chat config bar 的 dropdown 交互尚未实现** (目前为静态显示，用户选择通过 app state 管理)
 
 ### 10.2 已实现功能
@@ -574,7 +629,6 @@ fn test_parse_dispatch_directive_none() {
 
 ### 10.3 未来改进方向
 
-- **并行 Agent 执行**: 多 Agent 同时运行，提高复杂度任务效率
 - **Event 订阅**: 使用 `events.subscribe` 实现 Agent 状态实时推送
 - **多会话并发**: 切换会话时保留后台 agent 运行状态
 

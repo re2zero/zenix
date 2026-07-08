@@ -9,7 +9,7 @@ use crate::i18n::t;
 use crate::skills::ApiSkill;
 use gpui::{
     AnyElement, ClickEvent, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, Window, div, prelude::FluentBuilder as _,
+    StatefulInteractiveElement as _, Styled as _, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{
     button::{Button, ButtonVariants as _},
@@ -729,6 +729,7 @@ fn tab_extensions(
         (t("settings.tab.api"), ExtensionSubTab::Api),
         (t("settings.tab.mcp"), ExtensionSubTab::Mcp),
         (t("settings.tab.skills"), ExtensionSubTab::Skills),
+        ("Roles".to_string(), ExtensionSubTab::Roles),
     ];
     v_flex()
         .gap(gap_lg())
@@ -782,6 +783,7 @@ fn tab_extensions(
                 theme,
             )
             .into_any_element(),
+            ExtensionSubTab::Roles => tab_roles_content(theme).into_any_element(),
         })
 }
 
@@ -1076,6 +1078,102 @@ fn tab_skills_content(
                         .child(Input::new(inp)),
                 )
             })
+        })
+}
+
+// ── API Provider Content ──────────────────────────────────────────────
+
+// ── Roles Content ─────────────────────────────────────────────────────
+
+fn tab_roles_content(theme: &gpui_component::Theme) -> impl IntoElement {
+    let roles = crate::ai::roles::RoleRegistry::list_roles().unwrap_or_default();
+
+    v_flex()
+        .gap(gap_lg())
+        .child(setting_group_header("角色管理"))
+        .child(if roles.is_empty() {
+            txt(font_size_sm())
+                .text_color(text_color_very_muted())
+                .child("暂无已注册的角色")
+                .into_any_element()
+        } else {
+            v_flex()
+                .gap(gap_md())
+                .children(roles.iter().map(|role| {
+                    let src_color = if role.source == "builtin" {
+                        badge_blue()
+                    } else {
+                        badge_orange()
+                    };
+                    let src_label = if role.source == "builtin" {
+                        "内置"
+                    } else {
+                        "用户"
+                    };
+
+                    div()
+                        .px(pad_md())
+                        .py(pad_md())
+                        .border_1()
+                        .border_color(border_color_transparent_2())
+                        .rounded(border_radius_md())
+                        .child(
+                            v_flex()
+                                .gap(gap_sm())
+                                .child(
+                                    h_flex()
+                                        .gap(gap_md())
+                                        .items_center()
+                                        .child(
+                                            txt(font_size_base())
+                                                .font_weight(gpui::FontWeight::MEDIUM)
+                                                .child(role.name.clone()),
+                                        )
+                                        .child(
+                                            txt(font_size_xs())
+                                                .text_color(src_color)
+                                                .child(src_label),
+                                        )
+                                        .child(
+                                            txt(font_size_xs())
+                                                .text_color(text_color_muted())
+                                                .child(format!("({})", role.id)),
+                                        ),
+                                )
+                                .child(
+                                    txt(font_size_sm())
+                                        .text_color(text_color_muted())
+                                        .child(role.description.clone()),
+                                )
+                                .child(h_flex().gap(gap_sm()).children(role.tags.iter().map(
+                                    |tag| {
+                                        div()
+                                            .px(pad_sm())
+                                            .py(px(2.))
+                                            .bg(card_bg_transparent())
+                                            .rounded(border_radius_sm())
+                                            .child(
+                                                txt(font_size_xs())
+                                                    .text_color(text_color_muted())
+                                                    .child(tag.clone()),
+                                            )
+                                            .into_any_element()
+                                    },
+                                )))
+                                .child(
+                                    h_flex().gap(gap_sm()).child(
+                                        txt(font_size_xs())
+                                            .text_color(text_color_very_muted())
+                                            .child(format!(
+                                                "推荐 CLI: {}",
+                                                role.cli_suggestion.join(", ")
+                                            )),
+                                    ),
+                                ),
+                        )
+                        .into_any_element()
+                }))
+                .into_any_element()
         })
 }
 

@@ -732,6 +732,11 @@ impl HerdrIpcClient {
         }
     }
 
+    /// Return the socket path this client is configured to use.
+    pub fn socket_path(&self) -> &std::path::Path {
+        &self.socket_path
+    }
+
     /// Connect to herdr and verify it's responsive via a ping.
     pub fn connect(&mut self) -> Result<(), AiError> {
         let stream = UnixStream::connect(&self.socket_path)
