@@ -144,13 +144,14 @@ mod tests {
     fn test_render_error_card() {
         let msg = ChatMessage {
             id: 1,
-            session_id: "s1".into(),
+            session_id: "s".into(),
             role: "error".into(),
-            content: "API key invalid".into(),
+            content: "Something went wrong".into(),
             agent_activities: None,
             reasoning_text: None,
+            reasoning_duration_ms: None,
             timestamp: "now".into(),
-            sequence: 0,
+            sequence: 1,
         };
         let _element = render(&msg, &test_theme(), noop_handler(), 0);
     }

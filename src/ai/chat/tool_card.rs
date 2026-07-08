@@ -196,12 +196,13 @@ mod tests {
     fn tool_msg(activities: Option<&str>) -> ChatMessage {
         ChatMessage {
             id: 1,
-            session_id: "s1".into(),
+            session_id: "s-test".into(),
             role: "tool".into(),
-            content: "Task complete".into(),
-            agent_activities: activities.map(String::from),
+            content: "tool output".into(),
+            agent_activities: activities.map(|a| a.to_string()),
             reasoning_text: None,
-            timestamp: "now".into(),
+            reasoning_duration_ms: None,
+            timestamp: "2024-01-01T00:00:00Z".into(),
             sequence: 0,
         }
     }

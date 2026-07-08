@@ -2995,6 +2995,7 @@ fn start_chat_streaming(this: &mut ZenixApp, text: String, cx: &mut gpui::Contex
             content: text.clone(),
             agent_activities: None,
             reasoning_text: None,
+            reasoning_duration_ms: None,
             timestamp: timestamp_now(),
             sequence: next_seq,
         };
@@ -3017,6 +3018,7 @@ fn start_chat_streaming(this: &mut ZenixApp, text: String, cx: &mut gpui::Contex
             content: String::new(),
             agent_activities: None,
             reasoning_text: None,
+            reasoning_duration_ms: None,
             timestamp: timestamp_now(),
             sequence: next_seq + 1,
         };
@@ -3225,6 +3227,17 @@ fn start_chat_streaming(this: &mut ZenixApp, text: String, cx: &mut gpui::Contex
         //     the assistant message via Token events.
         let _ = this.update(cx, |this, cx| {
             if let Some(ref mut data) = this.ai_chat_panel {
+                // Store reasoning duration and auto-collapse the block.
+                if let Some(start) = data.reasoning_start_time.take() {
+                    let elapsed = start.elapsed().as_millis() as u64;
+                    if let Some(idx) = data.streaming_msg_idx {
+                        let msgs = std::rc::Rc::make_mut(&mut data.messages);
+                        if let Some(msg) = msgs.get_mut(idx) {
+                            msg.reasoning_duration_ms = Some(elapsed);
+                        }
+                        data.expanded_reasoning_ids.remove(&idx);
+                    }
+                }
                 data.is_streaming = false;
                 data.streaming_msg_idx = None;
                 data.abort_handle = None;
@@ -3263,6 +3276,11 @@ fn handle_dispatch_event(
         }
         DispatchStreamEvent::Thinking(text) => {
             if let Some(idx) = data.streaming_msg_idx {
+                // Record start time and expand block on first thinking chunk.
+                if data.reasoning_start_time.is_none() {
+                    data.reasoning_start_time = Some(std::time::Instant::now());
+                    data.expanded_reasoning_ids.insert(idx);
+                }
                 let msgs = std::rc::Rc::make_mut(&mut data.messages);
                 if let Some(msg) = msgs.get_mut(idx) {
                     let reasoning = msg.reasoning_text.get_or_insert_with(String::new);
@@ -3283,6 +3301,7 @@ fn handle_dispatch_event(
                 content: err.clone(),
                 agent_activities: None,
                 reasoning_text: None,
+                reasoning_duration_ms: None,
                 timestamp: timestamp_now(),
                 sequence: data.messages.len() as i64,
             };
@@ -3376,6 +3395,7 @@ fn handle_ai_chat_action(
                                             content: format!("→ {}: {}", worker_name, msg_body),
                                             agent_activities: None,
                                             reasoning_text: None,
+                                            reasoning_duration_ms: None,
                                             timestamp: crate::app::timestamp_now(),
                                             sequence: data.messages.len() as i64,
                                         };
@@ -3454,10 +3474,11 @@ fn handle_ai_chat_action(
             }
             cx.notify();
         }
-        AiChatAction::ToggleReasoningCollapse(msg_id) => {
+        AiChatAction::ToggleReasoningCollapse(idx) => {
             if let Some(ref mut data) = this.ai_chat_panel {
-                if !data.collapsed_reasoning_ids.remove(&msg_id) {
-                    data.collapsed_reasoning_ids.insert(msg_id);
+                let idx = idx as usize;
+                if !data.expanded_reasoning_ids.remove(&idx) {
+                    data.expanded_reasoning_ids.insert(idx);
                 }
             }
             cx.notify();

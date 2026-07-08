@@ -269,6 +269,10 @@ struct SseChoice {
 struct SseDelta {
     content: Option<String>,
     role: Option<String>,
+    /// Reasoning/thinking content from the OpenAI delta
+    /// (for reasoning models like o1, DeepSeek R1, etc.).
+    /// Present alongside `content` in SSE chunks.
+    reasoning_content: Option<String>,
 }
 
 /// Parsed Anthropic SSE event, richer than a plain `Option<String>` to
@@ -464,6 +468,11 @@ impl OrchestratorEngine {
                                                 if let Some(text) = delta.content {
                                                     on_event_clone(StreamEvent::Token(text));
                                                 }
+                                                if let Some(reasoning) = delta.reasoning_content {
+                                                    on_event_clone(StreamEvent::Thinking(
+                                                        reasoning,
+                                                    ));
+                                                }
                                             }
                                         }
                                     }
@@ -501,6 +510,9 @@ impl OrchestratorEngine {
                                 if let Some(delta) = choice.delta {
                                     if let Some(text) = delta.content {
                                         on_event_clone(StreamEvent::Token(text));
+                                    }
+                                    if let Some(reasoning) = delta.reasoning_content {
+                                        on_event_clone(StreamEvent::Thinking(reasoning));
                                     }
                                 }
                             }
@@ -668,6 +680,9 @@ pub(crate) struct SseDeltaWithTools {
     content: Option<String>,
     role: Option<String>,
     tool_calls: Option<Vec<SseToolCall>>,
+    /// Reasoning/thinking content from the OpenAI delta
+    /// (for reasoning models like o1, DeepSeek R1, etc.).
+    reasoning_content: Option<String>,
 }
 
 /// A single tool call in the SSE stream.
@@ -816,6 +831,13 @@ impl OrchestratorEngine {
                                                         text.clone(),
                                                     ));
                                                 }
+                                                if let Some(ref reasoning) =
+                                                    delta.reasoning_content
+                                                {
+                                                    on_event_clone(StreamEvent::Thinking(
+                                                        reasoning.clone(),
+                                                    ));
+                                                }
                                                 // Tool calls
                                                 for (name, args) in parse_sse_tool_calls(delta) {
                                                     on_event_clone(StreamEvent::ToolCall(
@@ -861,6 +883,11 @@ impl OrchestratorEngine {
                                 if let Some(ref delta) = choice.delta {
                                     if let Some(ref text) = delta.content {
                                         on_event_clone(StreamEvent::Token(text.clone()));
+                                    }
+                                    if let Some(ref reasoning) = delta.reasoning_content {
+                                        on_event_clone(StreamEvent::Thinking(
+                                            reasoning.clone(),
+                                        ));
                                     }
                                     for (name, args) in parse_sse_tool_calls(delta) {
                                         on_event_clone(StreamEvent::ToolCall(
@@ -2063,6 +2090,7 @@ expires before the access token refresh completes. Here's a suggested fix...
         let delta = SseDeltaWithTools {
             content: Some("hello".into()),
             role: Some("assistant".into()),
+            reasoning_content: None,
             tool_calls: None,
         };
         let calls = parse_sse_tool_calls(&delta);
@@ -2074,6 +2102,7 @@ expires before the access token refresh completes. Here's a suggested fix...
         let delta = SseDeltaWithTools {
             content: Some("".into()),
             role: Some("assistant".into()),
+            reasoning_content: None,
             tool_calls: Some(vec![SseToolCall {
                 id: "call_1".into(),
                 call_type: "function".into(),
@@ -2094,6 +2123,7 @@ expires before the access token refresh completes. Here's a suggested fix...
         let delta = SseDeltaWithTools {
             content: Some("".into()),
             role: Some("assistant".into()),
+            reasoning_content: None,
             tool_calls: Some(vec![SseToolCall {
                 id: "call_1".into(),
                 call_type: "function".into(),

@@ -192,8 +192,12 @@ pub struct AiChatPanelData {
     // ── Collapse state ───────────────────────────────────────────
     /// Set of message ids whose tool card body is collapsed.
     pub collapsed_tool_ids: HashSet<i64>,
-    /// Set of message ids whose reasoning block is collapsed.
-    pub collapsed_reasoning_ids: HashSet<i64>,
+    /// Set of message list-indices whose reasoning block is expanded.
+    /// Empty set = all collapsed by default (inverted from collapsed_reasoning_ids).
+    pub expanded_reasoning_ids: HashSet<usize>,
+    /// Wall-clock time when reasoning content first arrives in the current
+    /// streaming message. Used to compute `reasoning_duration_ms` on stream completion.
+    pub reasoning_start_time: Option<std::time::Instant>,
 }
 
 /// A workspace option for the config bar dropdown.
@@ -250,7 +254,8 @@ impl Default for AiChatPanelData {
             mention_query: String::new(),
             mention_selected_idx: 0,
             collapsed_tool_ids: HashSet::new(),
-            collapsed_reasoning_ids: HashSet::new(),
+            expanded_reasoning_ids: HashSet::new(),
+            reasoning_start_time: None,
         }
     }
 }
@@ -304,6 +309,7 @@ impl AiChatPanelData {
             content: result.output.clone(),
             agent_activities: Some(activities),
             reasoning_text: None,
+            reasoning_duration_ms: None,
             timestamp: crate::app::timestamp_now(),
             sequence: self.messages.len() as i64,
         };

@@ -29,6 +29,9 @@ pub struct ChatMessage {
     /// main text. Set during streaming via `DispatchStreamEvent::Thinking`.
     /// Not persisted to SQLite — ephemeral display-only field.
     pub reasoning_text: Option<String>,
+    /// Elapsed time for reasoning in milliseconds, set on stream completion.
+    /// Displayed in the collapsed reasoning block header as "Thought: Xms".
+    pub reasoning_duration_ms: Option<u64>,
     pub timestamp: String,
     pub sequence: i64,
 }
@@ -399,6 +402,7 @@ fn map_message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatMessage> {
         content: row.get(3)?,
         agent_activities: row.get(4)?,
         reasoning_text: None,
+        reasoning_duration_ms: None,
         timestamp: row.get(5)?,
         sequence: row.get(6)?,
     })
@@ -413,6 +417,7 @@ fn map_search_hit_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SearchHit> {
             content: row.get(3)?,
             agent_activities: row.get(4)?,
             reasoning_text: None,
+            reasoning_duration_ms: None,
             timestamp: row.get(5)?,
             sequence: row.get(6)?,
         },
@@ -469,6 +474,7 @@ mod tests {
             content: content.to_string(),
             agent_activities: None,
             reasoning_text: None,
+            reasoning_duration_ms: None,
             timestamp: "2024-01-01T00:00:00".to_string(),
             sequence: seq,
         }

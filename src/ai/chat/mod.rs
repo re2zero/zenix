@@ -120,7 +120,8 @@ pub fn render_ai_chat_panel(
         let is_streaming = data.is_streaming;
         let hovered_msg_id = data.hovered_msg_id;
         let collapsed_tool_ids = data.collapsed_tool_ids.clone();
-        let collapsed_reasoning_ids = data.collapsed_reasoning_ids.clone();
+        let expanded_reasoning_ids = data.expanded_reasoning_ids.clone();
+        let reasoning_start_time = data.reasoning_start_time;
         let on_action_for_hover = on_action.clone();
         let on_action_for_tool = on_action.clone();
         let on_action_for_reasoning = on_action.clone();
@@ -132,9 +133,11 @@ pub fn render_ai_chat_panel(
                 }
                 let msg = &messages[ix];
                 let is_streaming_tail = is_streaming && streaming_msg_idx == Some(ix);
-                let reasoning_collapsed = collapsed_reasoning_ids.contains(&msg.id);
+                let reasoning_collapsed = !expanded_reasoning_ids.contains(&ix);
+                let reasoning_elapsed_secs = reasoning_start_time
+                    .filter(|_| is_streaming && streaming_msg_idx == Some(ix))
+                    .map(|t| t.elapsed().as_secs_f32());
                 let reasoning_toggle = on_action_for_reasoning.clone();
-                let msg_id_for_reasoning = msg.id;
                 let rctx = messages::RenderCtx {
                     panel_width,
                     is_streaming_tail,
@@ -142,11 +145,12 @@ pub fn render_ai_chat_panel(
                     reasoning_collapsed,
                     on_toggle_reasoning: Some(std::rc::Rc::new(move |window, cx| {
                         (reasoning_toggle)(
-                            state::AiChatAction::ToggleReasoningCollapse(msg_id_for_reasoning),
+                            state::AiChatAction::ToggleReasoningCollapse(ix as i64),
                             window,
                             cx,
                         );
                     })),
+                    reasoning_elapsed_secs,
                 };
                 let msg_id = msg.id;
                 let inner = match msg.role.as_str() {
