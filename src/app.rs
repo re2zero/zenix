@@ -813,7 +813,7 @@ impl ZenixApp {
                     .ai_chat_panel
                     .as_ref()
                     .map(|d| d.ai_panel_width)
-                    .unwrap_or(sidebar::AI_PANEL_WIDTH),
+                    .unwrap_or(420.0),
                 Panel::SystemInfo => self.system_info_width,
                 Panel::None => 0.0,
             };
@@ -1245,7 +1245,7 @@ impl Render for ZenixApp {
                         crate::ai::chat::resize::MAX_PANEL_WIDTH,
                     )
                 })
-                .unwrap_or(sidebar::AI_PANEL_WIDTH),
+                .unwrap_or(420.0),
             Panel::SystemInfo => self.system_info_width,
             Panel::None => 0.0,
         };
@@ -2994,6 +2994,7 @@ fn start_chat_streaming(this: &mut ZenixApp, text: String, cx: &mut gpui::Contex
             role: "user".into(),
             content: text.clone(),
             agent_activities: None,
+            reasoning_text: None,
             timestamp: timestamp_now(),
             sequence: next_seq,
         };
@@ -3015,6 +3016,7 @@ fn start_chat_streaming(this: &mut ZenixApp, text: String, cx: &mut gpui::Contex
             role: "assistant".into(),
             content: String::new(),
             agent_activities: None,
+            reasoning_text: None,
             timestamp: timestamp_now(),
             sequence: next_seq + 1,
         };
@@ -3259,6 +3261,16 @@ fn handle_dispatch_event(
                 cx.notify();
             }
         }
+        DispatchStreamEvent::Thinking(text) => {
+            if let Some(idx) = data.streaming_msg_idx {
+                let msgs = std::rc::Rc::make_mut(&mut data.messages);
+                if let Some(msg) = msgs.get_mut(idx) {
+                    let reasoning = msg.reasoning_text.get_or_insert_with(String::new);
+                    reasoning.push_str(&text);
+                    cx.notify();
+                }
+            }
+        }
         DispatchStreamEvent::Error(err) => {
             data.is_streaming = false;
             data.streaming_msg_idx = None;
@@ -3270,6 +3282,7 @@ fn handle_dispatch_event(
                 role: "error".into(),
                 content: err.clone(),
                 agent_activities: None,
+                reasoning_text: None,
                 timestamp: timestamp_now(),
                 sequence: data.messages.len() as i64,
             };
@@ -3362,6 +3375,7 @@ fn handle_ai_chat_action(
                                             role: "user".into(),
                                             content: format!("→ {}: {}", worker_name, msg_body),
                                             agent_activities: None,
+                                            reasoning_text: None,
                                             timestamp: crate::app::timestamp_now(),
                                             sequence: data.messages.len() as i64,
                                         };
@@ -3431,6 +3445,22 @@ fn handle_ai_chat_action(
             } else {
                 tracing::warn!(target: "zenixai", "retry requested but no last prompt");
             }
+        }
+        AiChatAction::ToggleToolCollapse(msg_id) => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                if !data.collapsed_tool_ids.remove(&msg_id) {
+                    data.collapsed_tool_ids.insert(msg_id);
+                }
+            }
+            cx.notify();
+        }
+        AiChatAction::ToggleReasoningCollapse(msg_id) => {
+            if let Some(ref mut data) = this.ai_chat_panel {
+                if !data.collapsed_reasoning_ids.remove(&msg_id) {
+                    data.collapsed_reasoning_ids.insert(msg_id);
+                }
+            }
+            cx.notify();
         }
         AiChatAction::ToggleModelDropdown => {
             if let Some(ref mut data) = this.ai_chat_panel {

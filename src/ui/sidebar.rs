@@ -21,7 +21,6 @@ pub enum Panel {
 
 pub const SIDEBAR_WIDTH: f32 = 44.0;
 pub const PANEL_WIDTH: f32 = 280.0;
-pub const AI_PANEL_WIDTH: f32 = 400.0;
 
 pub type ThemeCallback = Box<dyn Fn(&ClickEvent, &mut Window, &mut gpui::App)>;
 

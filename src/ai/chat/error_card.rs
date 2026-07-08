@@ -148,6 +148,7 @@ mod tests {
             role: "error".into(),
             content: "API key invalid".into(),
             agent_activities: None,
+            reasoning_text: None,
             timestamp: "now".into(),
             sequence: 0,
         };

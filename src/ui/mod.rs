@@ -5,5 +5,5 @@ mod sidebar;
 
 pub use settings::settings_dialog;
 pub use sidebar::{
-    AI_PANEL_WIDTH, PANEL_WIDTH, Panel, SIDEBAR_WIDTH, ThemeCallback, sidebar, system_info_panel,
+    PANEL_WIDTH, Panel, SIDEBAR_WIDTH, ThemeCallback, sidebar, system_info_panel,
 };

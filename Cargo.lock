@@ -9176,6 +9176,7 @@ dependencies = [
  "gpui_platform",
  "image",
  "interprocess",
+ "open",
  "portable-pty",
  "reqwest",
  "rusqlite",

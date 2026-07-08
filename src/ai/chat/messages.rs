@@ -1,10 +1,11 @@
 //! Message rendering — single message bubble + streaming tail cursor.
 
+use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt, AnyElement, IntoElement, ParentElement as _, Styled as _, div,
-    prelude::FluentBuilder as _, px,
+    Animation, AnimationExt, AnyElement, App, InteractiveElement as _, IntoElement, MouseButton,
+    ParentElement as _, Styled as _, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{Theme, h_flex, v_flex};
 
@@ -15,32 +16,51 @@ pub(super) struct RenderCtx {
     pub panel_width: f32,
     pub is_streaming_tail: bool,
     pub is_hovered: bool,
+    pub reasoning_collapsed: bool,
+    pub on_toggle_reasoning: Option<Rc<dyn Fn(&mut Window, &mut App) + 'static>>,
 }
 
 pub(super) fn render_message(msg: &ChatMessage, theme: &Theme, ctx: &RenderCtx) -> AnyElement {
     let th = theme.clone();
     let is_user = msg.role == "user";
+    let mu = th.muted_foreground;
+    let border = th.border;
+
+    let mut elements: Vec<AnyElement> = Vec::new();
+
+    // Reasoning block (assistant messages only)
+    if !is_user {
+        if let Some(ref reasoning) = msg.reasoning_text {
+            if !reasoning.is_empty() {
+                elements.push(render_reasoning_block(
+                    reasoning,
+                    theme,
+                    ctx.reasoning_collapsed,
+                    &ctx.on_toggle_reasoning,
+                ));
+            }
+        }
+    }
 
     let segments = markdown::render_markdown(&msg.content, theme);
-    let body: AnyElement = if is_user {
-        v_flex()
-            .gap(px(2.))
-            .w_full()
-            .children(segments)
-            .into_any_element()
+    if is_user {
+        elements.push(
+            v_flex()
+                .gap(px(2.))
+                .w_full()
+                .children(segments)
+                .into_any_element(),
+        );
     } else {
         let mut container = v_flex().gap(px(2.)).w_full().children(segments);
         if ctx.is_streaming_tail {
             container = container.child(streaming_cursor(&th));
         }
-        container.into_any_element()
-    };
+        elements.push(container.into_any_element());
+    }
 
-    let timestamp = msg.timestamp.clone();
     let accent = th.accent;
     let muted = th.muted;
-    let mu = th.muted_foreground;
-    let border = th.border;
 
     if is_user {
         let max_w = (ctx.panel_width * 0.88).clamp(120.0, 480.0);
@@ -58,7 +78,7 @@ pub(super) fn render_message(msg: &ChatMessage, theme: &Theme, ctx: &RenderCtx) 
                         .p(px(10.))
                         .px(px(14.))
                         .whitespace_normal()
-                        .child(body),
+                        .children(elements),
                 ),
             )
             .into_any_element()
@@ -77,10 +97,77 @@ pub(super) fn render_message(msg: &ChatMessage, theme: &Theme, ctx: &RenderCtx) 
                     .p(px(10.))
                     .px(px(14.))
                     .whitespace_normal()
-                    .child(body),
+                    .children(elements),
             )
             .into_any_element()
     }
+}
+
+fn render_reasoning_block(
+    text: &str,
+    theme: &Theme,
+    collapsed: bool,
+    on_toggle: &Option<Rc<dyn Fn(&mut Window, &mut App) + 'static>>,
+) -> AnyElement {
+    let th = theme.clone();
+    let mu = th.muted_foreground;
+    let fg = th.foreground;
+    let border = th.border;
+    let bg = th.background;
+
+    let arrow = if collapsed { "▶" } else { "▼" };
+    let body: AnyElement = if collapsed {
+        div().h(px(0.)).into_any_element()
+    } else {
+        div()
+            .p(px(8.))
+            .child(
+                v_flex()
+                    .gap(px(2.))
+                    .child(super::txt(px(11.)).text_color(mu).child(text.to_string())),
+            )
+            .into_any_element()
+    };
+
+    let header = h_flex()
+        .gap(px(6.))
+        .items_center()
+        .px(px(8.))
+        .py(px(6.))
+        .child(super::txt(px(11.)).text_color(mu).child(arrow))
+        .child(
+            super::txt(px(11.))
+                .font_weight(gpui::FontWeight::MEDIUM)
+                .text_color(mu)
+                .child("reasoned"),
+        );
+
+    let clickable_header: AnyElement = if let Some(toggle) = on_toggle.as_ref() {
+        let toggle = toggle.clone();
+        div()
+            .cursor_pointer()
+            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                (toggle)(window, cx);
+            })
+            .child(header)
+            .into_any_element()
+    } else {
+        header.into_any_element()
+    };
+
+    v_flex()
+        .w_full()
+        .rounded_md()
+        .border_1()
+        .border_color(border)
+        .overflow_hidden()
+        .child(clickable_header)
+        .child(
+            div()
+                .bg(bg)
+                .child(body),
+        )
+        .into_any_element()
 }
 
 fn timestamp_row(text: &str, mu: gpui::Hsla) -> AnyElement {
@@ -124,6 +211,8 @@ mod tests {
             panel_width,
             is_streaming_tail: tail,
             is_hovered: hovered,
+            reasoning_collapsed: false,
+            on_toggle_reasoning: None,
         }
     }
 
@@ -134,6 +223,7 @@ mod tests {
             role: "user".into(),
             content: "Hello".into(),
             agent_activities: None,
+            reasoning_text: None,
             timestamp: "now".into(),
             sequence: 0,
         }
@@ -146,6 +236,7 @@ mod tests {
             role: "assistant".into(),
             content: "Hi there!".into(),
             agent_activities: None,
+            reasoning_text: None,
             timestamp: "now".into(),
             sequence: 1,
         }

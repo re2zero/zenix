@@ -120,6 +120,8 @@ pub struct ChatMessageRef {
 pub enum StreamEvent {
     /// A token chunk from the LLM response.
     Token(String),
+    /// A thinking (reasoning) token chunk from the LLM.
+    Thinking(String),
     /// An error occurred during streaming.
     Error(String),
     /// The stream has finished.
@@ -216,6 +218,8 @@ pub struct CompactionInfo {
 pub enum DispatchStreamEvent {
     /// A token chunk from the LLM response.
     Token(String),
+    /// A thinking (reasoning) token chunk.
+    Thinking(String),
     /// The orchestrator decided to dispatch one or more agents.
     Dispatch(DispatchDirective),
     /// Agent output chunk (streamed in real-time).
@@ -267,28 +271,69 @@ struct SseDelta {
     role: Option<String>,
 }
 
-/// Parse an Anthropic SSE event line into text content or a done marker.
+/// Parsed Anthropic SSE event, richer than a plain `Option<String>` to
+/// distinguish thinking content from text tokens.
+#[derive(Debug)]
+enum AnthropicSseEvent {
+    /// A text token chunk.
+    Text(String),
+    /// A thinking (reasoning) token chunk.
+    Thinking(String),
+    /// The stream has finished (message_stop).
+    Done,
+    /// Non-content event — skip (content_block_start, ping, etc.).
+    Ignored,
+}
+
+/// Parse an Anthropic SSE event line into one of the `AnthropicSseEvent` variants.
 ///
 /// Anthropic's `/v1/messages` SSE stream emits events like:
 ///   `data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"hello"}}`
-/// where `delta.text` holds the text content (NOT nested under `delta.text_delta.text`).
+///   `data: {"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"..."}}`
 /// Terminated by:
 ///   `data: {"type":"message_stop"}`
-///
-/// Returns `Some("text")` for text deltas, `Some("__DONE__")` for message_stop,
-/// or `None` for non-text events (e.g. content_block_start, ping).
-fn parse_anthropic_sse_event(data: &str) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_str(data).ok()?;
-    let event_type = value.get("type")?.as_str()?;
+fn parse_anthropic_sse_event(data: &str) -> AnthropicSseEvent {
+    let Ok(value) = serde_json::from_str::<serde_json::Value>(data) else {
+        return AnthropicSseEvent::Ignored;
+    };
+    let Some(event_type) = value.get("type").and_then(|v| v.as_str()) else {
+        return AnthropicSseEvent::Ignored;
+    };
 
     match event_type {
-        "message_stop" => Some("__DONE__".to_string()),
+        "message_stop" => AnthropicSseEvent::Done,
         "content_block_delta" => {
-            // Anthropic format: delta.text contains the text directly
-            let delta = value.get("delta")?.as_object()?;
-            delta.get("text")?.as_str().map(String::from)
+            let Some(delta) = value.get("delta") else {
+                return AnthropicSseEvent::Ignored;
+            };
+            // Check delta.type to distinguish text vs thinking
+            match delta.get("type").and_then(|v| v.as_str()) {
+                Some("text_delta") => {
+                    if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
+                        AnthropicSseEvent::Text(text.to_string())
+                    } else {
+                        AnthropicSseEvent::Ignored
+                    }
+                }
+                Some("thinking_delta") => {
+                    if let Some(text) = delta.get("thinking").and_then(|v| v.as_str()) {
+                        AnthropicSseEvent::Thinking(text.to_string())
+                    } else {
+                        AnthropicSseEvent::Ignored
+                    }
+                }
+                _ => {
+                    // Fallback: try delta.text (compatibility with OpenAI-format proxied
+                    // endpoints that don't nest under type-specific deltas).
+                    if let Some(text) = delta.get("text").and_then(|v| v.as_str()) {
+                        AnthropicSseEvent::Text(text.to_string())
+                    } else {
+                        AnthropicSseEvent::Ignored
+                    }
+                }
+            }
         }
-        _ => None,
+        _ => AnthropicSseEvent::Ignored,
     }
 }
 
@@ -422,11 +467,16 @@ impl OrchestratorEngine {
                                             }
                                         }
                                     }
-                                } else if let Some(text) = parse_anthropic_sse_event(data) {
-                                    if text == "__DONE__" {
-                                        done = true;
-                                    } else if !text.is_empty() {
-                                        on_event_clone(StreamEvent::Token(text));
+                                } else {
+                                    match parse_anthropic_sse_event(data) {
+                                        AnthropicSseEvent::Text(text) if !text.is_empty() => {
+                                            on_event_clone(StreamEvent::Token(text));
+                                        }
+                                        AnthropicSseEvent::Thinking(text) if !text.is_empty() => {
+                                            on_event_clone(StreamEvent::Thinking(text));
+                                        }
+                                        AnthropicSseEvent::Done => done = true,
+                                        _ => {}
                                     }
                                 }
                             }
@@ -455,11 +505,16 @@ impl OrchestratorEngine {
                                 }
                             }
                         }
-                    } else if let Some(text) = parse_anthropic_sse_event(data) {
-                        if text == "__DONE__" {
-                            done = true;
-                        } else if !text.is_empty() {
-                            on_event_clone(StreamEvent::Token(text));
+                    } else {
+                        match parse_anthropic_sse_event(data) {
+                            AnthropicSseEvent::Text(text) if !text.is_empty() => {
+                                on_event_clone(StreamEvent::Token(text));
+                            }
+                            AnthropicSseEvent::Thinking(text) if !text.is_empty() => {
+                                on_event_clone(StreamEvent::Thinking(text));
+                            }
+                            AnthropicSseEvent::Done => done = true,
+                            _ => {}
                         }
                     }
                 }
@@ -772,11 +827,16 @@ impl OrchestratorEngine {
                                             }
                                         }
                                     }
-                                } else if let Some(text) = parse_anthropic_sse_event(data) {
-                                    if text == "__DONE__" {
-                                        done = true;
-                                    } else if !text.is_empty() {
-                                        on_event_clone(StreamEvent::Token(text));
+                                } else {
+                                    match parse_anthropic_sse_event(data) {
+                                        AnthropicSseEvent::Text(text) if !text.is_empty() => {
+                                            on_event_clone(StreamEvent::Token(text));
+                                        }
+                                        AnthropicSseEvent::Thinking(text) if !text.is_empty() => {
+                                            on_event_clone(StreamEvent::Thinking(text));
+                                        }
+                                        AnthropicSseEvent::Done => done = true,
+                                        _ => {}
                                     }
                                 }
                             }
@@ -812,11 +872,16 @@ impl OrchestratorEngine {
                                 }
                             }
                         }
-                    } else if let Some(text) = parse_anthropic_sse_event(data) {
-                        if text == "__DONE__" {
-                            done = true;
-                        } else if !text.is_empty() {
-                            on_event_clone(StreamEvent::Token(text));
+                    } else {
+                        match parse_anthropic_sse_event(data) {
+                            AnthropicSseEvent::Text(text) if !text.is_empty() => {
+                                on_event_clone(StreamEvent::Token(text));
+                            }
+                            AnthropicSseEvent::Thinking(text) if !text.is_empty() => {
+                                on_event_clone(StreamEvent::Thinking(text));
+                            }
+                            AnthropicSseEvent::Done => done = true,
+                            _ => {}
                         }
                     }
                 }
@@ -1036,6 +1101,9 @@ impl OrchestratorEngine {
                         StreamEvent::Token(text) => {
                             collected_clone.lock().unwrap().push_str(&text);
                             on_event_clone(DispatchStreamEvent::Token(text));
+                        }
+                        StreamEvent::Thinking(text) => {
+                            on_event_clone(DispatchStreamEvent::Thinking(text));
                         }
                         StreamEvent::ToolCall(name, args) => {
                             collected_clone
@@ -1565,6 +1633,9 @@ impl OrchestratorEngine {
                     collected_clone.lock().unwrap().push_str(&text);
                     on_event(DispatchStreamEvent::Token(text));
                 }
+                StreamEvent::Thinking(text) => {
+                    on_event(DispatchStreamEvent::Thinking(text));
+                }
                 StreamEvent::Error(err) => {
                     on_event(DispatchStreamEvent::Error(err));
                 }
@@ -1881,35 +1952,52 @@ expires before the access token refresh completes. Here's a suggested fix...
     fn test_parse_anthropic_text_delta() {
         let data =
             r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"hello world"}}"#;
-        assert_eq!(
+        assert!(matches!(
             parse_anthropic_sse_event(data),
-            Some("hello world".to_string())
-        );
+            AnthropicSseEvent::Text(t) if t == "hello world"
+        ));
+    }
+
+    #[test]
+    fn test_parse_anthropic_thinking_delta() {
+        let data =
+            r#"{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"reasoning..."}}"#;
+        assert!(matches!(
+            parse_anthropic_sse_event(data),
+            AnthropicSseEvent::Thinking(t) if t == "reasoning..."
+        ));
     }
 
     #[test]
     fn test_parse_anthropic_message_stop() {
         let data = r#"{"type":"message_stop"}"#;
-        assert_eq!(
-            parse_anthropic_sse_event(data),
-            Some("__DONE__".to_string())
-        );
+        assert!(matches!(parse_anthropic_sse_event(data), AnthropicSseEvent::Done));
     }
 
     #[test]
     fn test_parse_anthropic_content_block_start_ignored() {
         let data = r#"{"type":"content_block_start","index":0}"#;
-        assert_eq!(parse_anthropic_sse_event(data), None);
+        assert!(matches!(parse_anthropic_sse_event(data), AnthropicSseEvent::Ignored));
     }
 
     #[test]
     fn test_parse_anthropic_invalid_json() {
-        assert_eq!(parse_anthropic_sse_event("not json"), None);
+        assert!(matches!(parse_anthropic_sse_event("not json"), AnthropicSseEvent::Ignored));
     }
 
     #[test]
     fn test_parse_anthropic_empty_data() {
-        assert_eq!(parse_anthropic_sse_event(""), None);
+        assert!(matches!(parse_anthropic_sse_event(""), AnthropicSseEvent::Ignored));
+    }
+
+    #[test]
+    fn test_parse_anthropic_text_fallback() {
+        // OpenAI-format proxy: delta.text without delta.type
+        let data = r#"{"type":"content_block_delta","delta":{"text":"fallback text"}}"#;
+        assert!(matches!(
+            parse_anthropic_sse_event(data),
+            AnthropicSseEvent::Text(t) if t == "fallback text"
+        ));
     }
 
     // ── ToolExecutor tests ──────────────────────────────────────────────

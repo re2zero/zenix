@@ -2,6 +2,7 @@
 //!
 //! Owned by `ZenixApp.ai_chat_panel` as `Option<AiChatPanelData>`.
 
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use crate::ai::engine::AgentResult;
@@ -59,6 +60,11 @@ pub enum AiChatAction {
     MentionPrev,
     /// Confirm the selected mention item.
     MentionConfirm,
+    // ── Collapse toggles ────────────────────────────────────────
+    /// Toggle collapse state for a tool card by message id.
+    ToggleToolCollapse(i64),
+    /// Toggle collapse state for a reasoning block by message id.
+    ToggleReasoningCollapse(i64),
     // ── Keyboard shortcuts (Phase 7.2) ──────────────────────────
     /// Esc: stop streaming or clear input.
     Escape,
@@ -182,6 +188,12 @@ pub struct AiChatPanelData {
     pub show_mention_popup: bool,
     pub mention_query: String,
     pub mention_selected_idx: usize,
+
+    // ── Collapse state ───────────────────────────────────────────
+    /// Set of message ids whose tool card body is collapsed.
+    pub collapsed_tool_ids: HashSet<i64>,
+    /// Set of message ids whose reasoning block is collapsed.
+    pub collapsed_reasoning_ids: HashSet<i64>,
 }
 
 /// A workspace option for the config bar dropdown.
@@ -227,7 +239,7 @@ impl Default for AiChatPanelData {
             last_user_prompt: None,
             abort_handle: None,
             retry_last_prompt: None,
-            ai_panel_width: super::AI_PANEL_WIDTH,
+            ai_panel_width: 420.0,
             header_menu_open: false,
             hovered_msg_id: None,
             models_fetch_attempted: false,
@@ -237,6 +249,8 @@ impl Default for AiChatPanelData {
             show_mention_popup: false,
             mention_query: String::new(),
             mention_selected_idx: 0,
+            collapsed_tool_ids: HashSet::new(),
+            collapsed_reasoning_ids: HashSet::new(),
         }
     }
 }
@@ -289,6 +303,7 @@ impl AiChatPanelData {
             role: "tool".into(),
             content: result.output.clone(),
             agent_activities: Some(activities),
+            reasoning_text: None,
             timestamp: crate::app::timestamp_now(),
             sequence: self.messages.len() as i64,
         };

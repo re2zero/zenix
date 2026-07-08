@@ -21,6 +21,6 @@
   "children": [],
   "parent": null,
   "relatedFiles": [],
-  "notes": "Direction redesigned in v4 (see SESSION-RESUME.md + redesign-v4-direction.md). Code assets (chat/ 6 modules, D1 streaming, D2/D3 virtualization, D10-D12 config chain) preserved and reused by 07-06-zenixai-redesign-v4. Scope mistake in original PRD (deferred visual work) corrected in v4.",
+  "notes": "Direction redesigned in v4 (see SESSION-RESUME.md + redesign-v4-direction.md). Code assets (chat/ 6 modules, D1 streaming, D2/D3 virtualization, D10-D12 config chain) preserved and reused by 07-06-zenixai-redesign-v4 (merged dc66ec6). All structural Phase 0-9 complete. Remaining: tool call folding (accordion), reasoning blocks, minor cleanup — tracked in 07-08-zenixai-chat-polish.",
   "meta": {}
 }

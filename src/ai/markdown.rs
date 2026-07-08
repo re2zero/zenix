@@ -11,7 +11,10 @@
 //! inside a chat bubble.
 
 use gpui::prelude::FluentBuilder as _;
-use gpui::{AnyElement, FontWeight, IntoElement, ParentElement as _, Styled as _, div, px};
+use gpui::{
+    AnyElement, FontWeight, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _,
+    Styled as _, div, px,
+};
 use gpui_component::{Theme, h_flex, v_flex};
 
 // ── Segment types ───────────────────────────────────────────────────────
@@ -581,12 +584,19 @@ fn render_segments(segments: &[MdSegment], theme: &Theme) -> Vec<AnyElement> {
                         .child(s.clone()),
                 )
                 .into_any_element(),
-            MdSegment::Link(text, _url) => txt(px(13.))
-                .text_color(theme.accent)
-                .underline()
-                .line_height(px(18.))
-                .child(text.clone())
-                .into_any_element(),
+            MdSegment::Link(text, url) => {
+                let url = url.clone();
+                txt(px(13.))
+                    .text_color(theme.accent)
+                    .underline()
+                    .cursor_pointer()
+                    .line_height(px(18.))
+                    .on_mouse_down(MouseButton::Left, move |_, _window, _cx| {
+                        let _ = open::that(url.as_str());
+                    })
+                    .child(text.clone())
+                    .into_any_element()
+            }
             MdSegment::Task(checked, s) => {
                 let box_char = if *checked { "☑" } else { "☐" };
                 let box_color = if *checked { theme.accent } else { mu };

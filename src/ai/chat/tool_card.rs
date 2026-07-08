@@ -4,10 +4,13 @@
 //! ChatMessage and renders a foldable card showing agent_name / status /
 //! summary. Reuses the same visual language as `agent_block.rs`.
 
+use std::rc::Rc;
+
 use crate::ai::markdown;
 use crate::ai::session::ChatMessage;
 use gpui::{
-    AnyElement, IntoElement, ParentElement as _, Styled as _, div, prelude::FluentBuilder as _, px,
+    AnyElement, App, InteractiveElement as _, IntoElement, MouseButton, ParentElement as _,
+    Styled as _, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{Theme, h_flex, v_flex};
 
@@ -51,7 +54,13 @@ fn parse_meta(msg: &ChatMessage) -> ToolMeta {
     }
 }
 
-pub(super) fn render(msg: &ChatMessage, theme: &Theme, group_count: Option<usize>) -> AnyElement {
+pub(super) fn render(
+    msg: &ChatMessage,
+    theme: &Theme,
+    group_count: Option<usize>,
+    collapsed: bool,
+    on_toggle: Rc<dyn Fn(&mut Window, &mut App) + 'static>,
+) -> AnyElement {
     let th = theme.clone();
     let mu = th.muted_foreground;
     let fg = th.foreground;
@@ -113,9 +122,15 @@ pub(super) fn render(msg: &ChatMessage, theme: &Theme, group_count: Option<usize
                     )
                 }),
         )
-        .child(super::txt(px(10.)).text_color(mu).child("▼"));
+        .child(
+            super::txt(px(10.))
+                .text_color(mu)
+                .child(if collapsed { "▶" } else { "▼" }),
+        );
 
-    let body: AnyElement = if msg.content.trim().is_empty() {
+    let body: AnyElement = if collapsed {
+        div().into_any_element()
+    } else if msg.content.trim().is_empty() {
         let summary = meta.summary.unwrap_or_else(|| meta.status.clone());
         div()
             .p(px(10.))
@@ -151,8 +166,15 @@ pub(super) fn render(msg: &ChatMessage, theme: &Theme, group_count: Option<usize
                 .border_1()
                 .border_color(border)
                 .overflow_hidden()
-                .child(header.into_any_element())
-                .child(body),
+                .child(
+            div()
+                .cursor_pointer()
+                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                    (on_toggle)(window, cx);
+                })
+                .child(header),
+        )
+        .child(body),
         )
         .into_any_element()
 }
@@ -160,10 +182,15 @@ pub(super) fn render(msg: &ChatMessage, theme: &Theme, group_count: Option<usize
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gpui::{App, Window};
     use gpui_component::Theme;
 
     fn test_theme() -> Theme {
         Theme::default()
+    }
+
+    fn noop_toggle() -> Rc<dyn Fn(&mut Window, &mut App) + 'static> {
+        Rc::new(|_, _| {})
     }
 
     fn tool_msg(activities: Option<&str>) -> ChatMessage {
@@ -173,6 +200,7 @@ mod tests {
             role: "tool".into(),
             content: "Task complete".into(),
             agent_activities: activities.map(String::from),
+            reasoning_text: None,
             timestamp: "now".into(),
             sequence: 0,
         }
@@ -181,18 +209,18 @@ mod tests {
     #[test]
     fn test_render_tool_card_with_meta() {
         let activities = r#"{"agent_name":"claude","status":"completed","summary":"done","is_running":false,"group_id":0}"#;
-        let _element = render(&tool_msg(Some(activities)), &test_theme(), None);
+        let _element = render(&tool_msg(Some(activities)), &test_theme(), None, false, noop_toggle());
     }
 
     #[test]
     fn test_render_tool_card_no_activities() {
-        let _element = render(&tool_msg(None), &test_theme(), None);
+        let _element = render(&tool_msg(None), &test_theme(), None, false, noop_toggle());
     }
 
     #[test]
     fn test_render_tool_card_running() {
         let activities = r#"{"agent_name":"claude","status":"running","is_running":true}"#;
-        let _element = render(&tool_msg(Some(activities)), &test_theme(), None);
+        let _element = render(&tool_msg(Some(activities)), &test_theme(), None, false, noop_toggle());
     }
 
     #[test]
@@ -200,6 +228,12 @@ mod tests {
         let activities = r#"{"agent_name":"claude","status":"completed","summary":"ok"}"#;
         let mut msg = tool_msg(Some(activities));
         msg.content = String::new();
-        let _element = render(&msg, &test_theme(), None);
+        let _element = render(&msg, &test_theme(), None, false, noop_toggle());
+    }
+
+    #[test]
+    fn test_render_tool_card_collapsed() {
+        let activities = r#"{"agent_name":"claude","status":"completed","summary":"done","is_running":false}"#;
+        let _element = render(&tool_msg(Some(activities)), &test_theme(), None, true, noop_toggle());
     }
 }

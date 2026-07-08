@@ -25,6 +25,10 @@ pub struct ChatMessage {
     pub role: String,
     pub content: String,
     pub agent_activities: Option<String>,
+    /// Reasoning/thinking content shown as a collapsible block above the
+    /// main text. Set during streaming via `DispatchStreamEvent::Thinking`.
+    /// Not persisted to SQLite — ephemeral display-only field.
+    pub reasoning_text: Option<String>,
     pub timestamp: String,
     pub sequence: i64,
 }
@@ -394,6 +398,7 @@ fn map_message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatMessage> {
         role: row.get(2)?,
         content: row.get(3)?,
         agent_activities: row.get(4)?,
+        reasoning_text: None,
         timestamp: row.get(5)?,
         sequence: row.get(6)?,
     })
@@ -407,6 +412,7 @@ fn map_search_hit_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SearchHit> {
             role: row.get(2)?,
             content: row.get(3)?,
             agent_activities: row.get(4)?,
+            reasoning_text: None,
             timestamp: row.get(5)?,
             sequence: row.get(6)?,
         },
@@ -462,6 +468,7 @@ mod tests {
             role: role.to_string(),
             content: content.to_string(),
             agent_activities: None,
+            reasoning_text: None,
             timestamp: "2024-01-01T00:00:00".to_string(),
             sequence: seq,
         }

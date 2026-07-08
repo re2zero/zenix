@@ -43,11 +43,6 @@ use gpui_component::{Theme, input::InputState, v_flex};
 
 use crate::ai::workers::WorkerRegistry;
 
-/// Width of the AI chat panel.
-///
-/// DEPRECATED in Phase 6 (响应式宽度): replaced by `ZenixApp::ai_panel_width`.
-/// Kept as a constant for now to avoid breaking existing call sites.
-pub const AI_PANEL_WIDTH: f32 = 420.0;
 
 // ═══════════════════════════════════════════════════════════════════════
 // Main render entry
@@ -124,7 +119,11 @@ pub fn render_ai_chat_panel(
         let streaming_msg_idx = data.streaming_msg_idx;
         let is_streaming = data.is_streaming;
         let hovered_msg_id = data.hovered_msg_id;
+        let collapsed_tool_ids = data.collapsed_tool_ids.clone();
+        let collapsed_reasoning_ids = data.collapsed_reasoning_ids.clone();
         let on_action_for_hover = on_action.clone();
+        let on_action_for_tool = on_action.clone();
+        let on_action_for_reasoning = on_action.clone();
         let on_action_for_retry = on_action.clone();
         msg_area = msg_area.child(
             gpui::list(list_state, move |ix, _window, _cx| {
@@ -133,10 +132,21 @@ pub fn render_ai_chat_panel(
                 }
                 let msg = &messages[ix];
                 let is_streaming_tail = is_streaming && streaming_msg_idx == Some(ix);
+                let reasoning_collapsed = collapsed_reasoning_ids.contains(&msg.id);
+                let reasoning_toggle = on_action_for_reasoning.clone();
+                let msg_id_for_reasoning = msg.id;
                 let rctx = messages::RenderCtx {
                     panel_width,
                     is_streaming_tail,
                     is_hovered: hovered_msg_id == Some(msg.id),
+                    reasoning_collapsed,
+                    on_toggle_reasoning: Some(std::rc::Rc::new(move |window, cx| {
+                        (reasoning_toggle)(
+                            state::AiChatAction::ToggleReasoningCollapse(msg_id_for_reasoning),
+                            window,
+                            cx,
+                        );
+                    })),
                 };
                 let msg_id = msg.id;
                 let inner = match msg.role.as_str() {
@@ -153,7 +163,21 @@ pub fn render_ai_chat_panel(
                         } else {
                             None
                         };
-                        tool_card::render(msg, &theme_for_list, group_count)
+                        let tool_collapsed = collapsed_tool_ids.contains(&msg_id);
+                        let tool_toggle = on_action_for_tool.clone();
+                        tool_card::render(
+                            msg,
+                            &theme_for_list,
+                            group_count,
+                            tool_collapsed,
+                            std::rc::Rc::new(move |window, cx| {
+                                (tool_toggle)(
+                                    state::AiChatAction::ToggleToolCollapse(msg_id),
+                                    window,
+                                    cx,
+                                );
+                            }),
+                        )
                     }
                     "error" => {
                         error_card::render(msg, &theme_for_list, on_action_for_retry.clone(), ix)
