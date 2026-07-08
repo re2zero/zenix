@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/ai-orchestrator.md", "reason": "Verify implementation matches orchestrator spec after updates"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Quality standards: no unwrap, clippy, formatting"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Error handling patterns to follow for new modules"}
+{"file": ".trellis/spec/frontend/gpui-ui-patterns.md", "reason": "Verify @ popup follows overlay/deferred/occlude patterns correctly"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Cross-layer data flow between RoleRegistry/WorkerRegistry/Engine/UI"}

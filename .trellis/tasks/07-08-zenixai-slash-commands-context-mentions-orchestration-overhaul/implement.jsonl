@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/backend/ai-orchestrator.md", "reason": "Existing orchestrator spec — must update to document new RoleRegistry/WorkerRegistry model"}
+{"file": ".trellis/spec/frontend/gpui-ui-patterns.md", "reason": "GPUI overlay/deferred/popover patterns for @ mention popup implementation"}
+{"file": "src/ai/engine.rs", "reason": "OrchestratorEngine — chat_and_dispatch flow, execute_agent_task, parse_dispatch_directive — needs worker registration hooks"}
+{"file": "src/ai/tools.rs", "reason": "Tool system — may need new tools for role/worker management"}
+{"file": "src/ai/chat/input.rs", "reason": "Input handling — @ detection and routing logic lives here"}
+{"file": "src/ai/chat/state.rs", "reason": "AiChatPanelData — must wire WorkerRegistry and @ popup state"}
+{"file": "src/ai/chat/drawer.rs", "reason": "Drawer — Agent supervision panel implementation"}
+{"file": "src/ai/chat/agent_block.rs", "reason": "AgentBlock/AgentMonitorEntry — types used by worker supervision"}
+{"file": "src/ai/session.rs", "reason": "Session/agent activity persistence model"}
