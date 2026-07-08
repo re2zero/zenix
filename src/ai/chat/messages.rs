@@ -23,9 +23,9 @@ pub(super) fn render_message(msg: &ChatMessage, theme: &Theme, ctx: &RenderCtx) 
 
     let segments = markdown::render_markdown(&msg.content, theme);
     let body: AnyElement = if is_user {
-        v_flex().gap(px(2.)).children(segments).into_any_element()
+        v_flex().gap(px(2.)).w_full().children(segments).into_any_element()
     } else {
-        let mut container = v_flex().gap(px(2.)).children(segments);
+        let mut container = v_flex().gap(px(2.)).w_full().children(segments);
         if ctx.is_streaming_tail {
             container = container.child(streaming_cursor(&th));
         }
@@ -85,27 +85,6 @@ fn timestamp_row(text: &str, mu: gpui::Hsla) -> AnyElement {
         .text_color(mu)
         .px(px(4.))
         .child(text.to_string())
-        .into_any_element()
-}
-
-fn render_avatar_z(theme: &Theme) -> AnyElement {
-    div()
-        .w(px(22.))
-        .h(px(22.))
-        .mt(px(2.))
-        .rounded_full()
-        .bg(theme.muted)
-        .border_1()
-        .border_color(theme.border)
-        .flex()
-        .items_center()
-        .justify_center()
-        .child(
-            super::txt(px(11.))
-                .font_weight(gpui::FontWeight::BOLD)
-                .text_color(theme.accent)
-                .child("Z"),
-        )
         .into_any_element()
 }
 

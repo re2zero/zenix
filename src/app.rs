@@ -3305,10 +3305,18 @@ fn handle_ai_chat_action(
         }
         AiChatAction::SelectProvider(name) => {
             if let Some(ref mut data) = this.ai_chat_panel {
+                let pid = name.clone();
                 data.selected_provider_id = name;
                 data.available_models.clear();
-                data.selected_model.clear();
                 data.models_fetch_attempted = false;
+                // Load saved model/thinking for the new provider
+                let providers = crate::api_provider::load_all();
+                if let Some(provider) = providers.iter().find(|p| p.name == pid) {
+                    data.selected_model = provider.model.clone();
+                    data.thinking_level = provider.thinking_level;
+                } else {
+                    data.selected_model.clear();
+                }
             }
             cx.notify();
         }
@@ -3340,13 +3348,29 @@ fn handle_ai_chat_action(
             if let Some(ref mut data) = this.ai_chat_panel {
                 data.thinking_level = level;
                 data.config_dropdown = None;
+                let pid = data.selected_provider_id.clone();
+                if !pid.is_empty() {
+                    let mut providers = crate::api_provider::load_all();
+                    if let Some(provider) = providers.iter_mut().find(|p| p.name == pid) {
+                        provider.thinking_level = level;
+                        let _ = crate::api_provider::save_all(&providers);
+                    }
+                }
             }
             cx.notify();
         }
         AiChatAction::SelectModel(model) => {
             if let Some(ref mut data) = this.ai_chat_panel {
-                data.selected_model = model;
+                data.selected_model.clone_from(&model);
                 data.config_dropdown = None;
+                let pid = data.selected_provider_id.clone();
+                if !pid.is_empty() {
+                    let mut providers = crate::api_provider::load_all();
+                    if let Some(provider) = providers.iter_mut().find(|p| p.name == pid) {
+                        provider.model = model;
+                        let _ = crate::api_provider::save_all(&providers);
+                    }
+                }
             }
             cx.notify();
         }

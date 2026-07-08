@@ -542,6 +542,7 @@ fn render_segments(segments: &[MdSegment], theme: &Theme) -> Vec<AnyElement> {
             MdSegment::ListItem(s) => {
                 let item_text = s.clone();
                 h_flex()
+                    .w_full()
                     .gap(px(8.))
                     .items_start()
                     .child(txt(px(13.)).text_color(list_prefix).child("•".to_string()))
@@ -568,6 +569,7 @@ fn render_segments(segments: &[MdSegment], theme: &Theme) -> Vec<AnyElement> {
                     .into_any_element()
             }
             MdSegment::Blockquote(s) => h_flex()
+                .w_full()
                 .gap(px(8.))
                 .items_start()
                 .child(div().w(px(3.)).h_full().bg(gpui::rgba(0xFFFFFF20)))
@@ -589,6 +591,7 @@ fn render_segments(segments: &[MdSegment], theme: &Theme) -> Vec<AnyElement> {
                 let box_char = if *checked { "☑" } else { "☐" };
                 let box_color = if *checked { theme.accent } else { mu };
                 h_flex()
+                    .w_full()
                     .gap(px(8.))
                     .items_start()
                     .child(
@@ -666,7 +669,7 @@ fn render_table_row(cells: &[String], is_header: bool, theme: &Theme) -> AnyElem
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 fn txt(size: gpui::Pixels) -> gpui::Div {
-    div().text_size(size)
+    div().text_size(size).whitespace_normal().min_w_0()
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────

@@ -189,8 +189,8 @@ pub(super) fn render_empty_state(
                     super::txt(px(22.))
                         .font_weight(gpui::FontWeight::BOLD)
                         .text_color(accent)
-                        .child("Z"),
-                ),
+                        .child("Z⚡"),
+                )
         )
         .child(
             super::txt(px(17.))
