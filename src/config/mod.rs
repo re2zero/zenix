@@ -125,8 +125,11 @@ impl ConfigStore {
             ConfigFile::default()
         };
         let mut store = Self { path, data };
-        // If font_family is empty or default, resolve system font at runtime
-        if store.data.font_family.is_empty() || store.data.font_family == default_font_family() {
+        // ".default" means "use GPUI's default font" — skip system detection.
+        // Empty or legacy default → try to detect a system CJK font.
+        if store.data.font_family.is_empty()
+            || (!store.data.font_family.starts_with(".default") && store.data.font_family == default_font_family())
+        {
             store.data.font_family = detect_system_font();
         }
         Ok(store)
@@ -146,6 +149,17 @@ impl ConfigStore {
 
     pub fn set_font_family(&mut self, family: String) {
         self.data.font_family = family;
+    }
+
+    /// Return the effective UI font family, or `None` if ".default" is configured.
+    /// When `None`, GPUI uses its own default font (`.SystemUIFont`).
+    pub fn effective_ui_font(&self) -> Option<String> {
+        let f = self.data.font_family.trim();
+        if f.is_empty() || f == ".default" {
+            None
+        } else {
+            Some(primary_font(f).to_string())
+        }
     }
 
     pub fn dark_theme_name(&self) -> &str {
@@ -276,13 +290,21 @@ fn detect_system_font() -> String {
             }
         }
     }
-    "Noto Sans CJK SC, Lilex".into()
+    // ".default" means "use GPUI's default font" (no font_family override)
+    ".default".into()
 }
 
 /// Fallback font for platforms without fc-match.
 #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
 fn detect_system_font() -> String {
-    "Noto Sans CJK SC, Lilex".into()
+    ".default".into()
+}
+
+/// Extract the first font name from a comma-separated font stack.
+/// GPUI treats `font_family` as a single name, so comma-separated stacks
+/// like "Noto Sans CJK SC, Lilex" must not be passed directly.
+pub fn primary_font(font_stack: &str) -> &str {
+    font_stack.split(',').next().map(|s| s.trim()).filter(|s| !s.is_empty()).unwrap_or(font_stack.trim())
 }
 
 fn config_path() -> PathBuf {

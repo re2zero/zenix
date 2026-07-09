@@ -114,7 +114,6 @@ pub struct ZenixApp {
     mcp_available_agents: Vec<String>,
     dialog_input: Option<gpui::Entity<gpui_component::input::InputState>>,
     dialog_input_mode: InputDialogMode,
-    font_names: Vec<String>,
     font_select: Option<gpui::Entity<FontSelect>>,
     api_providers: Vec<ApiProviderConfig>,
     api_provider_form: Option<ApiProviderFormState>,
@@ -163,7 +162,7 @@ pub struct ZenixApp {
     pub cursor_visible: bool,
     single_instance_rx: Option<std::sync::mpsc::Receiver<crate::single_instance::Signal>>,
 }
-type FontSelect = SelectState<SearchableVec<String>>;
+    type FontSelect = SelectState<SearchableVec<String>>;
 
 fn write_to_pty(backend: &Option<BackendTx>, tab: &mut Option<TerminalTab>, bytes: Vec<u8>) {
     if let Some(backend) = backend {
@@ -300,7 +299,6 @@ impl ZenixApp {
             mcp_available_agents: crate::mcp::claude_format_agent_names(),
             dialog_input: None,
             dialog_input_mode: InputDialogMode::Hidden,
-            font_names: Vec::new(),
             font_select: None,
             api_providers: Vec::new(),
             api_provider_form: None,
@@ -568,9 +566,10 @@ impl ZenixApp {
         if let Some(config) = config {
             let theme = Theme::global_mut(cx);
             theme.apply_config(&config);
-            // Force config font — theme configs may override font_family.
-            let font_family = self.config.font_family().to_string();
-            theme.font_family = font_family.into();
+            // Apply UI font from config — ".default" means no override
+            if let Some(ff) = self.config.effective_ui_font() {
+                theme.font_family = ff.into();
+            }
             window.refresh();
             self.config.set_theme_name(name.to_string());
             if let Err(e) = self.config.save() {
@@ -1374,21 +1373,18 @@ impl Render for ZenixApp {
                 }
                 if this.font_select.is_none() {
                     let mut all = window.text_system().all_font_names();
-                    let embedded = "Lilex".to_string();
-                    all.retain(|n| n != &embedded && !n.starts_with('.'));
-                    let mut names = vec![embedded];
+                    all.retain(|n| !n.starts_with('.'));
+                    let mut names = vec![".default".to_string()];
                     names.extend(all);
-                    this.font_names = names;
 
                     // Find current font index
-                    let current = this.config.font_family().to_string();
-                    let selected_idx = this
-                        .font_names
+                    let current = this.config.font_family();
+                    let selected_idx = names
                         .iter()
                         .position(|n| *n == current)
                         .map(|i| gpui_component::IndexPath::new(i));
                     let delegate = gpui_component::searchable_list::SearchableVec::new(
-                        this.font_names.clone(),
+                        names,
                     );
                     let font_select = cx.new(|cx| {
                         FontSelect::new(delegate, selected_idx, window, cx).searchable(true)
@@ -1409,8 +1405,14 @@ impl Render for ZenixApp {
                             {
                                 this.config.set_font_family(font_name.clone());
                                 let _ = this.config.save();
-                                let theme = gpui_component::Theme::global_mut(cx);
-                                theme.font_family = font_name.into();
+                                {
+                                    let theme = gpui_component::Theme::global_mut(cx);
+                                    if font_name == ".default" {
+                                        theme.font_family = ".SystemUIFont".into();
+                                    } else {
+                                        theme.font_family = font_name.into();
+                                    }
+                                }
                             }
                             cx.notify();
                         },
@@ -1685,6 +1687,8 @@ impl Render for ZenixApp {
                                 handle_ai_chat_action(this, action, window, cx);
                             });
                         });
+                    let ff = self.config.effective_ui_font().unwrap_or_default();
+                    let fs = self.terminal_font_size;
                     Some(
                         crate::ai::chat::render_ai_chat_panel(
                             data,
@@ -1692,6 +1696,8 @@ impl Render for ZenixApp {
                             input_ref,
                             on_action,
                             self.worker_registry.clone(),
+                            &ff,
+                            fs,
                         )
                         .into_any_element(),
                     )
@@ -1769,7 +1775,6 @@ impl Render for ZenixApp {
             .size_full()
             .bg(theme.background)
             .text_color(theme.foreground)
-            .font_family(self.config.font_family())
             .track_focus(&focus)
             .on_key_down(cx.listener(Self::on_key_down))
             .on_action(cx.listener(Self::on_tab_to_pty))

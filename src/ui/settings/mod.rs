@@ -382,14 +382,17 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
         t("settings.tab.extensions"),
     ];
 
-    let dialog = div()
+    let mut dialog = div()
         .id("settings-dialog")
         .w(px(dialog_w)).h(px(dialog_h))
         .bg(bg_primary_theme(theme))
         .border_1().border_color(border_color())
         .rounded(border_radius_lg()).shadow_lg()
-        .font_family(font_family)
-        .flex().flex_col()
+        .flex().flex_col();
+    if font_family != ".default" && !font_family.is_empty() {
+        dialog = dialog.font_family(font_family);
+    }
+    let dialog = dialog
         .on_mouse_down(gpui::MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .child(
             h_flex().flex_none().justify_between().items_center()

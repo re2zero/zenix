@@ -4,8 +4,8 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt, AnyElement, App, InteractiveElement as _, IntoElement, MouseButton,
-    ParentElement as _, Styled as _, Window, div, prelude::FluentBuilder as _, px,
+    Animation, AnimationExt, AnyElement, App, ElementId, InteractiveElement as _, IntoElement,
+    MouseButton, ParentElement as _, Styled as _, Window, div, prelude::FluentBuilder as _, px,
 };
 use gpui_component::{Theme, h_flex, v_flex};
 
@@ -19,6 +19,9 @@ pub(super) struct RenderCtx {
     pub reasoning_collapsed: bool,
     pub on_toggle_reasoning: Option<Rc<dyn Fn(&mut Window, &mut App) + 'static>>,
     pub reasoning_elapsed_secs: Option<f32>,
+    pub msg_index: usize,
+    pub font_family: String,
+    pub font_size: f32,
 }
 
 pub(super) fn render_message(msg: &ChatMessage, theme: &Theme, ctx: &RenderCtx) -> AnyElement {
@@ -40,12 +43,16 @@ pub(super) fn render_message(msg: &ChatMessage, theme: &Theme, ctx: &RenderCtx) 
                     theme,
                     ctx.reasoning_collapsed,
                     &ctx.on_toggle_reasoning,
+                    ctx.msg_index,
+                    &ctx.font_family,
+                    ctx.font_size,
                 ));
             }
         }
     }
 
-    let segments = markdown::render_markdown(&msg.content, theme);
+    let msg_id = ElementId::Name(format!("msg-{}", ctx.msg_index).into());
+    let segments = markdown::render_markdown(&msg.content, theme, msg_id, &ctx.font_family, ctx.font_size);
     if is_user {
         elements.push(
             v_flex()
@@ -113,6 +120,9 @@ fn render_reasoning_block(
     theme: &Theme,
     collapsed: bool,
     on_toggle: &Option<Rc<dyn Fn(&mut Window, &mut App) + 'static>>,
+    msg_index: usize,
+    font_family: &str,
+    font_size: f32,
 ) -> AnyElement {
     let th = theme.clone();
     let mu = th.muted_foreground;
@@ -122,10 +132,6 @@ fn render_reasoning_block(
     let arrow = if collapsed { "▶" } else { "▼" };
     let is_streaming = elapsed_secs.is_some();
     let cleaned = strip_think_wrapper(text);
-
-    // Use muted foreground for reasoning content's markdown rendering
-    let mut rtheme = theme.clone();
-    rtheme.foreground = mu;
 
     // During streaming, show only last 5 lines so latest content is always visible
     let display_text = if is_streaming {
@@ -139,6 +145,7 @@ fn render_reasoning_block(
         cleaned.clone()
     };
 
+    let thinking_id = ElementId::Name(format!("thinking-{}", msg_index).into());
     let body: AnyElement = if collapsed {
         div().h(px(0.)).into_any_element()
     } else if is_streaming {
@@ -150,7 +157,13 @@ fn render_reasoning_block(
             .child(
                 v_flex()
                     .gap(px(2.))
-                    .children(crate::ai::markdown::render_markdown(&display_text, &rtheme)),
+                    .children(markdown::render_markdown_muted(
+                        &display_text,
+                        theme,
+                        thinking_id,
+                        font_family,
+                        font_size,
+                    )),
             )
             .into_any_element()
     } else {
@@ -159,7 +172,13 @@ fn render_reasoning_block(
             .child(
                 v_flex()
                     .gap(px(2.))
-                    .children(crate::ai::markdown::render_markdown(&display_text, &rtheme)),
+                    .children(markdown::render_markdown_muted(
+                        &display_text,
+                        theme,
+                        thinking_id,
+                        font_family,
+                        font_size,
+                    )),
             )
             .into_any_element()
     };
@@ -227,15 +246,6 @@ fn strip_think_wrapper(text: &str) -> String {
     s
 }
 
-fn timestamp_row(text: &str, mu: gpui::Hsla) -> AnyElement {
-    div()
-        .text_size(px(9.))
-        .text_color(mu)
-        .px(px(4.))
-        .child(text.to_string())
-        .into_any_element()
-}
-
 fn streaming_cursor(theme: &Theme) -> AnyElement {
     div()
         .mt(px(2.))
@@ -263,7 +273,7 @@ mod tests {
         Theme::default()
     }
 
-    fn ctx(panel_width: f32, tail: bool, hovered: bool) -> RenderCtx {
+    fn ctx(panel_width: f32, tail: bool, hovered: bool, msg_index: usize) -> RenderCtx {
         RenderCtx {
             panel_width,
             is_streaming_tail: tail,
@@ -271,6 +281,9 @@ mod tests {
             reasoning_collapsed: true,
             on_toggle_reasoning: None,
             reasoning_elapsed_secs: None,
+            msg_index,
+            font_family: String::new(),
+            font_size: 14.0,
         }
     }
 
@@ -304,22 +317,22 @@ mod tests {
 
     #[test]
     fn test_render_message_user() {
-        let _element = render_message(&user_msg(), &test_theme(), &ctx(420.0, false, false));
+        let _element = render_message(&user_msg(), &test_theme(), &ctx(420.0, false, false, 0));
     }
 
     #[test]
     fn test_render_message_assistant() {
-        let _element = render_message(&assistant_msg(), &test_theme(), &ctx(420.0, false, false));
+        let _element = render_message(&assistant_msg(), &test_theme(), &ctx(420.0, false, false, 0));
     }
 
     #[test]
     fn test_render_message_assistant_streaming_tail() {
-        let _element = render_message(&assistant_msg(), &test_theme(), &ctx(420.0, true, false));
+        let _element = render_message(&assistant_msg(), &test_theme(), &ctx(420.0, false, true, 0));
     }
 
     #[test]
     fn test_render_message_user_hover_shows_timestamp() {
-        let _element = render_message(&user_msg(), &test_theme(), &ctx(420.0, false, true));
+        let _element = render_message(&user_msg(), &test_theme(), &ctx(420.0, false, true, 0));
     }
 
     #[test]

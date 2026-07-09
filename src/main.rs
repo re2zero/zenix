@@ -130,10 +130,10 @@ fn open_main_window(
                 Theme::global_mut(cx).apply_config(&tc);
             }
         }
-        // Force embedded font after all theme applications.
-        let font_family = config.font_family().to_string();
-        let theme = Theme::global_mut(cx);
-        theme.font_family = font_family.into();
+        // Apply UI font from config — ".default" means use GPUI's default (.SystemUIFont)
+        if let Some(ff) = config.effective_ui_font() {
+            Theme::global_mut(cx).font_family = ff.into();
+        }
 
         let view = cx.new(|cx| ZenixApp::new(window, cx, config, Some(single_instance_rx)));
         cx.new(|cx| Root::new(view, window, cx))

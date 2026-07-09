@@ -59,6 +59,8 @@ pub fn render_ai_chat_panel(
     input_entity: Option<&Entity<InputState>>,
     on_action: state::AiChatActionHandler,
     worker_registry: WorkerRegistry,
+    font_family: &str,
+    font_size: f32,
 ) -> impl IntoElement {
     let th = theme.clone();
     let bg = th.background;
@@ -77,6 +79,11 @@ pub fn render_ai_chat_panel(
         .flex_none()
         .h_full()
         .flex()
+        .text_size(px(font_size));
+    if !font_family.is_empty() && font_family != ".default" {
+        panel = panel.font_family(font_family);
+    }
+    let mut panel = panel
         .flex_col()
         .bg(bg)
         .border_l_1()
@@ -126,6 +133,7 @@ pub fn render_ai_chat_panel(
         let on_action_for_tool = on_action.clone();
         let on_action_for_reasoning = on_action.clone();
         let on_action_for_retry = on_action.clone();
+        let font_family_owned = font_family.to_string();
         msg_area = msg_area.child(
             gpui::list(list_state, move |ix, _window, _cx| {
                 if ix >= msg_count {
@@ -138,6 +146,8 @@ pub fn render_ai_chat_panel(
                     .filter(|_| is_streaming && streaming_msg_idx == Some(ix))
                     .map(|t| t.elapsed().as_secs_f32());
                 let reasoning_toggle = on_action_for_reasoning.clone();
+                let ff = font_family_owned.clone();
+                let fsize = font_size;
                 let rctx = messages::RenderCtx {
                     panel_width,
                     is_streaming_tail,
@@ -151,6 +161,9 @@ pub fn render_ai_chat_panel(
                         );
                     })),
                     reasoning_elapsed_secs,
+                    msg_index: ix,
+                    font_family: ff,
+                    font_size: fsize,
                 };
                 let msg_id = msg.id;
                 let inner = match msg.role.as_str() {
@@ -181,6 +194,9 @@ pub fn render_ai_chat_panel(
                                     cx,
                                 );
                             }),
+                            ix,
+                            &font_family_owned,
+                            font_size,
                         )
                     }
                     "error" => {
@@ -295,6 +311,6 @@ mod tests {
         let data = AiChatPanelData::default();
         let theme = test_theme();
         let registry = crate::ai::workers::WorkerRegistry::new();
-        let _element = render_ai_chat_panel(&data, &theme, None, noop_handler(), registry);
+        let _element = render_ai_chat_panel(&data, &theme, None, noop_handler(), registry, "", 14.0);
     }
 }

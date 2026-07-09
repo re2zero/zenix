@@ -243,7 +243,7 @@ pub fn section_card(theme: &gpui_component::Theme) -> gpui::Div {
 }
 
 pub fn section_header() -> gpui::Div {
-    txt(font_size_md())
+    txt(font_size_lg())
         .font_weight(gpui::FontWeight::BOLD)
         .text_color(text_color_high())
 }

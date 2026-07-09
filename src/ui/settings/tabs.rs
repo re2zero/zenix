@@ -301,7 +301,6 @@ fn tab_terminal(
 
     // Scrollback: readonly display with +/- buttons (long-press supported).
     let scrollback_display: AnyElement = txt(font_size_sm())
-        .font_family("JetBrains Mono, Lilex")
         .w(scrollback_display_w())
         .text_center()
         .child(format!("{scrollback}"))
