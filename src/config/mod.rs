@@ -75,6 +75,9 @@ pub struct ConfigFile {
     /// ZenixAI input area height in pixels (clamped 60..=400 on load).
     #[serde(default = "default_ai_input_height")]
     pub ai_input_height: f32,
+    /// Last selected AI provider ID (restored on panel open).
+    #[serde(default)]
+    pub ai_selected_provider: String,
 }
 
 impl Default for ConfigFile {
@@ -93,6 +96,7 @@ impl Default for ConfigFile {
             terminal_scrollback: default_terminal_scrollback(),
             ai_panel_width: default_ai_panel_width(),
             ai_input_height: default_ai_input_height(),
+            ai_selected_provider: String::new(),
         }
     }
 }
@@ -230,6 +234,14 @@ impl ConfigStore {
 
     pub fn set_ai_input_height(&mut self, height: f32) {
         self.data.ai_input_height = height.clamp(60.0, 400.0);
+    }
+
+    pub fn ai_selected_provider(&self) -> &str {
+        &self.data.ai_selected_provider
+    }
+
+    pub fn set_ai_selected_provider(&mut self, provider: String) {
+        self.data.ai_selected_provider = provider;
     }
 
     pub fn save(&self) -> Result<()> {

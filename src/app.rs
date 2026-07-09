@@ -920,16 +920,19 @@ impl ZenixApp {
             return;
         }
 
-        // End input height resize drag.
+        // End input height resize drag + persist to disk.
         if self.input_resize_drag.take().is_some() {
             if let Some(ref data) = self.ai_chat_panel {
                 self.config.set_ai_input_height(data.input_height);
+            }
+            if let Err(e) = self.config.save() {
+                eprintln!("failed to save ai_input_height: {e:#}");
             }
             cx.notify();
             return;
         }
 
-        // End panel resize drag.
+        // End panel resize drag + persist to disk.
         if let Some(drag) = self.panel_resize_drag.take() {
             match drag.target {
                 Panel::AiChat => {
@@ -942,6 +945,9 @@ impl ZenixApp {
                     // config persistence added later if needed.
                 }
                 Panel::None => {}
+            }
+            if let Err(e) = self.config.save() {
+                eprintln!("failed to save panel width: {e:#}");
             }
             cx.notify();
             return;
@@ -1439,10 +1445,20 @@ impl Render for ZenixApp {
                 } else {
                     let panel_width = self.config.ai_panel_width().clamp(360.0, 720.0);
                     let input_height = self.config.ai_input_height().clamp(60.0, 400.0);
+                    let saved_provider = self.config.ai_selected_provider().to_string();
                     let workspaces = self.fetch_workspaces();
 
                     let data = self.ai_chat_panel.get_or_insert_with(|| {
                         let mut d = crate::ai::chat::AiChatPanelData::new();
+                        // Restore last-selected provider so model/thinking survive restart.
+                        if !saved_provider.is_empty() {
+                            let providers = crate::api_provider::load_all();
+                            if let Some(p) = providers.iter().find(|p| p.name == saved_provider) {
+                                d.selected_provider_id = p.name.clone();
+                                d.selected_model = p.model.clone();
+                                d.thinking_level = p.thinking_level;
+                            }
+                        }
                         d.ai_panel_width = panel_width;
                         d.input_height = input_height;
                         if !workspaces.is_empty() {
@@ -3508,6 +3524,11 @@ fn handle_ai_chat_action(
                     data.thinking_level = provider.thinking_level;
                 } else {
                     data.selected_model.clear();
+                }
+                // Persist selected provider to config.
+                this.config.set_ai_selected_provider(pid);
+                if let Err(e) = this.config.save() {
+                    eprintln!("failed to save selected provider: {e:#}");
                 }
             }
             cx.notify();
