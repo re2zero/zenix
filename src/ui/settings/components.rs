@@ -6,7 +6,7 @@ use crate::api_provider::{ApiFormat, ApiProviderConfig, ThinkingLevel};
 use crate::i18n::t;
 use gpui::{
     AnyElement, ClickEvent, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, Window, div, prelude::FluentBuilder as _, px,
+    StatefulInteractiveElement as _, Styled as _, Window, div, prelude::FluentBuilder as _,
 };
 use gpui_component::{
     button::{Button, ButtonVariants as _},
@@ -655,7 +655,7 @@ pub fn mcp_agent_entry_with_test(
     entry: &crate::mcp::McpServerEntry,
     on_mcp_action: &SharedActionCb<McpAction>,
     mcp_test_results: &HashMap<String, String>,
-    theme: &gpui_component::Theme,
+    _theme: &gpui_component::Theme,
 ) -> impl IntoElement {
     let name = entry.name.clone();
     let cmd = format!("{} {}", entry.command, entry.args.join(" "));

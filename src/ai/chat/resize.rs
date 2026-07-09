@@ -1,9 +1,6 @@
 use std::rc::Rc;
 
-use gpui::{
-    AppContext as _, InteractiveElement as _, IntoElement, MouseButton, Stateful,
-    StatefulInteractiveElement as _, Styled, Window, div, px,
-};
+use gpui::{InteractiveElement as _, MouseButton, Stateful, Styled, Window, div, px};
 use gpui_component::Theme;
 
 use super::state::AiChatAction;

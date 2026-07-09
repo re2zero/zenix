@@ -20,6 +20,7 @@ pub const MAX_MESSAGES: usize = 200;
 /// suggestion chips, send button) dispatch through this enum so the panel
 /// needs only a single `on_action` callback.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum AiChatAction {
     Send,
     NewChat,
@@ -104,6 +105,7 @@ pub use super::agent_block::{AgentBlock, AgentMonitorEntry};
 /// The main AI chat panel state.
 ///
 /// Owned by `ZenixApp.ai_chat_panel` as `Option<AiChatPanelData>`.
+#[allow(dead_code)]
 pub struct AiChatPanelData {
     // ── Messages ──────────────────────────────────────────────────
     /// `Rc<Vec>` rather than `Vec`: the render closure for `gpui::list`
@@ -316,6 +318,7 @@ impl AiChatPanelData {
         self.push_message(tool_msg);
     }
 
+    #[allow(dead_code)]
     pub fn mark_agent_running(&mut self, block_id: usize) {
         if let Some(block) = self
             .agent_blocks
@@ -327,6 +330,7 @@ impl AiChatPanelData {
         }
     }
 
+    #[allow(dead_code)]
     pub fn toggle_agent_block(&mut self, block_id: usize) {
         if let Some(block) = self
             .agent_blocks
@@ -337,6 +341,7 @@ impl AiChatPanelData {
         }
     }
 
+    #[allow(dead_code)]
     pub fn count_active_agents(&self) -> usize {
         self.agent_statuses
             .iter()
@@ -388,6 +393,7 @@ impl AiChatPanelData {
         }
     }
 
+    #[allow(dead_code)]
     pub fn cycle_thinking_level(&mut self) {
         self.thinking_level = match self.thinking_level {
             ThinkingLevel::Low => ThinkingLevel::Medium,

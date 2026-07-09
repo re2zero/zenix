@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use gpui::{
     Animation, AnimationExt, AnyElement, App, ElementId, InteractiveElement as _, IntoElement,
-    MouseButton, ParentElement as _, Styled as _, Window, div, prelude::FluentBuilder as _, px,
+    MouseButton, ParentElement as _, Styled as _, Window, div, px,
 };
 use gpui_component::{Theme, h_flex, v_flex};
 
@@ -15,7 +15,7 @@ use crate::ai::session::ChatMessage;
 pub(super) struct RenderCtx {
     pub panel_width: f32,
     pub is_streaming_tail: bool,
-    pub is_hovered: bool,
+    pub _is_hovered: bool,
     pub reasoning_collapsed: bool,
     pub on_toggle_reasoning: Option<Rc<dyn Fn(&mut Window, &mut App) + 'static>>,
     pub reasoning_elapsed_secs: Option<f32>,
@@ -27,7 +27,7 @@ pub(super) struct RenderCtx {
 pub(super) fn render_message(msg: &ChatMessage, theme: &Theme, ctx: &RenderCtx) -> AnyElement {
     let th = theme.clone();
     let is_user = msg.role == "user";
-    let mu = th.muted_foreground;
+    let _mu = th.muted_foreground;
     let border = th.border;
 
     let mut elements: Vec<AnyElement> = Vec::new();
@@ -52,7 +52,8 @@ pub(super) fn render_message(msg: &ChatMessage, theme: &Theme, ctx: &RenderCtx) 
     }
 
     let msg_id = ElementId::Name(format!("msg-{}", ctx.msg_index).into());
-    let segments = markdown::render_markdown(&msg.content, theme, msg_id, &ctx.font_family, ctx.font_size);
+    let segments =
+        markdown::render_markdown(&msg.content, theme, msg_id, &ctx.font_family, ctx.font_size);
     if is_user {
         elements.push(
             v_flex()
@@ -277,7 +278,7 @@ mod tests {
         RenderCtx {
             panel_width,
             is_streaming_tail: tail,
-            is_hovered: hovered,
+            _is_hovered: hovered,
             reasoning_collapsed: true,
             on_toggle_reasoning: None,
             reasoning_elapsed_secs: None,
@@ -322,7 +323,11 @@ mod tests {
 
     #[test]
     fn test_render_message_assistant() {
-        let _element = render_message(&assistant_msg(), &test_theme(), &ctx(420.0, false, false, 0));
+        let _element = render_message(
+            &assistant_msg(),
+            &test_theme(),
+            &ctx(420.0, false, false, 0),
+        );
     }
 
     #[test]

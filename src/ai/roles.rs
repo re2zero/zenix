@@ -20,6 +20,7 @@ use crate::platform;
 // ── Built-in template constants ─────────────────────────────────────────
 
 /// Built-in role template: Frontend Developer.
+#[allow(dead_code)]
 const BUILTIN_FRONTEND: &str = r#"---
 name: Frontend Developer
 description: 专精 React/Vue 前端开发、UI 实现、性能优化
@@ -46,6 +47,7 @@ React / Vue / Angular / TypeScript / CSS / HTML / Webpack / Vite
 "#;
 
 /// Built-in role template: Backend Architect.
+#[allow(dead_code)]
 const BUILTIN_BACKEND: &str = r#"---
 name: Backend Architect
 description: API 设计、数据库架构、系统可扩展性
@@ -71,6 +73,7 @@ Rust / Go / Python / PostgreSQL / Redis / Kafka / gRPC / REST
 "#;
 
 /// Built-in role template: Code Reviewer.
+#[allow(dead_code)]
 const BUILTIN_REVIEWER: &str = r#"---
 name: Code Reviewer
 description: 代码审查、安全分析、质量保障
@@ -97,6 +100,7 @@ tags: [review, quality, security, best-practices]
 "#;
 
 /// Built-in role template: DevOps Engineer.
+#[allow(dead_code)]
 const BUILTIN_DEVOPS: &str = r#"---
 name: DevOps Engineer
 description: CI/CD、基础设施自动化、云原生运维
@@ -122,6 +126,7 @@ Docker / Kubernetes / GitHub Actions / Terraform / Prometheus / Grafana
 "#;
 
 /// Built-in role template: General Engineer (fallback).
+#[allow(dead_code)]
 const BUILTIN_GENERAL: &str = r#"---
 name: General Engineer
 description: 通用软件开发工程师
@@ -143,6 +148,7 @@ tags: [general, development]
 "#;
 
 /// All built-in templates as (id, display_name, description, tags, cli_suggestion, content).
+#[allow(dead_code)]
 const BUILTIN_TEMPLATES: &[(&str, &str, &str, &[&str], &[&str], &str)] = &[
     (
         "frontend-developer",
@@ -217,6 +223,7 @@ pub struct RoleDef {
 /// Manages role definitions and template files on disk.
 pub struct RoleRegistry;
 
+#[allow(dead_code)]
 impl RoleRegistry {
     /// Path to the roles directory: `~/.config/zenix/roles/`.
     pub fn roles_dir() -> PathBuf {

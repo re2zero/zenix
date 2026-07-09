@@ -12,8 +12,6 @@
 //! placeholder. Future iterations may replace the placeholder with a real
 //! LLM-generated summary.
 
-#![allow(dead_code)]
-
 use crate::ai::ChatMessageRef;
 
 /// Average characters per token (conservative estimate).
@@ -86,6 +84,7 @@ impl<'a> From<&'a ChatMessageRef> for MessageRef {
 
 /// Compacted message collection returned by `Compactor::compress_messages`.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct CompactedMessages {
     /// Number of messages before compression.
     pub original_count: usize,
@@ -212,6 +211,7 @@ impl Compactor {
     /// This is a simple text template — callers may pass it to the LLM
     /// to produce a real natural-language summary, or include it directly
     /// as a compact context indicator.
+    #[allow(dead_code)]
     pub fn generate_summary_placeholder(dropped_count: usize, before_tokens: usize) -> String {
         format!(
             "[COMPACTED: 之前的 {} 条消息（约 {} tokens）已被压缩。请基于最近的对话继续。]",

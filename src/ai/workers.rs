@@ -12,10 +12,12 @@
 use std::sync::{Arc, Mutex};
 
 /// Maximum completed workers retained in memory.
+#[allow(dead_code)]
 const MAX_COMPLETED_WORKERS: usize = 20;
 
 /// A running agent worker instance.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct WorkerInstance {
     /// Unique numeric ID assigned by the registry.
     pub id: usize,
@@ -39,6 +41,7 @@ pub struct WorkerInstance {
 
 /// Worker execution status.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)]
 pub enum WorkerStatus {
     /// Agent CLI is starting up.
     Starting,
@@ -71,6 +74,7 @@ pub struct WorkerRegistry {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 struct WorkerRegistryInner {
     workers: Vec<WorkerInstance>,
     next_id: usize,
@@ -87,6 +91,7 @@ impl Default for WorkerRegistry {
     }
 }
 
+#[allow(dead_code)]
 impl WorkerRegistry {
     /// Create a new empty registry.
     pub fn new() -> Self {

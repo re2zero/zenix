@@ -53,6 +53,9 @@ pub enum HerdrMethod {
     #[serde(rename = "tab.create")]
     TabCreate(TabCreateParams),
 
+    #[serde(rename = "tab.close")]
+    TabClose(TabTarget),
+
     #[serde(rename = "agent.list")]
     AgentList,
 
@@ -82,6 +85,9 @@ pub enum HerdrMethod {
 
     #[serde(rename = "pane.wait_for_output")]
     PaneWaitForOutput(PaneWaitForOutputParams),
+
+    #[serde(rename = "pane.close")]
+    PaneClose(PaneTarget),
 
     #[serde(rename = "events.subscribe")]
     EventsSubscribe(EventsSubscribeParams),
@@ -524,6 +530,7 @@ pub enum AgentStatus {
 }
 
 impl AgentStatus {
+    #[allow(dead_code)]
     pub fn as_str(&self) -> &'static str {
         match self {
             AgentStatus::Idle => "idle",
@@ -534,6 +541,7 @@ impl AgentStatus {
         }
     }
 
+    #[allow(dead_code)]
     pub fn from_str_value(s: &str) -> Option<AgentStatus> {
         match s {
             "idle" => Some(AgentStatus::Idle),
@@ -583,6 +591,7 @@ pub enum SplitDirection {
 
 /// Event envelope from herdr's events.stream.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct EventEnvelope {
     pub event: EventKind,
     pub data: EventData,
@@ -590,6 +599,7 @@ pub struct EventEnvelope {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+#[allow(dead_code)]
 pub enum EventKind {
     WorkspaceCreated,
     WorkspaceUpdated,
@@ -611,6 +621,7 @@ pub enum EventKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
+#[allow(dead_code)]
 pub enum EventData {
     WorkspaceCreated {
         workspace: WorkspaceInfo,
@@ -690,6 +701,7 @@ pub enum EventData {
 // ── Result Types ─────────────────────────────────────────────────────
 
 /// Result of creating a workspace via herdr.
+#[allow(dead_code)]
 pub struct CreateWorkspaceResult {
     pub workspace: WorkspaceInfo,
     pub tab: TabInfo,
@@ -697,6 +709,7 @@ pub struct CreateWorkspaceResult {
 }
 
 /// Result of creating a tab via herdr.
+#[allow(dead_code)]
 pub struct CreateTabResult {
     pub tab: TabInfo,
     pub pane: PaneInfo,
@@ -723,6 +736,7 @@ pub struct HerdrIpcClient {
     next_id: u64,
 }
 
+#[allow(dead_code)]
 impl HerdrIpcClient {
     /// Create a new client targeting the given socket path.
     pub fn new(socket_path: PathBuf) -> Self {
@@ -1203,6 +1217,48 @@ impl HerdrIpcClient {
                     Err(AiError::IpcError(err.error.message))
                 }
             }
+        }
+    }
+
+    /// Close (destroy) a pane.
+    pub fn close_pane(&mut self, pane_id: &str) -> Result<(), AiError> {
+        let request = HerdrRequest {
+            id: self.next_id(),
+            method: HerdrMethod::PaneClose(PaneTarget {
+                pane_id: pane_id.to_string(),
+            }),
+        };
+        let result = self.send_request_raw(&request)?;
+        match result {
+            HerdrResponse::Success(resp) => match resp.result {
+                ResponseResult::Ok {} => Ok(()),
+                _ => Err(AiError::IpcError("unexpected response".into())),
+            },
+            HerdrResponse::Error(err) => {
+                // Treat "pane not found" as success (idempotent close)
+                if err.error.code == "pane_not_found" || err.error.message.contains("not found") {
+                    return Ok(());
+                }
+                Err(AiError::IpcError(err.error.message))
+            }
+        }
+    }
+
+    /// Close (destroy) a tab.
+    pub fn close_tab(&mut self, tab_id: &str) -> Result<(), AiError> {
+        let request = HerdrRequest {
+            id: self.next_id(),
+            method: HerdrMethod::TabClose(TabTarget {
+                tab_id: tab_id.to_string(),
+            }),
+        };
+        let result = self.send_request_raw(&request)?;
+        match result {
+            HerdrResponse::Success(resp) => match resp.result {
+                ResponseResult::Ok {} => Ok(()),
+                _ => Err(AiError::IpcError("unexpected response".into())),
+            },
+            HerdrResponse::Error(err) => Err(AiError::IpcError(err.error.message)),
         }
     }
 

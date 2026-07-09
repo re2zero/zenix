@@ -128,7 +128,8 @@ impl ConfigStore {
         // ".default" means "use GPUI's default font" — skip system detection.
         // Empty or legacy default → try to detect a system CJK font.
         if store.data.font_family.is_empty()
-            || (!store.data.font_family.starts_with(".default") && store.data.font_family == default_font_family())
+            || (!store.data.font_family.starts_with(".default")
+                && store.data.font_family == default_font_family())
         {
             store.data.font_family = detect_system_font();
         }
@@ -304,7 +305,12 @@ fn detect_system_font() -> String {
 /// GPUI treats `font_family` as a single name, so comma-separated stacks
 /// like "Noto Sans CJK SC, Lilex" must not be passed directly.
 pub fn primary_font(font_stack: &str) -> &str {
-    font_stack.split(',').next().map(|s| s.trim()).filter(|s| !s.is_empty()).unwrap_or(font_stack.trim())
+    font_stack
+        .split(',')
+        .next()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(font_stack.trim())
 }
 
 fn config_path() -> PathBuf {

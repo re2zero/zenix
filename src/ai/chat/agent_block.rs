@@ -13,6 +13,7 @@ use crate::ai::herdr::AgentStatus as HerdrAgentStatus;
 /// Tracked in `AiChatPanelData::agent_blocks`; a parallel `role="tool"`
 /// ChatMessage enters the render flow (see `tool_card.rs`).
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct AgentBlock {
     pub agent_name: String,
     pub status: String,
@@ -27,6 +28,7 @@ pub struct AgentBlock {
 
 /// A single entry in the agent monitoring drawer.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct AgentMonitorEntry {
     pub agent_name: String,
     pub pane_id: String,

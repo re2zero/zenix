@@ -322,7 +322,7 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
         agents,
         selected_agent,
         on_agent_select,
-        on_agent_refresh,
+        on_agent_refresh: _,
         mcp_servers: mcp_zenix_servers,
         mcp_per_agent,
         mcp_form,
@@ -384,11 +384,15 @@ pub fn settings_dialog(props: SettingsDialogProps) -> impl IntoElement {
 
     let mut dialog = div()
         .id("settings-dialog")
-        .w(px(dialog_w)).h(px(dialog_h))
+        .w(px(dialog_w))
+        .h(px(dialog_h))
         .bg(bg_primary_theme(theme))
-        .border_1().border_color(border_color())
-        .rounded(border_radius_lg()).shadow_lg()
-        .flex().flex_col();
+        .border_1()
+        .border_color(border_color())
+        .rounded(border_radius_lg())
+        .shadow_lg()
+        .flex()
+        .flex_col();
     if font_family != ".default" && !font_family.is_empty() {
         dialog = dialog.font_family(font_family);
     }

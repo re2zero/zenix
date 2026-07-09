@@ -36,6 +36,7 @@ pub struct ChatMessage {
     pub sequence: i64,
 }
 
+#[allow(dead_code)]
 pub struct AgentActivity {
     pub agent_name: String,
     /// "running" | "completed" | "failed"
@@ -45,12 +46,14 @@ pub struct AgentActivity {
     pub completed_at: Option<String>,
 }
 
+#[allow(dead_code)]
 pub struct SearchHit {
     pub message: ChatMessage,
     pub session_title: String,
     pub snippet: String,
 }
 
+#[allow(dead_code)]
 impl AgentActivity {
     pub fn to_json(activities: &[AgentActivity]) -> Result<String> {
         let items: Vec<serde_json::Value> = activities
@@ -155,12 +158,43 @@ BEGIN
     INSERT INTO messages_fts(messages_fts, rowid, content) VALUES('delete', old.id, old.content);
     INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
 END;
+
+CREATE TABLE IF NOT EXISTS memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT NOT NULL UNIQUE,
+    value TEXT NOT NULL,
+    session_id TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+    key, value,
+    content=memories,
+    content_rowid=id
+);
+
+CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories
+BEGIN
+    INSERT INTO memories_fts(rowid, key, value) VALUES (new.id, new.key, new.value);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_ad AFTER DELETE ON memories
+BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, key, value) VALUES('delete', old.id, old.key, old.value);
+END;
+
+CREATE TRIGGER IF NOT EXISTS memories_au AFTER UPDATE ON memories
+BEGIN
+    INSERT INTO memories_fts(memories_fts, rowid, key, value) VALUES('delete', old.id, old.key, old.value);
+    INSERT INTO memories_fts(rowid, key, value) VALUES (new.id, new.key, new.value);
+END;
 "#;
 
 pub struct SessionManager {
     conn: Connection,
 }
 
+#[allow(dead_code)]
 impl SessionManager {
     pub fn open() -> Result<Self> {
         let db_path = platform::zenix_config_dir().join("ai").join("zenix-ai.db");
@@ -379,8 +413,76 @@ impl SessionManager {
         }
         Ok(out)
     }
+
+    // ── Memory Methods ─────────────────────────────────────────────────
+
+    /// Write a key/value pair to the memories table (UPSERT).
+    pub fn write_memory(&self, key: &str, value: &str, session_id: &str) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT INTO memories (key, value, session_id, updated_at)
+                 VALUES (?1, ?2, ?3, datetime('now'))
+                 ON CONFLICT(key) DO UPDATE SET
+                     value = excluded.value,
+                     session_id = excluded.session_id,
+                     updated_at = datetime('now')",
+                params![key, value, session_id],
+            )
+            .context("write memory")?;
+        Ok(())
+    }
+
+    /// Read a memory entry by key.
+    pub fn read_memory(&self, key: &str) -> Result<Option<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT value FROM memories WHERE key = ?1")
+            .context("prepare read_memory")?;
+        let mut rows = stmt
+            .query_map(params![key], |row| row.get::<_, String>(0))
+            .context("query read_memory")?;
+        match rows.next() {
+            Some(row) => Ok(Some(row.context("read memory row")?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Search memory entries via FTS5.
+    pub fn search_memory(&self, query: &str, limit: usize) -> Result<Vec<(String, String)>> {
+        let safe_query = sanitize_fts_query(query);
+        if safe_query.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        let sql = format!(
+            "SELECT m.key, m.value FROM memories_fts fts
+             JOIN memories m ON fts.rowid = m.id
+             WHERE memories_fts MATCH ?1
+             ORDER BY rank
+             LIMIT ?2"
+        );
+        let mut stmt = self.conn.prepare(&sql).context("prepare search_memory")?;
+        let rows = stmt
+            .query_map(params![safe_query, limit as i64], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .context("query search_memory")?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row.context("read search_memory row")?);
+        }
+        Ok(out)
+    }
+
+    /// Delete a memory entry.
+    pub fn delete_memory(&self, key: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM memories WHERE key = ?1", params![key])
+            .context("delete memory")?;
+        Ok(())
+    }
 }
 
+#[allow(dead_code)]
 fn map_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Session> {
     Ok(Session {
         id: row.get(0)?,
@@ -408,6 +510,7 @@ fn map_message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatMessage> {
     })
 }
 
+#[allow(dead_code)]
 fn map_search_hit_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SearchHit> {
     Ok(SearchHit {
         message: ChatMessage {
@@ -431,6 +534,7 @@ fn map_search_hit_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SearchHit> {
 /// Each whitespace-separated token is cleaned (only alphanumerics and
 /// underscores retained) then wrapped in double quotes. This prevents FTS5
 /// syntax errors from special characters like `!@#$%^&*()`.
+#[allow(dead_code)]
 fn sanitize_fts_query(query: &str) -> String {
     query
         .split_whitespace()

@@ -2,6 +2,7 @@ pub mod chat;
 pub mod compactor;
 pub mod engine;
 pub mod error;
+pub mod file_ops;
 pub mod herdr;
 pub mod markdown;
 pub mod roles;
@@ -27,8 +28,11 @@ pub use roles::{RoleDef, RoleRegistry};
 // Re-export workers types for public API
 #[allow(unused_imports)]
 pub use workers::{WorkerInstance, WorkerRegistry, WorkerStatus};
+// Re-export file_ops types for public API
+#[allow(unused_imports)]
+pub use file_ops::{list_directory, read_file_contents, search_files};
 // Re-export tools types for public API
 #[allow(unused_imports)]
 pub use tools::{
-    Tool, ToolCall, ToolContext, ToolResult, builtin_tools, execute_tool_call, find_tool,
+    Tool, ToolCall, ToolExecutor, ToolResult, builtin_tools, execute_tool_call, find_tool,
 };

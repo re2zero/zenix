@@ -143,7 +143,8 @@ pub(super) fn render(
             .into_any_element()
     } else {
         let tool_id = ElementId::Name(format!("tool-{}", msg_index).into());
-        let rendered = markdown::render_markdown(&msg.content, theme, tool_id, font_family, font_size);
+        let rendered =
+            markdown::render_markdown(&msg.content, theme, tool_id, font_family, font_size);
         v_flex()
             .p(px(10.))
             .gap(px(4.))
@@ -162,14 +163,14 @@ pub(super) fn render(
                 .border_color(border)
                 .overflow_hidden()
                 .child(
-            div()
-                .cursor_pointer()
-                .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-                    (on_toggle)(window, cx);
-                })
-                .child(header),
-        )
-        .child(body),
+                    div()
+                        .cursor_pointer()
+                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                            (on_toggle)(window, cx);
+                        })
+                        .child(header),
+                )
+                .child(body),
         )
         .into_any_element()
 }
@@ -205,18 +206,45 @@ mod tests {
     #[test]
     fn test_render_tool_card_with_meta() {
         let activities = r#"{"agent_name":"claude","status":"completed","summary":"done","is_running":false,"group_id":0}"#;
-        let _element = render(&tool_msg(Some(activities)), &test_theme(), None, false, noop_toggle(), 0, "", 14.0);
+        let _element = render(
+            &tool_msg(Some(activities)),
+            &test_theme(),
+            None,
+            false,
+            noop_toggle(),
+            0,
+            "",
+            14.0,
+        );
     }
 
     #[test]
     fn test_render_tool_card_no_activities() {
-        let _element = render(&tool_msg(None), &test_theme(), None, false, noop_toggle(), 0, "", 14.0);
+        let _element = render(
+            &tool_msg(None),
+            &test_theme(),
+            None,
+            false,
+            noop_toggle(),
+            0,
+            "",
+            14.0,
+        );
     }
 
     #[test]
     fn test_render_tool_card_running() {
         let activities = r#"{"agent_name":"claude","status":"running","is_running":true}"#;
-        let _element = render(&tool_msg(Some(activities)), &test_theme(), None, false, noop_toggle(), 0, "", 14.0);
+        let _element = render(
+            &tool_msg(Some(activities)),
+            &test_theme(),
+            None,
+            false,
+            noop_toggle(),
+            0,
+            "",
+            14.0,
+        );
     }
 
     #[test]
@@ -229,7 +257,17 @@ mod tests {
 
     #[test]
     fn test_render_tool_card_collapsed() {
-        let activities = r#"{"agent_name":"claude","status":"completed","summary":"done","is_running":false}"#;
-        let _element = render(&tool_msg(Some(activities)), &test_theme(), None, true, noop_toggle(), 0, "", 14.0);
+        let activities =
+            r#"{"agent_name":"claude","status":"completed","summary":"done","is_running":false}"#;
+        let _element = render(
+            &tool_msg(Some(activities)),
+            &test_theme(),
+            None,
+            true,
+            noop_toggle(),
+            0,
+            "",
+            14.0,
+        );
     }
 }

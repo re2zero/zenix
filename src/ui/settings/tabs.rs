@@ -790,7 +790,7 @@ fn tab_extensions(
 
 fn tab_mcp_content(
     zenix_servers: &[crate::mcp::ZenixMcpServer],
-    per_agent: &[(String, Vec<crate::mcp::McpServerEntry>)],
+    _per_agent: &[(String, Vec<crate::mcp::McpServerEntry>)],
     mcp_form: Option<&McpFormState>,
     available_agents: &[String],
     on_mcp_action: &SharedActionCb<McpAction>,
@@ -1084,7 +1084,7 @@ fn tab_skills_content(
 
 // ── Roles Content ─────────────────────────────────────────────────────
 
-fn tab_roles_content(theme: &gpui_component::Theme) -> impl IntoElement {
+fn tab_roles_content(_theme: &gpui_component::Theme) -> impl IntoElement {
     let roles = crate::ai::roles::RoleRegistry::list_roles().unwrap_or_default();
 
     v_flex()

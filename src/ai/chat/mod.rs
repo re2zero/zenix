@@ -29,7 +29,7 @@ mod state;
 mod tool_card;
 
 // Re-export public API consumed by `app.rs` and `ui/sidebar.rs`.
-pub use agent_block::{AgentBlock, AgentMonitorEntry};
+pub use agent_block::AgentMonitorEntry;
 pub use state::{
     AiChatAction, AiChatActionHandler, AiChatPanelData, ConfigDropdownTarget, DrawerKind,
     WorkspaceOption,
@@ -42,7 +42,6 @@ use gpui::{
 use gpui_component::{Theme, input::InputState, v_flex};
 
 use crate::ai::workers::WorkerRegistry;
-
 
 // ═══════════════════════════════════════════════════════════════════════
 // Main render entry
@@ -151,7 +150,7 @@ pub fn render_ai_chat_panel(
                 let rctx = messages::RenderCtx {
                     panel_width,
                     is_streaming_tail,
-                    is_hovered: hovered_msg_id == Some(msg.id),
+                    _is_hovered: hovered_msg_id == Some(msg.id),
                     reasoning_collapsed,
                     on_toggle_reasoning: Some(std::rc::Rc::new(move |window, cx| {
                         (reasoning_toggle)(
@@ -311,6 +310,7 @@ mod tests {
         let data = AiChatPanelData::default();
         let theme = test_theme();
         let registry = crate::ai::workers::WorkerRegistry::new();
-        let _element = render_ai_chat_panel(&data, &theme, None, noop_handler(), registry, "", 14.0);
+        let _element =
+            render_ai_chat_panel(&data, &theme, None, noop_handler(), registry, "", 14.0);
     }
 }

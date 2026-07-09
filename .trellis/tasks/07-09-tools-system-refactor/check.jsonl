@@ -1,0 +1,6 @@
+{"file": "src/ai/herdr.rs", "reason": "Verify PaneClose/TabClose compile and IPC paths"}
+{"file": "src/ai/session.rs", "reason": "Verify memories table + FTS5 + methods exist"}
+{"file": "src/ai/tools.rs", "reason": "Verify 6 tools registered, old 12 removed, Tool trait updated"}
+{"file": "src/ai/engine.rs", "reason": "Verify chat_and_dispatch removed, build_system_prompt updated"}
+{"file": "src/ai/mod.rs", "reason": "Verify exports match new module structure"}
+{"file": "src/app.rs", "reason": "Verify start_chat_streaming calls chat_with_tools"}

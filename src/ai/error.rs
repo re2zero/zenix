@@ -4,6 +4,7 @@ use std::fmt;
 
 /// AI orchestrator errors.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum AiError {
     /// Required configuration (provider/model) is missing.
     ConfigMissing(String),
@@ -63,6 +64,7 @@ impl From<anyhow::Error> for AiError {
 }
 
 /// Returns a user-friendly error message suitable for display in the UI.
+#[allow(dead_code)]
 pub fn user_friendly(err: &AiError) -> String {
     match err {
         AiError::ConfigMissing(msg) => {
@@ -109,6 +111,7 @@ pub fn user_friendly(err: &AiError) -> String {
 }
 
 /// Returns true if the error is considered retryable.
+#[allow(dead_code)]
 pub fn retryable(err: &AiError) -> bool {
     matches!(
         err,
@@ -120,6 +123,7 @@ pub fn retryable(err: &AiError) -> bool {
 }
 
 /// Truncate a string for display in error messages, preserving UTF-8 boundaries.
+#[allow(dead_code)]
 fn truncate_err(s: &str, max: usize) -> String {
     if s.len() <= max {
         s.to_string()

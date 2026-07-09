@@ -25,7 +25,8 @@ src/ai/
 ├── workers.rs      # WorkerRegistry, WorkerInstance, WorkerStatus
 ├── session.rs      # SQLite 持久化 (CRUD、FTS5 搜索)
 ├── engine.rs       # 编排器引擎 (LLM API、SSE 流式、调度循环)
-├── tools.rs        # 12 个内置工具 + Tool trait + ToolExecutor
+├── tools.rs        # 6 个编排工具 + Tool trait + ToolExecutor
+├── file_ops.rs     # 内部文件操作函数 (read_file_contents, list_directory, search_files)
 ├── compactor.rs    # 会话压缩 (token 估算 + 自动压缩 + 配置隔离)
 ├── markdown.rs     # 轻量级 Markdown 渲染 (无外部依赖)
 ├── herdr.rs        # Herdr IPC 客户端 (Unix socket、JSON-line)
@@ -43,7 +44,7 @@ pub mod herdr;
 pub mod session;
 
 pub use session::*;   // Session, ChatMessage, AgentActivity, SearchHit, SessionManager
-pub use engine::*;    // OrchestratorEngine, AgentTask, AgentResult, DispatchDirective, DispatchStreamEvent, parse_dispatch_directive, execute_agent_task
+pub use engine::*;    // OrchestratorEngine, AgentTask, AgentResult, DispatchDirective, DispatchStreamEvent, execute_agent_task, chat_with_tools, chat_simple_with_tools
 ```
 
 > **Note**: `config.rs` was removed in the fourth iteration — ZenixAI config is now integrated into API providers. The AI chat panel reads provider/model/thinking from `api_provider::load_all()` directly.
@@ -89,7 +90,7 @@ let response: HerdrResponse = serde_json::from_str(line.trim())?;
 {"id": "zenix-req-0", "error": {"code": "pane_not_found", "message": "..."}}
 ```
 
-### 2.3 支持的 RPC 方法 (17 种)
+### 2.3 支持的 RPC 方法 (19 种)
 
 | 方法 | 参数类型 | 响应类型 | 用途 |
 |------|----------|----------|------|
@@ -111,6 +112,8 @@ let response: HerdrResponse = serde_json::from_str(line.trim())?;
 | `pane.send_text` | `PaneSendTextParams` | `Ok` | 发送文本到 pane |
 | `pane.read` | `PaneReadParams` | `PaneRead` | 读取 pane 输出 |
 | `pane.wait_for_output` | `PaneWaitForOutputParams` | `OutputMatched` | 等待输出匹配 |
+| `pane.close` | `PaneTarget` | `Ok` | 关闭 pane |
+| `tab.close` | `TabTarget` | `Ok` | 关闭 tab |
 | `events.subscribe` | `EventsSubscribeParams` | `SubscriptionStarted` | 订阅事件 |
 
 ### 2.4 关键数据类型
@@ -203,28 +206,28 @@ pub fn chat_simple(&self, messages: &[ChatMessageRef]) -> Result<String, AiError
 - 使用 `ureq` (同步 HTTP)
 - 适用于简单 Q&A，无需实时渲染
 
-### 3.2 调度循环 (`chat_and_dispatch`)
+### 3.2 工具调用循环 (`chat_with_tools`)
 
 ```rust
-pub async fn chat_and_dispatch(
+pub async fn chat_with_tools(
     &self,
     messages: &[ChatMessageRef],
-    herdr_client: &mut HerdrIpcClient,
-    workspace_id: &str,
+    tools: &[&dyn Tool],
+    executor: &ToolExecutor,
     compactor: &Compactor,
+    max_tool_rounds: u32,
     on_event: impl Fn(DispatchStreamEvent) + Send + Sync + 'static,
 ) -> Result<String, AiError>
 ```
 
 **流程**:
-1. **Compaction**: 每次循环开始时检查消息列表 token 用量，触发压缩
-2. **Phase 1**: LLM 调用 (SSE 流式) → 收集完整响应文本
-3. **Phase 2**: 解析调度指令 (`parse_dispatch_directive`)
-4. **Phase 3**: 执行 Agent — **单 agent 直接执行，多 agent 并行** (`std::thread::spawn`)
-5. **Phase 4**: 汇总结果 → 返回 LLM 生成最终回复
-6. **Loop**: 如果 LLM 再次调度，重复 Phase 1-4（最多 5 轮）
-
-**关键变更**: system prompt 使用 `self.system_prompt`（动态构建），不再使用 `SYSTEM_PROMPT` 常量。
+1. **系统消息注入**: 如果首条消息不是 `role: "system"`，自动在开头插入 `self.system_prompt`
+2. **Compaction**: 每次循环开始时检查消息列表 token 用量，触发压缩
+3. **Payload 构建**: 用 `build_tool_call_payload()` 构造包含 6 个工具定义的 HTTP 请求体
+4. **SSE 流式调用**: 发送 HTTP POST → 逐字节解析 SSE → 同时发射 token / tool_call 事件
+5. **工具执行**: `executor.execute()` 调用 llm 选择的工具
+6. **结果注入**: tool result 作为 `role: "tool"` 消息追加到消息列表
+7. **Loop**: 继续直到 LLM 返回纯文本（无 tool_calls），或达到 max_rounds
 
 ```rust
 loop {
@@ -234,33 +237,30 @@ loop {
         on_event(DispatchStreamEvent::Compacted(info));
     }
 
-    let response_text = self.call_llm_collect(&loop_messages, ...).await?;
-    
-    if let Some(directive) = parse_dispatch_directive(&response_text) {
-        // Parallel dispatch: single agent = direct, multiple = thread pool
-        let agent_results = if task_count <= 1 {
-            execute_agent_task(herdr_client, &task, workspace_id, TIMEOUT, ...)
-        } else {
-            // Each thread gets own HerdrIpcClient from socket_path
-            handles.push(std::thread::spawn(move || {
-                let mut client = HerdrIpcClient::new(socket);
-                execute_agent_task(&mut client, &task, &ws, TIMEOUT, ...)
-            }));
-            handles.join().map(|r| r.unwrap_or_else(|| crash_result))
-        };
-        
-        // Build summary for next LLM round
-        let summary = agent_results.join("\n\n---\n\n");
-        loop_messages = vec![
-            ChatMessageRef { role: "system", content: self.system_prompt.clone() },
-            ChatMessageRef { role: "user", content: format!("Agent results:\n{summary}") },
-        ];
-    } else {
-        final_response = response_text;
-        break;
+    // ── Build payload & stream ────
+    let payload = build_tool_call_payload(&loop_messages, tools, &model);
+    let tool_calls = parse_tool_call_sse_stream(resp, |event| { ... }).await;
+
+    // ── Execute tool calls ────────
+    if !tool_calls.is_empty() {
+        let results = tool_calls.iter().map(|tc| executor.execute(tc)).collect();
+        for result in &results {
+            loop_messages.push(ChatMessageRef {
+                role: "tool".into(),
+                content: format!("Tool '{}' returned: ...", result.tool_name),
+            });
+        }
+        continue;  // Next LLM round
     }
+
+    // ── LLM direct reply ──────────
+    return Ok(collected_text);
 }
 ```
+
+**废弃**: `chat_and_dispatch()` 和所有 dispatch 解析函数 (`parse_dispatch_directive`, `extract_json_block`, `parse_json_dispatch`, `parse_text_dispatch`, `find_pattern`, `classify_agent_error`) 已于 2026-07-09 删除。系统不再使用 JSON dispatch 格式，完全切换至 LLM function calling。
+
+`execute_agent_task()` 保留为私有辅助函数（仅供参考，不在生产路径中调用）。
 
 ### 3.3 动态 System Prompt
 
@@ -277,60 +277,11 @@ pub fn build_system_prompt(roles_summary: &str, workspace_info: &str) -> String;
 |------|------|------|
 | 编排器角色定义 | 内嵌 | `DEFAULT_SYSTEM_PROMPT` 常量 |
 | 可用角色列表 | `RoleRegistry::list_roles()` | 每行 `- 角色名 (id) — 描述` |
-| 可用工具列表 | 内嵌 | 12 个工具的 name + description 硬编码 |
+| 可用工具列表 | 内嵌 | 6 个工具的 name + description 硬编码 |
 | 工作空间信息 | `AiChatPanelData.selected_workspace` | `当前会话绑定到 workspace: xxx` |
-| Dispatch JSON 格式 | 内嵌 | 含 worker_name 格式说明 |
 | 工作流 + 约束 | 内嵌 | 6 步流程 + 约束条件 |
 
 **降级行为**: 若 roles_summary 和 workspace_info 均为空，返回 `DEFAULT_SYSTEM_PROMPT`。
-
-### 3.4 调度指令解析
-
-#### JSON 格式 (优先)
-
-```json
-{
-  "agents": [
-    {
-      "agent_name": "claude",
-      "instruction": "Implement JWT token refresh in src/auth/jwt.rs",
-      "cwd": "/home/user/project"
-    }
-  ]
-}
-```
-
-#### 文本格式 (Fallback)
-
-```
-Agent: claude
-Task: Implement JWT token refresh in src/auth/jwt.rs
-CWD: /home/user/project
-```
-
-**解析策略**:
-1. 提取 ` ```json ... ``` ` 或 ` ``` ... ``` ` 代码块
-2. 解析 JSON `{"agents": [...]}`
-3. 无代码块 → 尝试内联 JSON
-4. 无 JSON → 尝试文本格式 (`Agent:\s*(\w+)`, `Task:\s*(.+)`)
-5. 无匹配 → 返回 `None`（LLM 直接回复）
-
-```rust
-pub fn parse_dispatch_directive(response: &str) -> Option<DispatchDirective> {
-    // 1. Try JSON code block
-    if let Some(json_text) = extract_json_block(response) {
-        if let Some(d) = parse_json_dispatch(&json_text) {
-            return Some(d);
-        }
-    }
-    // 2. Try inline JSON
-    if let Some(d) = parse_json_dispatch(response) {
-        return Some(d);
-    }
-    // 3. Fallback to text format
-    parse_text_dispatch(response)
-}
-```
 
 ### 3.4 Agent 执行流程
 
@@ -399,7 +350,36 @@ CREATE TRIGGER messages_ai AFTER INSERT ON messages WHEN new.role = 'user' BEGIN
 END;
 ```
 
-### 4.2 FTS5 搜索
+### 4.2 Memories 表 (编排器记忆)
+
+```sql
+CREATE TABLE IF NOT EXISTS memories (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    key TEXT NOT NULL UNIQUE,
+    value TEXT NOT NULL,
+    session_id TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(
+    key, value,
+    content=memories,
+    content_rowid=id
+);
+```
+
+**FTS5 同步**: 通过 3 个 INSERT/DELETE/UPDATE 触发器 (`memories_ai`, `memories_ad`, `memories_au`) 自动同步。
+
+**SessionManager 方法**:
+
+```rust
+pub fn write_memory(&self, key: &str, value: &str, session_id: &str) -> Result<()>;
+pub fn read_memory(&self, key: &str) -> Result<Option<String>>;
+pub fn search_memory(&self, query: &str, limit: usize) -> Result<Vec<(String, String)>>;
+pub fn delete_memory(&self, key: &str) -> Result<()>;
+```
+
+### 4.3 FTS5 搜索
 
 - **搜索范围**: 仅 `role = 'user'` 的消息
 - **查询清洗**: 每个 token 包裹引号，过滤特殊字符
@@ -500,14 +480,49 @@ reqwest = { version = "0.12", features = ["json", "stream"] }
 - 桌面应用短操作，connect 开销可接受
 - 简化实现，减少 bug
 
-### 6.4 调度循环最多 5 轮
+### 6.4 调度循环最多 5 轮（已迁移至工具调用循环）
 
-**决策**: `max_dispatch_rounds = 5`
+**决策**: `max_tool_rounds` (默认 10) 由 `chat_with_tools()` 调用方传入。
 
 **原因**:
-- 防止 LLM 无限调度（bug 或恶意输入）
-- 5 轮足以覆盖复杂任务分解
-- 达到上限时返回汇总 + 通知
+- 防止 LLM 无限工具调用（bug 或恶意输入）
+- 默认 10 轮（app.rs 传参），`chat_with_tools` 内部 clamp 到 MAX_TOOL_ROUNDS=25
+- 达到上限时返回 `AiError::Timeout`
+
+### 6.5 JSON Dispatch → Function Calling 迁移 (2026-07-09)
+
+**决策**: 完全删除 JSON dispatch 格式，切换到 LLM function calling。
+
+**旧架构**:
+```
+LLM 响应文本 → parse_dispatch_directive() → hardcoded JSON parse → execute_agent_task()
+```
+
+**新架构**:
+```
+LLM function calling → Tool trait → executor.execute() → 6 tools (spawn_worker, send_text, ...)
+```
+
+**原因**:
+1. **行业标准**: OpenAI/Anthropic 原生支持 function calling，不需要手写解析器
+2. **可靠性**: JSON dispatch 格式依赖 LLM 精确输出特定 JSON 结构，容易解析失败
+3. **可扩展性**: 新增工具只需实现 Tool trait，无需修改解析逻辑
+4. **系统提示简洁**: 无需在 system prompt 中嵌入格式说明
+
+**副作用**:
+- 所有 dispatch 解析函数 (`parse_dispatch_directive`, `extract_json_block`, `parse_json_dispatch`, `parse_text_dispatch`, `find_pattern`, `classify_agent_error`) 已删除
+- `chat_and_dispatch()` 已删除，由 `chat_with_tools()` 替代
+- `ToolExecutor` 从 engine.rs 移至 tools.rs（解决循环依赖）
+- SSE 解析提取为独立 `parse_tool_call_sse_stream()` 函数
+
+### 6.6 ToolExecutor 位置 (2026-07-09)
+
+**决策**: `ToolExecutor` 定义在 `tools.rs` 而非 `engine.rs`。
+
+**原因**:
+- 避免循环依赖（engine.rs → tools.rs 导入 Tool，tools.rs → engine.rs 导入 ToolExecutor）
+- 工具系统的所有权在 tools.rs，executor 作为工具执行上下文放在同一模块
+- engine.rs 通过 `use crate::ai::tools::ToolExecutor` 导入
 
 ---
 
@@ -529,15 +544,17 @@ pub async fn chat_stream(&self, ...) -> Result<()> {
 }
 ```
 
-### 7.2 禁止 `#[allow(dead_code)]`
+### 7.2 禁止 `#![allow(dead_code)]` (模块级)
+
+模块级 `#![allow(dead_code)]` 已从 `tools.rs`, `engine.rs`, `compactor.rs` 移除。单个字段/函数上的 `#[allow(dead_code)]` 仅在保留的未来用途代码中使用。
 
 ```rust
-// ❌ 禁止
-#[allow(dead_code)]
-pub fn get_orchestrator_provider(...) -> Option<ApiProviderConfig> { ... }
+// ❌ 禁止 - 模块级
+#![allow(dead_code)]  // 已在 ai/ 模块中全部移除
 
-// ✅ 正确：移除死代码，或标记为 Phase N prep 注释
-// Phase 2: 用于 AI 设置面板的 provider 选择
+// ✅ 可接受 - 单个函数保留
+#[allow(dead_code)]  // 保留给 Phase 2 MCP Server
+pub fn execute_agent_task(...) { ... }
 ```
 
 ### 7.3 禁止 `unwrap()` in 生产代码
@@ -559,7 +576,7 @@ let config = ConfigStore::load().context("load config")?;
 | 模块 | 必需测试 |
 |------|----------|
 | `herdr.rs` | JSON 序列化/反序列化 round-trip（所有关键类型）、请求 ID 生成、响应解析（success/error/empty/invalid）、17 种 RPC 方法 wire protocol 校验 |
-| `engine.rs` | `parse_dispatch_directive`（JSON code block、inline JSON、text format、malformed input）、`AgentResult` 构造、`execute_agent_task` 错误路径、`chat_and_dispatch` 调度循环、`build_system_prompt` 输出结构 |
+| `engine.rs` | `build_tool_call_payload` JSON 结构、SSE 工具调用解析、`parse_tool_call_sse_stream` 双格式（OpenAI/Anthropic）、`build_system_prompt` 输出结构、`ToolExecutor` 分派 |
 | `roles.rs` | `RoleDef` serde round-trip、内置模板数量/唯一性、frontmatter 格式、`RoleRegistry` 路径、seed + load、create/delete |
 | `workers.rs` | 注册/状态更新/取消/cleanup、`send_to_worker` 路径、输出追加 |
 | `session.rs` | CRUD、FTS5 搜索（含特殊字符）、ON DELETE CASCADE、搜索范围过滤（仅 user 消息） |
@@ -597,8 +614,9 @@ fn test_parse_dispatch_directive_none() {
 在实现 AI 模块新功能时，检查：
 
 - [ ] `HerdrIpcClient` 方法签名与 `engine.rs` 调用匹配
+- [ ] `ToolExecutor.herdr_client` 方法签名与 `tools.rs` 工具调用匹配
 - [ ] `AgentTask`/`AgentResult` 与 `session.rs` 的 `AgentActivity` 职责分离（运行时 vs 持久化）
-- [ ] `DispatchStreamEvent` 变体与 `chat.rs` 的 `AiChatPanelData` 字段兼容
+- [ ] `DispatchStreamEvent` 变体（Token/Thinking/ToolCall/ToolResult/Compacted）与 `chat.rs` 的 `AiChatPanelData` 字段兼容
 - [ ] `AiError` 变体覆盖所有错误路径（herdr、LLM、配置、序列化）
 - [ ] 所有 `serde` 注解正确（`#[serde(tag = "method", content = "params")]` 等）
 - [ ] JSON 字段名与 herdr wire protocol 对齐
@@ -891,69 +909,129 @@ CREATE TABLE IF NOT EXISTS compaction_entries (
 
 ---
 
-## 10.9 工具系统实现总结（2026-07-02）
+## 10.9 工具系统实现总结（2026-07-09 重写）
+
+### 概述
+
+2026-07-09 彻底重构了工具系统：
+
+1. **清理旧 dispatch 路径**: 删除 `chat_and_dispatch()` + 6 个 dispatch 解析函数（~500 行），完全切换至 LLM function calling
+2. **SQLite 记忆**: 内存 `HashMap` → SQLite `memories` 表 + FTS5
+3. **6 个编排工具**: 替换原来的 12 个工具，文件操作提取为内部 `file_ops.rs` 模块
+4. **修复 chat_stream_with_tools 空 POST bug**: 旧版发送空 HTTP POST（无 `.json(&payload)`），现在 `chat_with_tools()` 自构建 payload
 
 ### 已实现模块
 
-| 模块 | 文件 | 行数 | 说明 |
-|------|------|------|------|
-| 工具系统 | `src/ai/tools.rs` | 1,956 | Tool trait + 12 个工具定义 |
-| 会话压缩 | `src/ai/compactor.rs` | 492 | Compactor + token 估算 + 自动压缩 |
-| Function Calling | `src/ai/engine.rs` | +885 | chat_with_tools + ToolExecutor + SSE 工具调用解析 |
-| 配置隔离 | `src/app.rs` | +217 | 空配置渲染 |
+| 模块 | 文件 | 说明 |
+|------|------|------|
+| 工具系统 | `src/ai/tools.rs` | Tool trait + ToolExecutor + 6 个工具 |
+| 文件操作 | `src/ai/file_ops.rs` | 内部文件操作函数（read_file_contents, list_directory, search_files） |
+| Herdr IPC | `src/ai/herdr.rs` | +`close_pane()` / `close_tab()` |
+| 记忆持久化 | `src/ai/session.rs` | +`memories` 表 + FTS5 + 4 个方法 |
+| SSE 解析 | `src/ai/engine.rs` | `parse_tool_call_sse_stream()` 独立函数 |
 
-### 12 个内置工具
+### 6 个编排工具
 
-| 分类 | 工具 | 实现状态 | herdr IPC |
-|------|------|---------|-----------|
-| 文件操作 | `read_file` | ✅ 完整 | ❌ |
-| 文件操作 | `read_directory` | ✅ 完整 | ❌ |
-| 文件操作 | `search_files` | ✅ 完整 | ❌ |
-| Agent 管理 | `list_agents` | ✅ 完整 | ✅ agent.list |
-| Agent 管理 | `start_agent` | ✅ 完整 | ✅ agent.start |
-| Agent 管理 | `send_instruction` | ✅ 完整 | ✅ pane.send_text |
-| Agent 管理 | `read_output` | ✅ 完整 | ✅ pane.read |
-| 布局控制 | `split_pane` | ✅ 完整 | ✅ pane.split |
-| 布局控制 | `arrange_grid` | ✅ 完整 | ✅ pane.arrange |
-| 记忆管理 | `read_memory` | ✅ 内存 HashMap | ❌ |
-| 记忆管理 | `write_memory` | ✅ 内存 HashMap | ❌ |
-| 记忆管理 | `search_memory` | ✅ 内存 HashMap | ❌ |
+| 工具 | herdr IPC | 参数 | 说明 |
+|------|-----------|------|------|
+| `spawn_worker` | agent.start + pane.split | agent, instruction, cwd?, position? | 创建 worker，支持网格位置 |
+| `send_text` | pane.send_text | pane_id, text | 向 worker 发送文本 |
+| `read_output` | pane.read | pane_id, lines? | 读取 worker 输出 |
+| `wait_for_output` | pane.wait_for_output | pane_id, pattern, timeout_ms? | 等待完成标记 |
+| `list_workers` | agent.list | — | 列出运行中的 worker |
+| `close_worker` | pane.close | pane_id | 关闭 worker pane |
+
+### 已删除的工具（12 → 6）
+
+| 分类 | 旧工具 (已删除) | 去向 |
+|------|----------------|------|
+| 文件操作 | `read_file`, `read_directory`, `search_files` | `file_ops.rs` (内部函数，非工具) |
+| Agent 管理 | `list_agents`, `start_agent`, `send_instruction` | `list_workers`, `spawn_worker`, `send_text` (改名/合并) |
+| Agent 管理 | `read_output` | 保留并改名 (agent → pane 层级) |
+| 布局控制 | `split_pane`, `arrange_grid` | 合并到 `spawn_worker` (position 参数) |
+| 记忆管理 | `read_memory`, `write_memory`, `search_memory` | SQLite `session.rs` 方法 (非工具) |
+
+### 工具接口
+
+```rust
+// ai/tools.rs
+
+pub struct ToolCall {
+    pub name: String,
+    pub arguments: serde_json::Value,
+}
+
+pub struct ToolResult {
+    pub tool_name: String,
+    pub content: String,
+    pub is_error: bool,
+}
+
+pub trait Tool: Send + Sync {
+    fn name(&self) -> &str;
+    fn description(&self) -> &str;
+    fn parameters(&self) -> serde_json::Value;
+    fn execute(&self, executor: &ToolExecutor, args: serde_json::Value) -> ToolResult;
+}
+
+// ToolExecutor — 持有 herdr IPC + SessionManager
+pub struct ToolExecutor { ... }
+
+impl ToolExecutor {
+    pub fn new(
+        herdr_client: HerdrIpcClient,
+        workspace_id: String,
+        session_manager: SessionManager,
+    ) -> Self;
+    pub fn execute(&self, call: &ToolCall) -> ToolResult;
+    pub fn available_tools() -> Vec<Box<dyn Tool>>;
+}
+```
 
 ### Function Calling 循环
 
 ```rust
 // OrchestratorEngine::chat_with_tools()
+// 1. 自动注入 system prompt（如果首条不是 system 角色）
+if loop_messages.first().map(|m| m.role) != Some("system") {
+    loop_messages.insert(0, ChatMessageRef {
+        role: "system", content: self.system_prompt.clone()
+    });
+}
+
 loop {
-    // 1. 检查是否需要压缩
-    if compactor.should_compress(&loop_messages) {
-        loop_messages = compactor.compress_messages(&loop_messages);
+    // 2. 压缩检查
+    if compactor.should_compress(&refs) {
+        loop_messages = compactor.compress_messages(&refs).kept_messages;
     }
-    
-    // 2. 调用 LLM（带工具定义）
-    let (content, tool_calls) = chat_stream_with_tools(...).await?;
-    
-    // 3. 执行工具调用
+
+    // 3. 构建 payload（含 6 个工具定义）+ SSE 流式调用
+    let payload = build_tool_call_payload(&loop_messages, tools, &model);
+    let tool_calls = parse_tool_call_sse_stream(resp, |event| { ... }).await;
+
+    // 4. 执行工具
     if !tool_calls.is_empty() {
         let results = tool_calls.iter().map(|tc| executor.execute(tc)).collect();
-        loop_messages.push(tool_results_as_messages(results));
+        loop_messages.extend(results_as_messages(results));
         continue;
     }
-    
-    // 4. LLM 直接回复，退出循环
-    return Ok(content);
+
+    // 5. LLM 直接回复
+    return Ok(collected_text);
 }
 ```
 
 ### 设计决策
 
-1. **工具集严格限定在编排视角** — 无 bash/edit/write 等执行类工具
-2. **Tool trait 无状态** — 工具通过 ToolExecutor 持有 herdr_client
-3. **Token 估算简化** — chars/3 + 10 overhead，不引入 token counter 依赖
-4. **记忆管理内存实现** — 后续接 SQLite，不阻塞当前迭代
-5. **SSE 双格式支持** — OpenAI + Anthropic 工具调用解析
+1. **工具集从 LLM 视角命名** — `spawn_worker` 而非 `start_agent`，`send_text` 而非 `send_instruction`
+2. **Tool trait 通过 ToolExecutor 访问状态** — `execute(&self, executor: &ToolExecutor, args)`, 而非 `execute(&self, args)`
+3. **ToolExecutor 位于 tools.rs** — 解决 engine.rs/tools.rs 循环依赖
+4. **SSE 解析独立函数** — `parse_tool_call_sse_stream()` 从 `chat_stream_with_tools` 提取，供 `chat_with_tools` 和 `chat_simple_with_tools` 复用
+5. **记忆持久化 SQLite** — `memories` 表 + FTS5 全文搜索，替代内存 HashMap
+6. **文件操作降级为内部函数** — 不再通过 LLM 调用，由 orchestrator 内部使用
 
 ### 测试
 
-- 194 → 215 测试（新增 21 个）
-- 覆盖：工具参数校验、glob 匹配、压缩阈值、Function Calling 循环、配置检查
-- clippy 新代码零警告
+- 172 测试通过（ci test）
+- 覆盖：6 个工具参数校验、`ToolExecutor` 分派、SSE 工具调用解析（OpenAI + Anthropic）、工具 payload 构建、记忆 CRUD + FTS5
+- cargo check + clippy 零新增警告

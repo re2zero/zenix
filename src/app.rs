@@ -123,11 +123,11 @@ pub struct ZenixApp {
     api_test_results: std::collections::HashMap<String, String>,
     agent_search: String,
     agent_search_input: Option<gpui::Entity<gpui_component::input::InputState>>,
-    agent_installed_only: bool,
-    mcp_search: String,
-    mcp_search_input: Option<gpui::Entity<gpui_component::input::InputState>>,
-    api_search: String,
-    api_search_input: Option<gpui::Entity<gpui_component::input::InputState>>,
+    _agent_installed_only: bool,
+    _mcp_search: String,
+    _mcp_search_input: Option<gpui::Entity<gpui_component::input::InputState>>,
+    _api_search: String,
+    _api_search_input: Option<gpui::Entity<gpui_component::input::InputState>>,
     skill_search_input: Option<gpui::Entity<gpui_component::input::InputState>>,
     active_skills_subtab: crate::ui::settings::SkillsSubTab,
     skill_search: String,
@@ -162,7 +162,7 @@ pub struct ZenixApp {
     pub cursor_visible: bool,
     single_instance_rx: Option<std::sync::mpsc::Receiver<crate::single_instance::Signal>>,
 }
-    type FontSelect = SelectState<SearchableVec<String>>;
+type FontSelect = SelectState<SearchableVec<String>>;
 
 fn write_to_pty(backend: &Option<BackendTx>, tab: &mut Option<TerminalTab>, bytes: Vec<u8>) {
     if let Some(backend) = backend {
@@ -279,16 +279,16 @@ impl ZenixApp {
             api_test_results: std::collections::HashMap::new(),
             agent_search: String::new(),
             agent_search_input: None,
-            agent_installed_only: false,
+            _agent_installed_only: false,
             active_skills_subtab: crate::ui::settings::SkillsSubTab::Installed,
             skill_search: String::new(),
             market_skills: Vec::new(),
             market_loading: false,
             market_error: None,
-            mcp_search: String::new(),
-            mcp_search_input: None,
-            api_search: String::new(),
-            api_search_input: None,
+            _mcp_search: String::new(),
+            _mcp_search_input: None,
+            _api_search: String::new(),
+            _api_search_input: None,
             skill_search_input: None,
             terminal_cursor_blink: cursor_blink,
             terminal_cursor_style: cursor_style,
@@ -851,7 +851,7 @@ impl ZenixApp {
     fn on_mouse_move(
         &mut self,
         event: &MouseMoveEvent,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         if self.show_settings {
@@ -1383,9 +1383,7 @@ impl Render for ZenixApp {
                         .iter()
                         .position(|n| *n == current)
                         .map(|i| gpui_component::IndexPath::new(i));
-                    let delegate = gpui_component::searchable_list::SearchableVec::new(
-                        names,
-                    );
+                    let delegate = gpui_component::searchable_list::SearchableVec::new(names);
                     let font_select = cx.new(|cx| {
                         FontSelect::new(delegate, selected_idx, window, cx).searchable(true)
                     });
@@ -2943,7 +2941,7 @@ impl Render for ZenixApp {
 ///
 /// Synchronously pushes the user message + an empty assistant placeholder into
 /// `data.messages`, sets streaming state, then spawns an async task that calls
-/// `OrchestratorEngine::chat_and_dispatch`. Stream events arrive via a tokio
+/// `OrchestratorEngine::chat_with_tools`. Stream events arrive via a tokio
 /// mpsc channel and are folded back into `data.messages[streaming_msg_idx]`.
 fn start_chat_streaming(this: &mut ZenixApp, text: String, cx: &mut gpui::Context<'_, ZenixApp>) {
     use crate::ai::engine::{ChatMessageRef, DispatchStreamEvent, OrchestratorEngine};
@@ -3186,20 +3184,26 @@ fn start_chat_streaming(this: &mut ZenixApp, text: String, cx: &mut gpui::Contex
 
             // NOTE: Do NOT call herdr_client.connect() upfront — it pings the
             // daemon and fails if herdr isn't running. For pure chat (no
-            // dispatch directive in the LLM response), herdr is never used.
-            // Defer connection to chat_and_dispatch's dispatch branch; if
-            // dispatch fires and herdr is down, execute_agent_task will
-            // surface the error via AgentComplete at that point.
-            let mut herdr_client = HerdrIpcClient::new(socket_path);
+            // tool calls in the LLM response), herdr is never used.
+            // Defer connection to the tool executor; if a tool fires and
+            // herdr is down, the tool will surface an error at that point.
+            let herdr_client = HerdrIpcClient::new(socket_path);
             let compactor = crate::ai::compactor::Compactor::default_compactor();
 
-            tracing::info!(target: "zenixai", "calling chat_and_dispatch");
+            let executor = crate::ai::tools::ToolExecutor::new(herdr_client, workspace_id.clone());
+            let tools: Vec<Box<dyn crate::ai::tools::Tool>> =
+                crate::ai::tools::ToolExecutor::available_tools();
+            let tool_refs: Vec<&dyn crate::ai::tools::Tool> =
+                tools.iter().map(|t| t.as_ref()).collect();
+
+            tracing::info!(target: "zenixai", "calling chat_with_tools");
             let result = engine
-                .chat_and_dispatch(
+                .chat_with_tools(
                     &messages_for_engine,
-                    &mut herdr_client,
-                    &workspace_id,
+                    &tool_refs,
+                    &executor,
                     &compactor,
+                    10,
                     move |ev| {
                         let _ = event_tx_for_cb.send(ev);
                     },
@@ -3210,10 +3214,10 @@ fn start_chat_streaming(this: &mut ZenixApp, text: String, cx: &mut gpui::Contex
                 Ok(text) => tracing::info!(
                     target: "zenixai",
                     bytes = text.len(),
-                    "chat_and_dispatch completed"
+                    "chat_with_tools completed"
                 ),
                 Err(e) => {
-                    tracing::warn!(target: "zenixai", error = %e, "chat_and_dispatch failed");
+                    tracing::warn!(target: "zenixai", error = %e, "chat_with_tools failed");
                     let _ = event_tx.send(DispatchStreamEvent::Error(format!("Chat failed: {e}")));
                 }
             }
