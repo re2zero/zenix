@@ -68,7 +68,7 @@ impl std::fmt::Display for WorkerStatus {
 }
 
 /// Thread-safe registry for tracking worker instances.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct WorkerRegistry {
     inner: Arc<Mutex<WorkerRegistryInner>>,
 }
@@ -88,6 +88,12 @@ impl Default for WorkerRegistry {
                 next_id: 1,
             })),
         }
+    }
+}
+
+impl Clone for WorkerRegistry {
+    fn clone(&self) -> Self {
+        Self { inner: self.inner.clone() }
     }
 }
 

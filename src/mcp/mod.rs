@@ -660,3 +660,37 @@ pub fn sync_zenix_server_to_agent(
 
     write_claude_mcp(&config_path, &entries)
 }
+
+/// Return the built-in zenix-orchestrator server entry.
+/// Always has SSE mode: connects to the local Unix socket.
+pub fn builtin_orchestrator_server() -> ZenixMcpServer {
+    let config_dir = crate::platform::zenix_config_dir();
+    let sock_path = config_dir.join("mcp-orchestrator.sock");
+    ZenixMcpServer {
+        name: "zenix-orchestrator".into(),
+        mcp_type: McpType::Sse,
+        command: sock_path.to_string_lossy().to_string(),
+        args: Vec::new(),
+        env: HashMap::new(),
+        enabled_agents: Vec::new(),
+    }
+}
+
+/// Ensure the built-in orchestrator server is registered in the zenix MCP config.
+pub fn ensure_builtin_orchestrator() -> ZenixMcpServer {
+    let server = builtin_orchestrator_server();
+    let existing = load_zenix_mcp_servers();
+    if !existing.iter().any(|s| s.name == "zenix-orchestrator") {
+        let _ = add_zenix_mcp_server(&server);
+    }
+    // Reload to get any persisted agent toggles
+    load_zenix_mcp_servers()
+        .into_iter()
+        .find(|s| s.name == "zenix-orchestrator")
+        .unwrap_or(server)
+}
+
+pub mod handler;
+pub mod server;
+pub mod sse;
+pub mod types;

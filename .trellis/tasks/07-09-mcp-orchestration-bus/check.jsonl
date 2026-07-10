@@ -1,0 +1,12 @@
+{"step":0,"check":"cargo test — session tests pass with Mutex<Connection>"}
+{"step":1,"check":"cargo check passes with rmcp dependency added"}
+{"step":2,"check":"cargo check — new mcp modules compile"}
+{"step":3,"check":"cargo test — session tests pass with new worker message methods"}
+{"step":4,"check":"cargo check — worker communication tools compile"}
+{"step":5,"check":"cargo check — orchestration tool MCP wrappers compile"}
+{"step":6,"check":"cargo build — MCP Server integrated into zenix startup"}
+{"step":7,"check":"cargo build — McpServerConfig in config module"}
+{"step":8,"check":"Manual: herdr running → cargo run → MCP client connects → list tools → spawn_worker → read_output → close_worker"}
+{"step":8,"check":"Manual: External AI agent connects via MCP → completes spawn→wait→read→close flow"}
+{"step":8,"check":"MCP Server shutdown when zenix exits — no zombie processes"}
+{"step":9,"check":"check.jsonl updated with current MCP server verification items"}

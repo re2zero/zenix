@@ -45,6 +45,14 @@ fn default_ai_input_height() -> f32 {
     160.0
 }
 
+fn default_mcp_server_enabled() -> bool {
+    true
+}
+
+fn default_mcp_server_sse_enabled() -> bool {
+    false
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConfigFile {
     #[serde(default = "default_terminal_font_size")]
@@ -78,6 +86,12 @@ pub struct ConfigFile {
     /// Last selected AI provider ID (restored on panel open).
     #[serde(default)]
     pub ai_selected_provider: String,
+    /// Enable MCP orchestration server on startup.
+    #[serde(default = "default_mcp_server_enabled")]
+    pub mcp_server_enabled: bool,
+    /// Enable SSE transport for MCP server (Unix socket).
+    #[serde(default = "default_mcp_server_sse_enabled")]
+    pub mcp_server_sse_enabled: bool,
 }
 
 impl Default for ConfigFile {
@@ -97,6 +111,8 @@ impl Default for ConfigFile {
             ai_panel_width: default_ai_panel_width(),
             ai_input_height: default_ai_input_height(),
             ai_selected_provider: String::new(),
+            mcp_server_enabled: default_mcp_server_enabled(),
+            mcp_server_sse_enabled: default_mcp_server_sse_enabled(),
         }
     }
 }
@@ -257,6 +273,22 @@ impl ConfigStore {
 
     pub fn set_ai_selected_provider(&mut self, provider: String) {
         self.data.ai_selected_provider = provider;
+    }
+
+    pub fn mcp_server_enabled(&self) -> bool {
+        self.data.mcp_server_enabled
+    }
+
+    pub fn set_mcp_server_enabled(&mut self, enabled: bool) {
+        self.data.mcp_server_enabled = enabled;
+    }
+
+    pub fn mcp_server_sse_enabled(&self) -> bool {
+        self.data.mcp_server_sse_enabled
+    }
+
+    pub fn set_mcp_server_sse_enabled(&mut self, enabled: bool) {
+        self.data.mcp_server_sse_enabled = enabled;
     }
 
     pub fn save(&self) -> Result<()> {

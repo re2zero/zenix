@@ -150,6 +150,8 @@ pub struct ZenixApp {
     ai_chat_panel: Option<crate::ai::chat::AiChatPanelData>,
     chat_input_entity: Option<gpui::Entity<gpui_component::input::InputState>>,
     worker_registry: crate::ai::workers::WorkerRegistry,
+    session_manager: Option<std::sync::Arc<crate::ai::session::SessionManager>>,
+    mcp_server: Option<crate::mcp::server::McpOrchestrationServer>,
     pending_clear_chat_input: bool,
     /// Resizable width for the system-info panel (starts at default).
     system_info_width: f32,
@@ -317,6 +319,8 @@ impl ZenixApp {
             ai_chat_panel: None,
             chat_input_entity: None,
             worker_registry: crate::ai::workers::WorkerRegistry::new(),
+            session_manager: None,
+            mcp_server: None,
             pending_clear_chat_input: false,
             system_info_width: sidebar::PANEL_WIDTH,
             panel_resize_drag: None,
@@ -324,6 +328,53 @@ impl ZenixApp {
             agent_polling: false,
             single_instance_rx,
         };
+        // Start MCP orchestration server in the background.
+        let mcp_enabled = result.config.mcp_server_enabled();
+        let sse_enabled_val = result.config.mcp_server_sse_enabled();
+        if mcp_enabled {
+            let worker_registry = result.worker_registry.clone();
+            let _mcp_task = cx.spawn(async move |this, cx| {
+                use crate::mcp::server::McpOrchestrationServer;
+                use std::sync::Arc;
+
+                let session_manager = match crate::ai::session::SessionManager::open() {
+                    Ok(mgr) => Arc::new(mgr),
+                    Err(e) => {
+                        tracing::warn!("failed to open session manager for MCP server: {e}");
+                        // Try in-memory as fallback
+                        Arc::new(crate::ai::session::SessionManager::open_in_memory().unwrap())
+                    }
+                };
+
+                // Create a herdr client for the shared tool executor.
+                let socket_path = crate::client::herdr_socket_path();
+                let herdr_client = crate::ai::herdr::HerdrIpcClient::new(socket_path);
+                let executor = Arc::new(crate::ai::tools::ToolExecutor::new(
+                    herdr_client,
+                    "mcp-server".into(),
+                ));
+
+                let server = McpOrchestrationServer::start(
+                    executor,
+                    Arc::new(worker_registry),
+                    session_manager,
+                    String::new(),
+                    sse_enabled_val,
+                ).await;
+
+                match server {
+                    Ok(srv) => {
+                        let _ = this.update(cx, |this, _| {
+                            this.mcp_server = Some(srv);
+                        });
+                        tracing::info!("MCP orchestration server started successfully");
+                    }
+                    Err(e) => {
+                        tracing::warn!("failed to start MCP orchestration server: {e}");
+                    }
+                }
+            });
+        }
         // Start cursor blink timer if enabled
         if cursor_blink {
             cx.spawn(async move |this, cx| {
@@ -1141,7 +1192,13 @@ impl ZenixApp {
     }
 
     fn refresh_mcp_data(&mut self, cx: &mut gpui::Context<Self>) {
-        self.mcp_zenix_servers = crate::mcp::load_zenix_mcp_servers();
+        let mut servers = crate::mcp::load_zenix_mcp_servers();
+        servers.retain(|s| s.name != "zenix-orchestrator");
+        if self.config.mcp_server_sse_enabled() {
+            let builtin = crate::mcp::ensure_builtin_orchestrator();
+            servers.insert(0, builtin);
+        }
+        self.mcp_zenix_servers = servers;
         self.mcp_per_agent = crate::mcp::scan_per_agent_mcp();
         cx.notify();
     }
@@ -2883,12 +2940,19 @@ impl Render for ZenixApp {
                                     if let Some(pc) = this.pending_confirm.take() {
                                         match pc {
                                             PendingConfirm::RemoveMcp(name) => {
-                                                let _ = crate::mcp::remove_zenix_mcp_server(&name);
+                                                if name == "zenix-orchestrator" {
+                                                    this.toast = Some(ToastMessage {
+                                                        text: "Cannot remove built-in server".into(),
+                                                        msg_type: "error".into(),
+                                                    });
+                                                } else {
+                                                    let _ = crate::mcp::remove_zenix_mcp_server(&name);
+                                                    this.toast = Some(ToastMessage {
+                                                        text: format!("Removed {name}"),
+                                                        msg_type: "success".into(),
+                                                    });
+                                                }
                                                 this.refresh_mcp_data(cx);
-                                                this.toast = Some(ToastMessage {
-                                                    text: format!("Removed {name}"),
-                                                    msg_type: "success".into(),
-                                                });
                                             }
                                             PendingConfirm::RemoveSkill(name) => {
                                                 let _ = crate::skills::remove_zenix_skill(&name);

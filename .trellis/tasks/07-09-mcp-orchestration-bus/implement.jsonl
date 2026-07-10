@@ -1,0 +1,13 @@
+{"step":0,"action":"refactor","detail":"src/ai/session.rs: wrap Connection in Mutex for thread safety"}
+{"step":1,"action":"add_dependency","detail":"Cargo.toml: add rmcp = { version = \"2.2\", features = [\"server\", \"transport-stdio\"] }"}
+{"step":2,"action":"create_module","detail":"src/mcp/server.rs: McpOrchestrationServer struct with start()/shutdown()"}
+{"step":2,"action":"create_module","detail":"src/mcp/handler.rs: McpToolHandler implementing ServerHandler trait"}
+{"step":2,"action":"create_module","detail":"src/mcp/types.rs: WorkerMessage and communication types"}
+{"step":2,"action":"update_module","detail":"src/mcp/mod.rs: expose pub mod server, handler, types"}
+{"step":3,"action":"enhance","detail":"src/ai/session.rs: add worker message methods (send_message, read_inbox, mark_read)"}
+{"step":4,"action":"implement","detail":"handler.rs: zenix_worker_list, zenix_worker_send, zenix_worker_inbox, zenix_worker_broadcast"}
+{"step":5,"action":"implement","detail":"handler.rs: MCP wrapper for 6 orchestration tools (zenix_ prefix)"}
+{"step":6,"action":"integrate","detail":"src/main.rs or src/app.rs: start MCP Server after tokio runtime init"}
+{"step":7,"action":"configure","detail":"src/config/mod.rs: add McpServerConfig with enable/disable/socket_path"}
+{"step":8,"action":"verify","detail":"Integration test: start zenix → connect MCP → call tools → validate output"}
+{"step":9,"action":"document","detail":"Update check.jsonl with MCP server verification items"}

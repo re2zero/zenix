@@ -1035,3 +1035,78 @@ loop {
 - 172 测试通过（ci test）
 - 覆盖：6 个工具参数校验、`ToolExecutor` 分派、SSE 工具调用解析（OpenAI + Anthropic）、工具 payload 构建、记忆 CRUD + FTS5
 - cargo check + clippy 零新增警告
+
+---
+
+## 10.10 MCP 通信总线（2026-07-09 实现）
+
+### 概述
+
+2026-07-09 实现了 zenix 内置 MCP Server，将编排工具通过 MCP 协议暴露。
+
+### 模块结构
+
+```
+src/mcp/
+├── mod.rs          # 原有 MCP 配置管理 + 新增 pub mod 声明
+├── server.rs       # McpOrchestrationServer — stdio MCP Server 生命周期
+├── handler.rs      # McpToolHandler — ServerHandler 实现，10 个 MCP 工具
+└── types.rs        # WorkerMessage — worker 通信消息类型
+```
+
+### 10 个 MCP 工具
+
+| MCP 工具 | 内部映射 | 分类 | 实现 |
+|----------|---------|------|------|
+| `zenix_spawn_worker` | `spawn_worker` | 编排 | `ToolExecutor::execute` |
+| `zenix_send_text` | `send_text` | 编排 | `ToolExecutor::execute` |
+| `zenix_read_output` | `read_output` | 编排 | `ToolExecutor::execute` |
+| `zenix_wait_for_output` | `wait_for_output` | 编排 | `ToolExecutor::execute` |
+| `zenix_list_workers` | `list_workers` | 编排 | `ToolExecutor::execute` |
+| `zenix_close_worker` | `close_worker` | 编排 | `ToolExecutor::execute` |
+| `zenix_worker_list` | `WorkerRegistry::all_workers` | 通信 | 直接读取 |
+| `zenix_worker_send` | `SessionManager::write_memory` | 通信 | SQLite + UUID |
+| `zenix_worker_inbox` | `SessionManager::search_memory` | 通信 | FTS5 + delete |
+| `zenix_worker_broadcast` | `WorkerRegistry::active_workers` | 通信 | 遍历发送 |
+
+### Worker 通信消息格式
+
+消息存储在 SQLite `memories` 表，key 格式：`worker_msg:<recipient>:<uuid>`，value 为 JSON：
+
+```json
+{"from": "orchestrator", "to": "worker_B", "text": "...", "timestamp": "2026-07-09T12:00:00Z"}
+```
+
+读取后自动删除（标记已读）。
+
+### MCP Server 生命周期
+
+- **启动**: `ZenixApp::new()` 中通过 `cx.spawn` 异步启动
+- **传输**: stdio 模式（`rmcp::transport::io::stdio()`）
+- **依赖**: `rmcp = "2.2"`（features: `server`, `transport-io`）
+- **关闭**: `Drop` 实现发送 shutdown 信号，RunningService 被 drop 时自动停止
+
+### 关键设计决策
+
+1. **手动 ServerHandler 实现** — 不使用 `#[tool_router]` 宏，直接实现 `ServerHandler` trait + serde 构造模型类型（因所有模型类型均为 non_exhaustive）
+2. **serde 构造** — `CallToolResult`, `Tool`, `ServerInfo` 等均通过 `serde_json::from_value` 构造，避免 non_exhaustive 编译错误
+3. **工具命名加 `zenix_` 前缀** — 避免与 worker 自身工具冲突
+4. **编排器内部不经过 MCP** — 编排器仍直接调用 `ToolExecutor`，MCP 是外部入口
+5. **SessionManager 线程安全** — `Connection` → `Mutex<Connection>`，使 `&self` 方法能在多线程 MCP handler 中安全调用
+
+### WorkerRegistry Clone
+
+```rust
+impl Clone for WorkerRegistry {
+    fn clone(&self) -> Self {
+        Self { inner: self.inner.clone() }
+    }
+}
+```
+
+### 待实现
+
+1. **启动集成**: `McpOrchestrationServer::start()` 需接入 `app.rs` 的 `start_chat_streaming` 流程
+2. **配置控制**: `config.json` 中添加 MCP Server 启用/禁用开关
+3. **SSE 模式**: Unix Socket 传输模式，供外部 AI 代理连接
+4. **Spawn 注入 MCP 配置**: `spawn_worker` 自动附加 MCP 连接地址到 worker 指令

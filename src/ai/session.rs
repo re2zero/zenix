@@ -2,6 +2,8 @@
 //!
 //! Database location: `~/.config/zenix/ai/zenix-ai.db`
 
+use std::sync::Mutex;
+
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
 
@@ -191,7 +193,7 @@ END;
 "#;
 
 pub struct SessionManager {
-    conn: Connection,
+    conn: Mutex<Connection>,
 }
 
 #[allow(dead_code)]
@@ -205,13 +207,17 @@ impl SessionManager {
         let conn =
             Connection::open(&db_path).with_context(|| format!("open sqlite db {:?}", db_path))?;
         Self::init(&conn)?;
-        Ok(Self { conn })
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory().context("open in-memory db")?;
         Self::init(&conn)?;
-        Ok(Self { conn })
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     fn init(conn: &Connection) -> Result<()> {
@@ -225,8 +231,8 @@ impl SessionManager {
 
     /// Returns sessions ordered by `updated_at` DESC.
     pub fn list_sessions(&self) -> Result<Vec<Session>> {
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
             .prepare(
                 "SELECT id, title, created_at, updated_at, workspace,
                         provider_id, model, thinking_level
@@ -245,8 +251,8 @@ impl SessionManager {
 
     /// Returns `None` if the session id does not exist.
     pub fn get_session(&self, id: &str) -> Result<Option<Session>> {
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
             .prepare(
                 "SELECT id, title, created_at, updated_at, workspace,
                         provider_id, model, thinking_level
@@ -263,7 +269,7 @@ impl SessionManager {
     }
 
     pub fn create_session(&self, session: &Session) -> Result<()> {
-        self.conn
+        self.conn.lock().unwrap()
             .execute(
                 "INSERT INTO sessions
                     (id, title, created_at, updated_at, workspace,
@@ -285,7 +291,7 @@ impl SessionManager {
     }
 
     pub fn update_session(&self, session: &Session) -> Result<()> {
-        self.conn
+        self.conn.lock().unwrap()
             .execute(
                 "UPDATE sessions SET
                     title = ?2,
@@ -311,14 +317,14 @@ impl SessionManager {
 
     /// Associated messages are removed via `ON DELETE CASCADE`.
     pub fn delete_session(&self, id: &str) -> Result<()> {
-        self.conn
+        self.conn.lock().unwrap()
             .execute("DELETE FROM sessions WHERE id = ?1", params![id])
             .context("delete session")?;
         Ok(())
     }
 
     pub fn add_message(&self, msg: &ChatMessage) -> Result<()> {
-        self.conn
+        self.conn.lock().unwrap()
             .execute(
                 "INSERT INTO messages
                     (session_id, role, content, agent_activities, timestamp, sequence)
@@ -338,8 +344,8 @@ impl SessionManager {
 
     /// Returns messages ordered by `sequence` ASC.
     pub fn get_messages(&self, session_id: &str) -> Result<Vec<ChatMessage>> {
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
             .prepare(
                 "SELECT id, session_id, role, content, agent_activities,
                         timestamp, sequence
@@ -397,7 +403,8 @@ impl SessionManager {
             }
         };
 
-        let mut stmt = self.conn.prepare(sql).context("prepare search_messages")?;
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(sql).context("prepare search_messages")?;
 
         let rows = if let Some(sid) = session_id {
             stmt.query_map(params![safe_query, sid], map_search_hit_row)
@@ -418,7 +425,7 @@ impl SessionManager {
 
     /// Write a key/value pair to the memories table (UPSERT).
     pub fn write_memory(&self, key: &str, value: &str, session_id: &str) -> Result<()> {
-        self.conn
+        self.conn.lock().unwrap()
             .execute(
                 "INSERT INTO memories (key, value, session_id, updated_at)
                  VALUES (?1, ?2, ?3, datetime('now'))
@@ -434,8 +441,8 @@ impl SessionManager {
 
     /// Read a memory entry by key.
     pub fn read_memory(&self, key: &str) -> Result<Option<String>> {
-        let mut stmt = self
-            .conn
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
             .prepare("SELECT value FROM memories WHERE key = ?1")
             .context("prepare read_memory")?;
         let mut rows = stmt
@@ -460,7 +467,8 @@ impl SessionManager {
              ORDER BY rank
              LIMIT ?2"
         );
-        let mut stmt = self.conn.prepare(&sql).context("prepare search_memory")?;
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(&sql).context("prepare search_memory")?;
         let rows = stmt
             .query_map(params![safe_query, limit as i64], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
@@ -475,7 +483,7 @@ impl SessionManager {
 
     /// Delete a memory entry.
     pub fn delete_memory(&self, key: &str) -> Result<()> {
-        self.conn
+        self.conn.lock().unwrap()
             .execute("DELETE FROM memories WHERE key = ?1", params![key])
             .context("delete memory")?;
         Ok(())
