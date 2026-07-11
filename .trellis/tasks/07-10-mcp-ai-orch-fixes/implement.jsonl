@@ -1,0 +1,4 @@
+{"type":"spec","file":"src/app.rs","description":"refresh_mcp_data 无条件保留 zenix-orchestrator，移除 SSE 条件的依赖"}
+{"type":"spec","file":"src/ai/engine.rs","description":"添加语言检测函数 detect_language；修改 build_system_prompt 接受 lang 参数；增强系统 prompt 的委托模式识别指令"}
+{"type":"spec","file":"src/mcp/mod.rs","description":"builtin_orchestrator_server / ensure_builtin_orchestrator 保持不动，是修复的目标依赖"}
+{"type":"constraint","file":"src/ai/engine.rs","description":"chat_with_tools 循环调用不受影响，prompt 修改不改变工具定义"}

@@ -18,7 +18,10 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "07-10-mcp-ai-orch-fixes",
+    "07-10-orchestration-loop-fixes"
+  ],
   "parent": null,
   "relatedFiles": [],
   "notes": "",

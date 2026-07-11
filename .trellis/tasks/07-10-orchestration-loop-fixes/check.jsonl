@@ -1,0 +1,4 @@
+{"type":"check","command":"cargo check","expect":"pass"}
+{"type":"check","command":"cargo clippy","expect":"no new warnings"}
+{"type":"verify","description":"ToolCall 新增 id 字段不影响现有序列化"}
+{"type":"verify","description":"ChatMessageRef 新增 tool_calls/tool_call_id 带 skip_serializing_if 不破坏现有消息格式"}

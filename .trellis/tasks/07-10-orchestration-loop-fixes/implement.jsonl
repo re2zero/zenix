@@ -1,0 +1,3 @@
+{"type":"spec","file":"src/ai/tools.rs","description":"ToolCall 增加 id 字段；SpawnWorker 增加 connect() 预检"}
+{"type":"spec","file":"src/ai/engine.rs","description":"ChatMessageRef 增加 tool_calls/tool_call_id；parse_sse_tool_calls 保留 id；chat_with_tools 加入 assistant tool_calls 消息；StreamEvent/DispatchStreamEvent::Thinking 增加 round"}
+{"type":"spec","file":"src/app.rs","description":"handle_dispatch_event 按 round 处理 reasoning"}

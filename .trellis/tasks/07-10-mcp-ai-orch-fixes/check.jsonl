@@ -1,0 +1,5 @@
+{"type":"check","command":"cargo check","expect":"pass"}
+{"type":"check","command":"cargo clippy","expect":"no new warnings"}
+{"type":"verify","description":"内置 MCP 服务在设置面板可见（手动验证: 启动后 → 设置 → MCP tab → 显示 zenix-orchestrator）"}
+{"type":"verify","description":"AI 回复语言匹配检测逻辑正确（代码 review: detect_language 覆盖 CJK 范围）"}
+{"type":"verify","description":"编排系统 prompt 增强不破坏现有工具调用流程（代码 review: 仅新增内容，未移除原有指令）"}
