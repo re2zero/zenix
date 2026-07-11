@@ -1194,10 +1194,8 @@ impl ZenixApp {
     fn refresh_mcp_data(&mut self, cx: &mut gpui::Context<Self>) {
         let mut servers = crate::mcp::load_zenix_mcp_servers();
         servers.retain(|s| s.name != "zenix-orchestrator");
-        if self.config.mcp_server_sse_enabled() {
-            let builtin = crate::mcp::ensure_builtin_orchestrator();
-            servers.insert(0, builtin);
-        }
+        let builtin = crate::mcp::ensure_builtin_orchestrator();
+        servers.insert(0, builtin);
         self.mcp_zenix_servers = servers;
         self.mcp_per_agent = crate::mcp::scan_per_agent_mcp();
         cx.notify();
@@ -3092,6 +3090,7 @@ fn start_chat_streaming(this: &mut ZenixApp, text: String, cx: &mut gpui::Contex
         data.input_value = text;
         data.last_user_prompt = Some(data.input_value.clone());
         data.is_streaming = true;
+        data.last_thinking_round = None;
 
         // Empty assistant message — tokens will append into `content`.
         let assistant_msg = crate::ai::session::ChatMessage {
@@ -3176,6 +3175,7 @@ fn start_chat_streaming(this: &mut ZenixApp, text: String, cx: &mut gpui::Contex
                 .map(|m| ChatMessageRef {
                     role: m.role.clone(),
                     content: m.content.clone(),
+                    ..Default::default()
                 })
                 .collect()
         })
@@ -3231,8 +3231,14 @@ fn start_chat_streaming(this: &mut ZenixApp, text: String, cx: &mut gpui::Contex
             } else {
                 String::new()
             };
+            let user_lang = messages_for_engine
+                .iter()
+                .rev()
+                .find(|m| m.role == "user")
+                .map(|m| crate::ai::engine::detect_language(&m.content))
+                .unwrap_or("zh");
             let system_prompt =
-                crate::ai::engine::build_system_prompt(&roles_summary, &workspace_info);
+                crate::ai::engine::build_system_prompt(&roles_summary, &workspace_info, user_lang);
 
             let engine = match OrchestratorEngine::new(&provider) {
                 Ok(e) => e.with_system_prompt(system_prompt),
@@ -3363,7 +3369,7 @@ fn handle_dispatch_event(
                 cx.notify();
             }
         }
-        DispatchStreamEvent::Thinking(text) => {
+        DispatchStreamEvent::Thinking { round, text } => {
             if let Some(idx) = data.streaming_msg_idx {
                 // Record start time and expand block on first thinking chunk.
                 if data.reasoning_start_time.is_none() {
@@ -3373,6 +3379,11 @@ fn handle_dispatch_event(
                 let msgs = std::rc::Rc::make_mut(&mut data.messages);
                 if let Some(msg) = msgs.get_mut(idx) {
                     let reasoning = msg.reasoning_text.get_or_insert_with(String::new);
+                    // Add round separator when round changes (new tool call cycle)
+                    if data.last_thinking_round.is_some() && data.last_thinking_round != Some(round) {
+                        reasoning.push_str("\n\n---\n\n");
+                    }
+                    data.last_thinking_round = Some(round);
                     reasoning.push_str(&text);
                     cx.notify();
                 }
@@ -3522,6 +3533,7 @@ fn handle_ai_chat_action(
                 data.current_session_title = None;
                 data.streaming_msg_idx = None;
                 data.is_streaming = false;
+                data.last_thinking_round = None;
                 data.input_value = String::new();
                 data.last_user_prompt = None;
                 data.config_dropdown = None;

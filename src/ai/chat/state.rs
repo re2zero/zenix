@@ -200,6 +200,8 @@ pub struct AiChatPanelData {
     /// Wall-clock time when reasoning content first arrives in the current
     /// streaming message. Used to compute `reasoning_duration_ms` on stream completion.
     pub reasoning_start_time: Option<std::time::Instant>,
+    /// Tracks the last tool call round for thinking block separation.
+    pub last_thinking_round: Option<u32>,
 }
 
 /// A workspace option for the config bar dropdown.
@@ -258,6 +260,7 @@ impl Default for AiChatPanelData {
             collapsed_tool_ids: HashSet::new(),
             expanded_reasoning_ids: HashSet::new(),
             reasoning_start_time: None,
+            last_thinking_round: None,
         }
     }
 }

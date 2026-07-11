@@ -58,7 +58,7 @@ pub fn find_herdr_binary() -> Option<PathBuf> {
 
 /// Compute the herdr client socket path.
 pub fn herdr_socket_path() -> PathBuf {
-    platform::config_dir().join("herdr/herdr-client.sock")
+    platform::config_dir().join("herdr/herdr.sock")
 }
 
 /// Start the herdr server in the background.

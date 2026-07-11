@@ -25,6 +25,8 @@ use crate::ai::herdr::{HerdrIpcClient, SplitDirection};
 /// A tool call from the LLM.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolCall {
+    /// Unique tool call ID from the LLM (e.g. "call_abc123").
+    pub id: String,
     /// Tool name (e.g. "spawn_worker").
     pub name: String,
     /// Parsed arguments as JSON.
@@ -147,6 +149,10 @@ impl Tool for SpawnWorker {
                     "type": "string",
                     "description": "工作目录（可选，默认为 workspace 根目录）"
                 },
+                "worker_name": {
+                    "type": "string",
+                    "description": "Worker 名称（可选），用于 pane 标签显示，例如 oc_checkgit"
+                },
                 "position": {
                     "type": "object",
                     "description": "网格位置（可选）。例如 {\"row\": 0, \"col\": 0} 表示左上角",
@@ -174,9 +180,28 @@ impl Tool for SpawnWorker {
             }
         };
         let cwd = args.get("cwd").and_then(|v| v.as_str());
+        let worker_name = args.get("worker_name").and_then(|v| v.as_str());
         let position = args.get("position");
 
         let mut client = executor.herdr_client.lock().unwrap();
+
+        // Pre-check herdr connection before attempting tool execution
+        if let Err(e) = client.connect() {
+            return ToolResult::error("spawn_worker",
+                format!("无法连接到 herdr daemon: {e}。请确认 herdr 正在运行。"));
+        }
+
+        // Resolve the agent binary full path before passing to herdr.
+        // herdr server runs with a limited PATH and may not find the
+        // agent CLI by name alone; pass the resolved path as argv.
+        let argv = crate::agent::detect_all_agents()
+            .into_iter()
+            .find(|a| a.name == agent)
+            .and_then(|a| a.binary_path)
+            .or_else(|| crate::agent::find_any_binary(&[agent]))
+            .map(|p| vec![p.to_string_lossy().to_string()])
+            .unwrap_or_else(|| vec![agent.to_string()]);
+
         let workspace_id = &executor.workspace_id;
 
         // Handle grid layout if position is specified
@@ -222,11 +247,18 @@ impl Tool for SpawnWorker {
 
             // Start the agent in the target pane
             let ws = Some(workspace_id.as_str());
-            match client.start_agent(agent, ws, cwd, vec![]) {
+            match client.start_agent(agent, ws, cwd, argv.clone()) {
                 Ok(agent_info) => {
-                    // Send the instruction text after agent starts
+                    // Send the instruction text after agent starts (with trailing newline)
                     let term_id = &agent_info.terminal_id;
-                    let _ = client.send_agent_text(term_id, instruction);
+                    let pane_id = &agent_info.pane_id;
+                    let _ = client.send_agent_text(term_id, &format!("{instruction}\r"));
+                    if let Some(name) = worker_name {
+                        let _ = client.rename_pane(pane_id, name);
+                    } else {
+                        let short = instruction.chars().take(16).collect::<String>();
+                        let _ = client.rename_pane(pane_id, &format!("{agent}: {short}..."));
+                    }
 
                     ToolResult::ok(
                         "spawn_worker",
@@ -243,10 +275,17 @@ impl Tool for SpawnWorker {
         } else {
             // No position — simple spawn
             let ws = Some(workspace_id.as_str());
-            match client.start_agent(agent, ws, cwd, vec![]) {
+            match client.start_agent(agent, ws, cwd, argv.clone()) {
                 Ok(agent_info) => {
                     let term_id = &agent_info.terminal_id;
-                    let _ = client.send_agent_text(term_id, instruction);
+                    let pane_id = &agent_info.pane_id;
+                    let _ = client.send_agent_text(term_id, &format!("{instruction}\r"));
+                    if let Some(name) = worker_name {
+                        let _ = client.rename_pane(pane_id, name);
+                    } else {
+                        let short = instruction.chars().take(16).collect::<String>();
+                        let _ = client.rename_pane(pane_id, &format!("{agent}: {short}..."));
+                    }
 
                     ToolResult::ok(
                         "spawn_worker",

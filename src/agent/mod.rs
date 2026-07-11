@@ -36,7 +36,7 @@ fn find_binary(name: &str) -> Option<PathBuf> {
 }
 
 /// Check if ANY of the given binary names exist on PATH and return the first path.
-fn find_any_binary(names: &[&str]) -> Option<PathBuf> {
+pub fn find_any_binary(names: &[&str]) -> Option<PathBuf> {
     names.iter().find_map(|n| find_binary(n))
 }
 

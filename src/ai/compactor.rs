@@ -230,6 +230,7 @@ mod tests {
         ChatMessageRef {
             role: role.to_string(),
             content: content.to_string(),
+            ..Default::default()
         }
     }
 

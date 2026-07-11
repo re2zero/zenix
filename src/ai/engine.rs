@@ -37,14 +37,39 @@ use crate::ai::tools::{Tool, ToolCall, ToolExecutor, ToolResult};
 use crate::api_provider::ApiProviderConfig;
 
 /// Default system prompt used when no dynamic prompt is provided.
-pub const DEFAULT_SYSTEM_PROMPT: &str = "你是 ZenixAI 编排器。你负责理解用户需求、规划任务分解、将具体执行工作分配给专业 Agent CLI（如 Claude Code、Codex、OpenCode 等）。你不直接写代码或运行命令，只负责规划、调度和结果汇总。用中文回复。";
+pub const DEFAULT_SYSTEM_PROMPT: &str = "你是 ZenixAI 编排器。你负责将用户的任务原样分发给专业 Agent CLI（如 Claude Code、Codex、OpenCode 等）。你不分析或改写任务内容，只负责分发和汇总结果。用中文回复。";
 
-/// Build a dynamic system prompt that includes roles, workspace, and tools.
+/// Detect the language of user input based on character ranges.
+/// Returns `"zh"` if the text contains CJK characters, `"en"` otherwise.
+pub fn detect_language(text: &str) -> &'static str {
+    if text.chars().any(|c| {
+        matches!(c,
+            '\u{4e00}'..='\u{9fff}'  // CJK Unified Ideographs
+            | '\u{3000}'..='\u{303f}' // CJK Symbols and Punctuation
+            | '\u{ff00}'..='\u{ffef}'    // Fullwidth Forms
+        )
+    }) {
+        "zh"
+    } else {
+        "en"
+    }
+}
+
+fn lang_instruction(lang: &str) -> &'static str {
+    match lang {
+        "zh" => "用中文回复。",
+        _ => "Reply in the same language as the user's input.",
+    }
+}
+
+/// Build a dynamic system prompt that includes roles, workspace, tools,
+/// language instruction, and delegation pattern guidance.
 ///
 /// `roles_summary` — a newline-separated list of available roles and descriptions.
 /// `workspace_info` — description of the currently bound workspace.
-/// If both are empty, the default prompt is returned unchanged.
-pub fn build_system_prompt(roles_summary: &str, workspace_info: &str) -> String {
+/// `lang` — detected user language (`"zh"` or `"en"`).
+/// If both roles and workspace are empty, the default prompt is returned unchanged.
+pub fn build_system_prompt(roles_summary: &str, workspace_info: &str, lang: &str) -> String {
     let has_roles = !roles_summary.is_empty();
     let has_workspace = !workspace_info.is_empty();
 
@@ -52,8 +77,12 @@ pub fn build_system_prompt(roles_summary: &str, workspace_info: &str) -> String 
         return DEFAULT_SYSTEM_PROMPT.to_string();
     }
 
+    let lang_instr = lang_instruction(lang);
+
     let mut prompt = String::with_capacity(2048);
-    prompt.push_str("你是 ZenixAI 编排器。你负责理解用户需求、规划任务分解、将具体执行工作分配给专业 Agent CLI。你不直接写代码或运行命令，只负责规划、调度和结果汇总。用中文回复。\n\n");
+    prompt.push_str("你是 ZenixAI 编排器。你负责将用户的任务原样分发给专业 Agent CLI。你不分析或改写任务内容，只负责分发和汇总结果。");
+    prompt.push_str(lang_instr);
+    prompt.push_str("\n\n");
 
     if has_roles {
         prompt.push_str("## 可用角色\n");
@@ -80,29 +109,45 @@ pub fn build_system_prompt(roles_summary: &str, workspace_info: &str) -> String 
     }
 
     prompt.push_str(
-        "## 工作流\n\
-        1. 分析用户需求，规划任务分解\n\
-        2. 用 spawn_worker 创建多个 worker，分别分配子任务\n\
-        3. 用 wait_for_output 等待 worker 完成，或 send_text/read_output 进行多轮沟通\n\
-        4. 需要 worker 间协作时：先等 Worker A 完成，将结果注入 Worker B 的指令\n\
-        5. 用 close_worker 清理已完成的 worker\n\
-        6. 汇总结果，给出最终回复\n\n\
-        ## 约束\n\
-        - 你不直接写代码或运行命令\n\
-        - 你只负责规划、调度和结果汇总\n\
-        - 用中文回复",
+        "## 任务分发\n\
+        - 用户说\"帮我问一下 X\"、\"帮我查一下 Y\"等委托请求 → 立即使用 spawn_worker\n\
+        - 直接将具体任务原样分发，不要分析或改写任务内容\n\
+        - 每个委托创建一个独立的 worker\n\
+        - 简单的问答或闲聊直接回复，不要 spawn worker\n\n\
+        ## worker_name 命名规范\n\
+        给每个 worker 分配一个简短有意义的名称，格式: <cli缩写>_<任务标识>\n\
+        例如：oc_checkgit、cc_refactor、claude_debug\n\n",
     );
+
+    prompt.push_str(
+        "## 工作流\n\
+        1. 用 spawn_worker 创建 worker，分发具体任务\n\
+        2. 用 wait_for_output 等待 worker 完成\n\
+        3. 汇总结果，给出最终回复\n\n\
+        ## 约束\n\
+        - 不分析或改写要分发的任务内容，直接原样传递\n\
+        - 你不直接写代码或运行命令\n\
+        - ",
+    );
+    prompt.push_str(lang_instr);
 
     prompt
 }
 
 /// Lightweight chat message reference for the engine (no session/sequence).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ChatMessageRef {
-    /// "user" or "orchestrator".
+    /// "system", "user", "assistant", or "tool".
     pub role: String,
     /// Message content.
     pub content: String,
+    /// Tool calls from the assistant in OpenAI API format
+    /// (set when role=="assistant"). Each entry: {id, type:"function", function:{name, arguments}}.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<serde_json::Value>>,
+    /// Tool call ID this result is for (set when role=="tool").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
 }
 
 /// Events emitted during an LLM streaming call.
@@ -111,14 +156,14 @@ pub struct ChatMessageRef {
 pub enum StreamEvent {
     /// A token chunk from the LLM response.
     Token(String),
-    /// A thinking (reasoning) token chunk from the LLM.
-    Thinking(String),
+    /// A thinking (reasoning) token chunk from the LLM (tool_call_round, text).
+    Thinking { round: u32, text: String },
     /// An error occurred during streaming.
     Error(String),
     /// The stream has finished.
     Done,
-    /// The LLM returned a tool call (tool_name, arguments JSON).
-    ToolCall(String, serde_json::Value),
+    /// The LLM returned a tool call (id, tool_name, arguments JSON).
+    ToolCall { id: String, name: String, args: serde_json::Value },
     /// A tool was executed (tool_name, result content, is_error).
     ToolResult(String, String, bool),
 }
@@ -216,16 +261,16 @@ pub struct CompactionInfo {
 pub enum DispatchStreamEvent {
     /// A token chunk from the LLM response.
     Token(String),
-    /// A thinking (reasoning) token chunk.
-    Thinking(String),
+    /// A thinking (reasoning) token chunk (tool_call_round, text).
+    Thinking { round: u32, text: String },
     /// The orchestrator decided to dispatch one or more agents.
     Dispatch(DispatchDirective),
     /// Agent output chunk (streamed in real-time).
     AgentOutput { agent_name: String, text: String },
     /// An agent has completed.
     AgentComplete(AgentResult),
-    /// A tool was called by the LLM (tool_name, arguments JSON).
-    ToolCall(String, serde_json::Value),
+    /// A tool was called by the LLM (id, tool_name, arguments JSON).
+    ToolCall { id: String, name: String, args: serde_json::Value },
     /// A tool was executed (tool_name, result content, is_error).
     ToolResult(String, String, bool),
     /// The conversation was compacted to fit within the context window.
@@ -390,6 +435,7 @@ impl OrchestratorEngine {
                 let mut prefixed = vec![ChatMessageRef {
                     role: "system".into(),
                     content: self.system_prompt.clone(),
+                    ..Default::default()
                 }];
                 prefixed.extend(messages.iter().cloned());
                 prefixed
@@ -471,36 +517,82 @@ pub(crate) struct SseDeltaWithTools {
 }
 
 /// A single tool call in the SSE stream.
+/// For streamed tool calls, `id` and `function.name` are only present
+/// in the first chunk; subsequent chunks append to `function.arguments`.
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 pub(crate) struct SseToolCall {
+    /// Tool call index for stream accumulation.
+    #[serde(default)]
+    index: usize,
+    /// Tool call ID (only present in first chunk).
+    #[serde(default)]
     id: String,
-    #[serde(rename = "type")]
+    #[serde(rename = "type", default)]
     call_type: String,
+    #[serde(default)]
     function: FunctionCall,
 }
 
 /// Function call details (name + JSON arguments string).
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
 #[allow(dead_code)]
 pub(crate) struct FunctionCall {
+    #[serde(default)]
     name: String,
+    #[serde(default)]
     arguments: String,
 }
 
-/// Parse the tool_calls array from an SSE delta, extracting tool name
-/// and JSON arguments.
-pub(crate) fn parse_sse_tool_calls(delta: &SseDeltaWithTools) -> Vec<(String, serde_json::Value)> {
-    let mut calls = Vec::new();
+/// Accumulate streaming tool calls from SSE deltas.
+///
+/// OpenAI streams tool calls across multiple SSE events:
+///   chunk 1: {index:0, id:"call_1", function:{name:"spawn_worker", arguments:"{\"agent\":"}}
+///   chunk 2: {index:0, function:{arguments:"\"opencode\"}"}}
+///
+/// This function accumulates arguments by `index` across calls.
+pub(crate) fn accumulate_sse_tool_calls(
+    delta: &SseDeltaWithTools,
+    accumulator: &mut std::collections::HashMap<usize, (String, String, String)>,
+) {
     if let Some(tool_calls) = &delta.tool_calls {
         for tc in tool_calls {
-            if let Ok(args) = serde_json::from_str::<serde_json::Value>(&tc.function.arguments) {
-                calls.push((tc.function.name.clone(), args));
-            } else {
-                // If arguments can't be parsed as JSON, pass the raw string
+            let entry = accumulator.entry(tc.index).or_insert_with(|| {
+                (tc.id.clone(), tc.function.name.clone(), String::new())
+            });
+            if !tc.id.is_empty() {
+                entry.0 = tc.id.clone();
+            }
+            if !tc.function.name.is_empty() {
+                entry.1 = tc.function.name.clone();
+            }
+            entry.2.push_str(&tc.function.arguments);
+        }
+    }
+}
+
+/// Finalize accumulated tool calls: parse accumulated arguments as JSON.
+/// Returns Vec<(id, name, parsed_args)>.
+pub(crate) fn finalize_accumulated_calls(
+    accumulator: std::collections::HashMap<usize, (String, String, String)>,
+) -> Vec<(String, String, serde_json::Value)> {
+    let mut calls = Vec::new();
+    // Sort by index for deterministic output
+    let mut indices: Vec<&usize> = accumulator.keys().collect();
+    indices.sort();
+    for idx in indices {
+        if let Some((id, name, args_str)) = accumulator.get(idx) {
+            if name.is_empty() {
+                continue;
+            }
+            if let Ok(args) = serde_json::from_str::<serde_json::Value>(args_str) {
+                calls.push((id.clone(), name.clone(), args));
+            } else if !args_str.is_empty() {
+                // Partial/invalid arguments — try to fix by wrapping in a string
                 calls.push((
-                    tc.function.name.clone(),
-                    serde_json::Value::String(tc.function.arguments.clone()),
+                    id.clone(),
+                    name.clone(),
+                    serde_json::Value::String(args_str.clone()),
                 ));
             }
         }
@@ -552,12 +644,14 @@ fn build_tool_call_payload(
 /// tool call, and returns the collected tool calls.
 async fn parse_tool_call_sse_stream(
     resp: reqwest::Response,
+    round: u32,
     on_event: impl Fn(StreamEvent) + Send + 'static,
-) -> Vec<(String, serde_json::Value)> {
+) -> Vec<(String, String, serde_json::Value)> {
     let mut stream = resp.bytes_stream();
     let mut buffer = String::new();
     let mut done = false;
-    let mut tool_calls: Vec<(String, serde_json::Value)> = Vec::new();
+    let mut tool_call_acc: std::collections::HashMap<usize, (String, String, String)> =
+        std::collections::HashMap::new();
 
     while let Some(chunk) = stream.next().await {
         let chunk = match chunk {
@@ -568,8 +662,9 @@ async fn parse_tool_call_sse_stream(
             }
         };
 
-        for byte in chunk {
-            if byte == b'\n' {
+        let text = String::from_utf8_lossy(&chunk);
+        for ch in text.chars() {
+            if ch == '\n' {
                 if buffer.starts_with("data: ") {
                     let data = &buffer[6..];
                     if data.trim() == "[DONE]" {
@@ -585,12 +680,13 @@ async fn parse_tool_call_sse_stream(
                                         on_event(StreamEvent::Token(text.clone()));
                                     }
                                     if let Some(ref reasoning) = delta.reasoning_content {
-                                        on_event(StreamEvent::Thinking(reasoning.clone()));
+                                        on_event(StreamEvent::Thinking {
+                                            round,
+                                            text: reasoning.clone(),
+                                        });
                                     }
-                                    for (name, args) in parse_sse_tool_calls(delta) {
-                                        on_event(StreamEvent::ToolCall(name.clone(), args.clone()));
-                                        tool_calls.push((name, args));
-                                    }
+                                    // Accumulate streaming tool calls by index
+                                    accumulate_sse_tool_calls(delta, &mut tool_call_acc);
                                 }
                             }
                         }
@@ -600,7 +696,7 @@ async fn parse_tool_call_sse_stream(
                                 on_event(StreamEvent::Token(text));
                             }
                             AnthropicSseEvent::Thinking(text) if !text.is_empty() => {
-                                on_event(StreamEvent::Thinking(text));
+                                on_event(StreamEvent::Thinking { round, text });
                             }
                             AnthropicSseEvent::Done => done = true,
                             _ => {}
@@ -609,7 +705,7 @@ async fn parse_tool_call_sse_stream(
                 }
                 buffer.clear();
             } else {
-                buffer.push(byte as char);
+                buffer.push(ch);
             }
         }
         if done {
@@ -630,12 +726,12 @@ async fn parse_tool_call_sse_stream(
                             on_event(StreamEvent::Token(text.clone()));
                         }
                         if let Some(ref reasoning) = delta.reasoning_content {
-                            on_event(StreamEvent::Thinking(reasoning.clone()));
+                            on_event(StreamEvent::Thinking {
+                                round,
+                                text: reasoning.clone(),
+                            });
                         }
-                        for (name, args) in parse_sse_tool_calls(delta) {
-                            on_event(StreamEvent::ToolCall(name.clone(), args.clone()));
-                            tool_calls.push((name, args));
-                        }
+                        accumulate_sse_tool_calls(delta, &mut tool_call_acc);
                     }
                 }
             }
@@ -645,7 +741,7 @@ async fn parse_tool_call_sse_stream(
                     on_event(StreamEvent::Token(text));
                 }
                 AnthropicSseEvent::Thinking(text) if !text.is_empty() => {
-                    on_event(StreamEvent::Thinking(text));
+                    on_event(StreamEvent::Thinking { round, text });
                 }
                 AnthropicSseEvent::Done => done = true,
                 _ => {}
@@ -655,6 +751,14 @@ async fn parse_tool_call_sse_stream(
 
     if !done {
         on_event(StreamEvent::Done);
+    }
+    let tool_calls = finalize_accumulated_calls(tool_call_acc);
+    for (id, name, args) in &tool_calls {
+        on_event(StreamEvent::ToolCall {
+            id: id.clone(),
+            name: name.clone(),
+            args: args.clone(),
+        });
     }
     tool_calls
 }
@@ -700,6 +804,7 @@ impl OrchestratorEngine {
                 ChatMessageRef {
                     role: "system".into(),
                     content: self.system_prompt.clone(),
+                    ..Default::default()
                 },
             );
         }
@@ -727,6 +832,7 @@ impl OrchestratorEngine {
                     .map(|m| ChatMessageRef {
                         role: m.role.to_string(),
                         content: m.content.to_string(),
+                        ..Default::default()
                     })
                     .collect();
             }
@@ -735,6 +841,7 @@ impl OrchestratorEngine {
             let payload = build_tool_call_payload(&loop_messages, tools, &self.current_model());
 
             // Send the HTTP request and collect tool_calls from SSE stream
+            let current_round = tool_round;
             let http_client = self.http_client.clone();
             let endpoint = self.endpoint_url().to_string();
             let api_key = self.api_key.clone();
@@ -760,20 +867,20 @@ impl OrchestratorEngine {
                         return Err(AiError::ApiError(format!("HTTP {status}: {text}")));
                     }
 
-                    let tool_calls = parse_tool_call_sse_stream(resp, move |event| match event {
+                    let tool_calls = parse_tool_call_sse_stream(resp, current_round, move |event| match event {
                         StreamEvent::Token(text) => {
                             collected_clone.lock().unwrap().push_str(&text);
                             on_event_clone(DispatchStreamEvent::Token(text));
                         }
-                        StreamEvent::Thinking(text) => {
-                            on_event_clone(DispatchStreamEvent::Thinking(text));
+                        StreamEvent::Thinking { round, text } => {
+                            on_event_clone(DispatchStreamEvent::Thinking { round, text });
                         }
-                        StreamEvent::ToolCall(name, args) => {
+                        StreamEvent::ToolCall { id, name, args } => {
                             collected_clone
                                 .lock()
                                 .unwrap()
                                 .push_str(&format!("[TOOL_CALL: {}({})]", name, args));
-                            on_event_clone(DispatchStreamEvent::ToolCall(name, args));
+                            on_event_clone(DispatchStreamEvent::ToolCall { id, name, args });
                         }
                         StreamEvent::Error(err) => {
                             on_event_clone(DispatchStreamEvent::Error(err));
@@ -791,10 +898,11 @@ impl OrchestratorEngine {
                 .map_err(|e| AiError::ApiError(format!("task spawn failed: {e}")))?
                 .map_err(|e: AiError| e)?;
 
-            // Convert (name, args) pairs to ToolCall objects
+            // Convert (id, name, args) triples to ToolCall objects
             let tool_calls: Vec<ToolCall> = raw_calls
                 .into_iter()
-                .map(|(name, args)| ToolCall {
+                .map(|(id, name, args)| ToolCall {
+                    id,
                     name,
                     arguments: args,
                 })
@@ -817,7 +925,27 @@ impl OrchestratorEngine {
                 ));
             }
 
-            for result in &results {
+            // Add assistant message with tool_calls before tool results
+            // (required by OpenAI API message format)
+            let api_tool_calls: Vec<serde_json::Value> = tool_calls.iter().map(|tc| {
+                serde_json::json!({
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.name,
+                        "arguments": serde_json::to_string(&tc.arguments).unwrap_or_default()
+                    }
+                })
+            }).collect();
+            loop_messages.push(ChatMessageRef {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: Some(api_tool_calls),
+                ..Default::default()
+            });
+
+            // Add tool result messages with tool_call_id
+            for (i, result) in results.iter().enumerate() {
                 loop_messages.push(ChatMessageRef {
                     role: "tool".into(),
                     content: format!(
@@ -826,6 +954,8 @@ impl OrchestratorEngine {
                         if result.is_error { "ERROR: " } else { "" },
                         result.content
                     ),
+                    tool_call_id: Some(tool_calls[i].id.clone()),
+                    ..Default::default()
                 });
             }
 
@@ -857,6 +987,7 @@ impl OrchestratorEngine {
                 let mut prefixed = vec![ChatMessageRef {
                     role: "system".into(),
                     content: self.system_prompt.clone(),
+                    ..Default::default()
                 }];
                 prefixed.extend(messages.iter().cloned());
                 prefixed
@@ -910,7 +1041,13 @@ impl OrchestratorEngine {
                                         .unwrap_or("{}");
                                     let args = serde_json::from_str(args_str)
                                         .unwrap_or(serde_json::Value::String(args_str.to_string()));
+                                    let id = t
+                                        .get("id")
+                                        .and_then(|v| v.as_str())
+                                        .unwrap_or_default()
+                                        .to_string();
                                     tc.push(ToolCall {
+                                        id,
                                         name,
                                         arguments: args,
                                     });
@@ -945,7 +1082,25 @@ impl OrchestratorEngine {
             let results: Vec<ToolResult> =
                 tool_calls.iter().map(|tc| executor.execute(tc)).collect();
 
-            for result in &results {
+            // Add assistant message with tool_calls before tool results
+            let api_tool_calls: Vec<serde_json::Value> = tool_calls.iter().map(|tc| {
+                serde_json::json!({
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {
+                        "name": tc.name,
+                        "arguments": serde_json::to_string(&tc.arguments).unwrap_or_default()
+                    }
+                })
+            }).collect();
+            loop_messages.push(ChatMessageRef {
+                role: "assistant".into(),
+                content: String::new(),
+                tool_calls: Some(api_tool_calls),
+                ..Default::default()
+            });
+
+            for (i, result) in results.iter().enumerate() {
                 loop_messages.push(ChatMessageRef {
                     role: "tool".into(),
                     content: format!(
@@ -954,6 +1109,8 @@ impl OrchestratorEngine {
                         if result.is_error { "ERROR: " } else { "" },
                         result.content
                     ),
+                    tool_call_id: Some(tool_calls[i].id.clone()),
+                    ..Default::default()
                 });
             }
 
@@ -1182,6 +1339,7 @@ mod tests {
         let executor = make_executor();
 
         let call = ToolCall {
+            id: String::new(),
             name: "nonexistent_tool_xyz".into(),
             arguments: serde_json::json!({}),
         };
@@ -1209,6 +1367,7 @@ mod tests {
 
         // Missing pane_id
         let call = ToolCall {
+            id: String::new(),
             name: "send_text".into(),
             arguments: serde_json::json!({"text": "hello"}),
         };
@@ -1220,24 +1379,29 @@ mod tests {
     // ── SSE tool call parsing tests ─────────────────────────────────────
 
     #[test]
-    fn test_parse_sse_tool_calls_empty() {
+    fn test_accumulate_sse_tool_calls_empty() {
+        use std::collections::HashMap;
         let delta = SseDeltaWithTools {
             content: Some("hello".into()),
             role: Some("assistant".into()),
             reasoning_content: None,
             tool_calls: None,
         };
-        let calls = parse_sse_tool_calls(&delta);
+        let mut acc = HashMap::new();
+        accumulate_sse_tool_calls(&delta, &mut acc);
+        let calls = finalize_accumulated_calls(acc);
         assert!(calls.is_empty());
     }
 
     #[test]
-    fn test_parse_sse_tool_calls_with_calls() {
+    fn test_accumulate_sse_tool_calls_with_calls() {
+        use std::collections::HashMap;
         let delta = SseDeltaWithTools {
             content: Some("".into()),
             role: Some("assistant".into()),
             reasoning_content: None,
             tool_calls: Some(vec![SseToolCall {
+                index: 0,
                 id: "call_1".into(),
                 call_type: "function".into(),
                 function: FunctionCall {
@@ -1246,31 +1410,53 @@ mod tests {
                 },
             }]),
         };
-        let calls = parse_sse_tool_calls(&delta);
+        let mut acc = HashMap::new();
+        accumulate_sse_tool_calls(&delta, &mut acc);
+        let calls = finalize_accumulated_calls(acc);
         assert_eq!(calls.len(), 1);
-        assert_eq!(calls[0].0, "read_file");
-        assert_eq!(calls[0].1["path"].as_str().unwrap(), "/tmp/test.txt");
+        assert_eq!(calls[0].1, "read_file");
+        assert_eq!(calls[0].2["path"].as_str().unwrap(), "/tmp/test.txt");
     }
 
     #[test]
-    fn test_parse_sse_tool_calls_invalid_json_args() {
-        let delta = SseDeltaWithTools {
+    fn test_accumulate_sse_tool_calls_accumulates_by_index() {
+        use std::collections::HashMap;
+        // Simulate two chunks that together form a complete argument
+        let chunk1 = SseDeltaWithTools {
             content: Some("".into()),
             role: Some("assistant".into()),
             reasoning_content: None,
             tool_calls: Some(vec![SseToolCall {
+                index: 0,
                 id: "call_1".into(),
                 call_type: "function".into(),
                 function: FunctionCall {
                     name: "read_file".into(),
-                    arguments: "not valid json".into(),
+                    arguments: r#"{"path": "/tmp/"#.into(),
                 },
             }]),
         };
-        let calls = parse_sse_tool_calls(&delta);
+        let chunk2 = SseDeltaWithTools {
+            content: Some("".into()),
+            role: None,
+            reasoning_content: None,
+            tool_calls: Some(vec![SseToolCall {
+                index: 0,
+                id: String::new(),
+                call_type: String::new(),
+                function: FunctionCall {
+                    name: String::new(),
+                    arguments: r#"test.txt"}"#.into(),
+                },
+            }]),
+        };
+        let mut acc = HashMap::new();
+        accumulate_sse_tool_calls(&chunk1, &mut acc);
+        accumulate_sse_tool_calls(&chunk2, &mut acc);
+        let calls = finalize_accumulated_calls(acc);
         assert_eq!(calls.len(), 1);
-        // Should still extract the call but with raw string as value
-        assert_eq!(calls[0].0, "read_file");
+        assert_eq!(calls[0].1, "read_file");
+        assert_eq!(calls[0].2["path"].as_str().unwrap(), "/tmp/test.txt");
     }
 
     // ── build_tool_call_payload tests ──────────────────────────────────
@@ -1280,6 +1466,7 @@ mod tests {
         let messages = vec![ChatMessageRef {
             role: "user".into(),
             content: "hello".into(),
+            ..Default::default()
         }];
         let tools: Vec<Box<dyn Tool>> = vec![Box::new(crate::ai::tools::SpawnWorker)];
         let tool_refs: Vec<&dyn Tool> = tools.iter().map(|t| t.as_ref()).collect();
@@ -1305,6 +1492,7 @@ mod tests {
         let messages: Vec<ChatMessageRef> = vec![ChatMessageRef {
             role: "user".into(),
             content: "read file x".into(),
+            ..Default::default()
         }];
 
         // Simulate: first round returns tool call, second round returns text
@@ -1316,10 +1504,12 @@ mod tests {
         loop_messages.push(ChatMessageRef {
             role: "assistant".into(),
             content: "I'll read the file for you.".into(),
+            ..Default::default()
         });
         loop_messages.push(ChatMessageRef {
             role: "tool".into(),
             content: "Hello, World!".into(),
+            ..Default::default()
         });
         rounds += 1;
 

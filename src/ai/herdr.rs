@@ -18,79 +18,82 @@ use super::error::AiError;
 // ── Wire Protocol Types ──────────────────────────────────────────────
 
 /// A request sent to herdr (JSON-line format).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 pub struct HerdrRequest {
     pub id: String,
-    #[serde(flatten)]
     pub method: HerdrMethod,
 }
 
-/// Supported herdr IPC methods.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "method", content = "params")]
+impl HerdrRequest {
+    /// Serialize to a JSON-line string in herdr v0.7.3 format:
+    /// `{"id":"...","method":"...","params":{...}}`
+    pub fn to_json_line(&self) -> Result<String, String> {
+        let (method_name, params) = self.method.as_pair();
+        let params_val = params.unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+        let obj = serde_json::json!({
+            "id": self.id,
+            "method": method_name,
+            "params": params_val,
+        });
+        serde_json::to_string(&obj).map_err(|e| format!("serialize request: {e}"))
+    }
+}
+
+/// Supported herdr IPC methods (v0.7.3 protocol).
+#[derive(Debug, Clone, PartialEq)]
 pub enum HerdrMethod {
-    #[serde(rename = "server.ping")]
     ServerPing,
-
-    #[serde(rename = "workspace.list")]
     WorkspaceList,
-
-    #[serde(rename = "workspace.get")]
     WorkspaceGet(WorkspaceTarget),
-
-    #[serde(rename = "workspace.create")]
     WorkspaceCreate(WorkspaceCreateParams),
-
-    #[serde(rename = "workspace.close")]
     WorkspaceClose(WorkspaceTarget),
-
-    #[serde(rename = "tab.list")]
     TabList(TabListParams),
-
-    #[serde(rename = "tab.get")]
     TabGet(TabTarget),
-
-    #[serde(rename = "tab.create")]
     TabCreate(TabCreateParams),
-
-    #[serde(rename = "tab.close")]
     TabClose(TabTarget),
-
-    #[serde(rename = "agent.list")]
     AgentList,
-
-    #[serde(rename = "agent.start")]
     AgentStart(AgentStartParams),
-
-    #[serde(rename = "agent.send")]
     AgentSend(AgentSendParams),
-
-    #[serde(rename = "agent.read")]
     AgentRead(AgentReadParams),
-
-    #[serde(rename = "pane.list")]
     PaneList(PaneListParams),
-
-    #[serde(rename = "pane.get")]
     PaneGet(PaneTarget),
-
-    #[serde(rename = "pane.split")]
     PaneSplit(PaneSplitParams),
-
-    #[serde(rename = "pane.send_text")]
     PaneSendText(PaneSendTextParams),
-
-    #[serde(rename = "pane.read")]
     PaneRead(PaneReadParams),
-
-    #[serde(rename = "pane.wait_for_output")]
     PaneWaitForOutput(PaneWaitForOutputParams),
-
-    #[serde(rename = "pane.close")]
     PaneClose(PaneTarget),
-
-    #[serde(rename = "events.subscribe")]
+    PaneRename(PaneRenameParams),
     EventsSubscribe(EventsSubscribeParams),
+}
+
+impl HerdrMethod {
+    /// Returns (method_name, optional_params) for herdr v0.7.3 protocol.
+    fn as_pair(&self) -> (&'static str, Option<serde_json::Value>) {
+        match self {
+            HerdrMethod::ServerPing => ("ping", None),
+            HerdrMethod::WorkspaceList => ("workspace.list", None),
+            HerdrMethod::WorkspaceGet(p) => ("workspace.get", Some(serde_json::to_value(p).unwrap_or_default())),
+            HerdrMethod::WorkspaceCreate(p) => ("workspace.create", Some(serde_json::to_value(p).unwrap_or_default())),
+            HerdrMethod::WorkspaceClose(p) => ("workspace.close", Some(serde_json::to_value(p).unwrap_or_default())),
+            HerdrMethod::TabList(p) => ("tab.list", Some(serde_json::to_value(p).unwrap_or_default())),
+            HerdrMethod::TabGet(p) => ("tab.get", Some(serde_json::to_value(p).unwrap_or_default())),
+            HerdrMethod::TabCreate(p) => ("tab.create", Some(serde_json::to_value(p).unwrap_or_default())),
+            HerdrMethod::TabClose(p) => ("tab.close", Some(serde_json::to_value(p).unwrap_or_default())),
+            HerdrMethod::AgentList => ("agent.list", None),
+            HerdrMethod::AgentStart(p) => ("agent.start", Some(serde_json::to_value(p).unwrap_or_default())),
+            HerdrMethod::AgentSend(p) => ("agent.send", Some(serde_json::to_value(p).unwrap_or_default())),
+            HerdrMethod::AgentRead(p) => ("agent.read", Some(serde_json::to_value(p).unwrap_or_default())),
+            HerdrMethod::PaneList(p) => ("pane.list", Some(serde_json::to_value(p).unwrap_or_default())),
+            HerdrMethod::PaneGet(p) => ("pane.get", Some(serde_json::to_value(p).unwrap_or_default())),
+            HerdrMethod::PaneSplit(p) => ("pane.split", Some(serde_json::to_value(p).unwrap_or_default())),
+            HerdrMethod::PaneSendText(p) => ("pane.send_text", Some(serde_json::to_value(p).unwrap_or_default())),
+            HerdrMethod::PaneRead(p) => ("pane.read", Some(serde_json::to_value(p).unwrap_or_default())),
+            HerdrMethod::PaneWaitForOutput(p) => ("pane.wait_for_output", Some(serde_json::to_value(p).unwrap_or_default())),
+            HerdrMethod::PaneClose(p) => ("pane.close", Some(serde_json::to_value(p).unwrap_or_default())),
+            HerdrMethod::PaneRename(p) => ("pane.rename", Some(serde_json::to_value(p).unwrap_or_default())),
+            HerdrMethod::EventsSubscribe(p) => ("events.subscribe", Some(serde_json::to_value(p).unwrap_or_default())),
+        }
+    }
 }
 
 // ── Request Parameters ───────────────────────────────────────────────
@@ -103,6 +106,12 @@ pub struct WorkspaceTarget {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PaneTarget {
     pub pane_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PaneRenameParams {
+    pub pane_id: String,
+    pub label: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -1244,6 +1253,22 @@ impl HerdrIpcClient {
         }
     }
 
+    /// Rename a pane (set its display label).
+    pub fn rename_pane(&mut self, pane_id: &str, label: &str) -> Result<(), AiError> {
+        let request = HerdrRequest {
+            id: self.next_id(),
+            method: HerdrMethod::PaneRename(PaneRenameParams {
+                pane_id: pane_id.to_string(),
+                label: label.to_string(),
+            }),
+        };
+        let result = self.send_request_raw(&request)?;
+        match result {
+            HerdrResponse::Success(_) => Ok(()),
+            HerdrResponse::Error(err) => Err(AiError::IpcError(err.error.message)),
+        }
+    }
+
     /// Close (destroy) a tab.
     pub fn close_tab(&mut self, tab_id: &str) -> Result<(), AiError> {
         let request = HerdrRequest {
@@ -1292,9 +1317,9 @@ impl HerdrIpcClient {
     /// Serializes the request as a JSON-line object, writes it to the socket,
     /// then reads a single JSON-line response.
     fn send_request_raw(&mut self, request: &HerdrRequest) -> Result<HerdrResponse, AiError> {
-        let request_json = serde_json::to_string(request)
-            .context("serialize request")
-            .map_err(|e: anyhow::Error| AiError::SerializationError(e.to_string()))?;
+        let request_json = request
+            .to_json_line()
+            .map_err(|e| AiError::SerializationError(e))?;
 
         let stream = UnixStream::connect(&self.socket_path)
             .with_context(|| format!("connect to herdr socket {:?}", self.socket_path))?;
@@ -1363,9 +1388,10 @@ mod tests {
             id: "zenix-req-0".into(),
             method: HerdrMethod::ServerPing,
         };
-        let json = serde_json::to_string(&request).unwrap();
-        assert!(json.contains("\"method\":\"server.ping\""));
+        let json = request.to_json_line().unwrap();
+        assert!(json.contains("\"method\":\"ping\""));
         assert!(json.contains("\"id\":\"zenix-req-0\""));
+        assert!(json.contains("\"params\":"));
     }
 
     #[test]
@@ -1374,7 +1400,7 @@ mod tests {
             id: "zenix-req-1".into(),
             method: HerdrMethod::WorkspaceList,
         };
-        let json = serde_json::to_string(&request).unwrap();
+        let json = request.to_json_line().unwrap();
         assert!(json.contains("\"method\":\"workspace.list\""));
     }
 
@@ -1386,7 +1412,7 @@ mod tests {
                 workspace_id: "w-1".into(),
             }),
         };
-        let json = serde_json::to_string(&request).unwrap();
+        let json = request.to_json_line().unwrap();
         assert!(json.contains("\"method\":\"workspace.get\""));
         assert!(json.contains("\"workspace_id\":\"w-1\""));
     }
@@ -1401,7 +1427,7 @@ mod tests {
                 label: Some("My Project".into()),
             }),
         };
-        let json = serde_json::to_string(&request).unwrap();
+        let json = request.to_json_line().unwrap();
         assert!(json.contains("\"method\":\"workspace.create\""));
         assert!(json.contains("\"cwd\":\"/tmp/project\""));
         assert!(json.contains("\"label\":\"My Project\""));
@@ -1421,7 +1447,7 @@ mod tests {
                 argv: vec!["claude".into()],
             }),
         };
-        let json = serde_json::to_string(&request).unwrap();
+        let json = request.to_json_line().unwrap();
         assert!(json.contains("\"method\":\"agent.start\""));
         assert!(json.contains("\"name\":\"claude\""));
         assert!(json.contains("\"workspace_id\":\"w-1\""));
@@ -1436,7 +1462,7 @@ mod tests {
                 text: "hello world\n".into(),
             }),
         };
-        let json = serde_json::to_string(&request).unwrap();
+        let json = request.to_json_line().unwrap();
         assert!(json.contains("\"method\":\"pane.send_text\""));
         assert!(json.contains("\"pane_id\":\"p-1\""));
         assert!(json.contains("hello world"));
@@ -1454,7 +1480,7 @@ mod tests {
                 strip_ansi: true,
             }),
         };
-        let json = serde_json::to_string(&request).unwrap();
+        let json = request.to_json_line().unwrap();
         assert!(json.contains("\"method\":\"pane.read\""));
         assert!(json.contains("\"source\":\"recent\""));
         assert!(json.contains("\"lines\":100"));
@@ -1475,7 +1501,7 @@ mod tests {
                 strip_ansi: true,
             }),
         };
-        let json = serde_json::to_string(&request).unwrap();
+        let json = request.to_json_line().unwrap();
         assert!(json.contains("\"method\":\"pane.wait_for_output\""));
         assert!(json.contains("\"match\":{\"type\":\"substring\""));
         assert!(json.contains("\"value\":\"all tests passed\""));

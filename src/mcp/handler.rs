@@ -32,7 +32,7 @@ impl McpToolHandler {
     }
 
     fn exec_orch(&self, name: &str, args: Value) -> CallToolResult {
-        let call = ToolCall { name: name.to_string(), arguments: args };
+        let call = ToolCall { id: String::new(), name: name.to_string(), arguments: args };
         let result = self.executor.execute(&call);
         let text = if result.is_error { format!("ERROR: {}", result.content) } else { result.content };
         Self::ok(text)
