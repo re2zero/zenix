@@ -277,6 +277,8 @@ pub enum DispatchStreamEvent {
     Compacted(CompactionInfo),
     /// An error occurred.
     Error(String),
+    /// A new LLM round is about to begin (for per-round UI separation).
+    RoundStart { round: u32 },
     /// The entire flow (LLM + agents) has finished.
     Done,
 }
@@ -876,10 +878,6 @@ impl OrchestratorEngine {
                             on_event_clone(DispatchStreamEvent::Thinking { round, text });
                         }
                         StreamEvent::ToolCall { id, name, args } => {
-                            collected_clone
-                                .lock()
-                                .unwrap()
-                                .push_str(&format!("[TOOL_CALL: {}({})]", name, args));
                             on_event_clone(DispatchStreamEvent::ToolCall { id, name, args });
                         }
                         StreamEvent::Error(err) => {
@@ -913,6 +911,10 @@ impl OrchestratorEngine {
                 return Ok(final_response);
             }
 
+            // Collect the LLM's response text before tool calls,
+            // so it's preserved in the conversation history.
+            let response_text = collected.lock().unwrap().clone();
+
             // Execute all tool calls (single-threaded, errors don't stop loop)
             let results: Vec<ToolResult> =
                 tool_calls.iter().map(|tc| executor.execute(tc)).collect();
@@ -939,7 +941,7 @@ impl OrchestratorEngine {
             }).collect();
             loop_messages.push(ChatMessageRef {
                 role: "assistant".into(),
-                content: String::new(),
+                content: response_text,
                 tool_calls: Some(api_tool_calls),
                 ..Default::default()
             });
@@ -958,6 +960,8 @@ impl OrchestratorEngine {
                     ..Default::default()
                 });
             }
+
+            on_event(DispatchStreamEvent::RoundStart { round: tool_round + 1 });
 
             tool_round += 1;
             if tool_round >= max_rounds {

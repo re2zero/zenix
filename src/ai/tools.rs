@@ -349,7 +349,7 @@ impl Tool for SendText {
         };
 
         let mut client = executor.herdr_client.lock().unwrap();
-        match client.send_pane_text(pane_id, text) {
+        match client.send_pane_text(pane_id, &format!("{text}\r")) {
             Ok(()) => ToolResult::ok("send_text", format!("文本已发送到 pane {pane_id}")),
             Err(e) => ToolResult::error("send_text", format!("发送文本失败: {e}")),
         }

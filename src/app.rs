@@ -3412,9 +3412,57 @@ fn handle_dispatch_event(
             data.add_agent_block(&result);
             cx.notify();
         }
-        // Done, Dispatch, AgentOutput, ToolCall, ToolResult, Compacted —
-        // handled (or deferred to later phases). Done is consumed by the
-        // spawn loop's event_rx.recv() returning None after channel close.
+        DispatchStreamEvent::ToolCall { id: _, name, args } => {
+            if let Some(idx) = data.streaming_msg_idx {
+                let args_str = serde_json::to_string(&args).unwrap_or_default();
+                let note = format!("\n\n→ 🛠️ **{}**( {} )\n", name, args_str);
+                data.append_to_message(idx, &note);
+                cx.notify();
+            }
+        }
+        DispatchStreamEvent::ToolResult(tool_name, content, is_error) => {
+            if let Some(idx) = data.streaming_msg_idx {
+                let prefix = if is_error { "❌" } else { "✓" };
+                let summary = if content.len() > 120 {
+                    format!("{}...", &content[..120])
+                } else {
+                    content.clone()
+                };
+                let note = format!("\n{} **{}** 返回: {}\n", prefix, tool_name, summary);
+                data.append_to_message(idx, &note);
+                cx.notify();
+            }
+        }
+        DispatchStreamEvent::RoundStart { .. } => {
+            // Finalize reasoning duration for the current message
+            if let Some(start) = data.reasoning_start_time.take() {
+                let elapsed = start.elapsed().as_millis() as u64;
+                if let Some(idx) = data.streaming_msg_idx {
+                    let msgs = std::rc::Rc::make_mut(&mut data.messages);
+                    if let Some(msg) = msgs.get_mut(idx) {
+                        msg.reasoning_duration_ms = Some(elapsed);
+                    }
+                    data.expanded_reasoning_ids.remove(&idx);
+                }
+            }
+            // Create a new assistant message for the next round
+            let session_id = data.current_session_id.clone().unwrap_or_default();
+            let new_msg = crate::ai::session::ChatMessage {
+                id: 0,
+                session_id,
+                role: "assistant".into(),
+                content: String::new(),
+                agent_activities: None,
+                reasoning_text: None,
+                reasoning_duration_ms: None,
+                timestamp: timestamp_now(),
+                sequence: data.messages.len() as i64,
+            };
+            let new_idx = data.push_message(new_msg);
+            data.streaming_msg_idx = Some(new_idx);
+            data.last_thinking_round = None;
+            cx.notify();
+        }
         other => {
             tracing::debug!(
                 target: "zenixai",
