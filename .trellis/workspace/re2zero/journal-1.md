@@ -413,3 +413,36 @@ Split chat.rs (1364 lines) into 11-module chat/ directory. Unified message strea
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: 系统提示词外部化重构
+
+**Date**: 2026-07-13
+**Task**: 系统提示词外部化重构
+**Branch**: `main`
+
+### Summary
+
+将硬编码的 DEFAULT_SYSTEM_PROMPT 和 build_system_prompt() 静态指令提取到 assets/prompts/orchestrator.md，通过 include_str! 编译时嵌入。新增 src/ai/prompts.rs 模块管理 init/seed/cache/fallback。用户可直接编辑 ~/.config/zenix/prompts/orchestrator.md 自定义编排器行为。本质变更3个文件，新增2个文件，-58行净代码量。cargo check/clippy 通过，179 测试通过。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `e2940c2` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete
