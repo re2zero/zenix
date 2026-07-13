@@ -1,0 +1,8 @@
+{"step": 1, "check": "cargo check — new prompts module compiles"}
+{"step": 2, "check": "cargo check — engine.rs refactored, no DEFAULT_SYSTEM_PROMPT"}
+{"step": 3, "check": "cargo check — ai/mod.rs exposes prompts module"}
+{"step": 4, "check": "cargo check — app.rs calls prompts::init()"}
+{"step": 5, "check": "cargo clippy — no new warnings"}
+{"step": 6, "check": "Manual: delete prompts dir → restart → orchestrator.md seeded → gotemplate returns file content"}
+{"step": 6, "check": "Manual: edit orchestrator.md → restart → new content used"}
+{"step": 6, "check": "Manual: chmod 000 orchestrator.md → restart → fallback constant used (log warn)"}

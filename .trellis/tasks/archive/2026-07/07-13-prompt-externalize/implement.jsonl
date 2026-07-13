@@ -1,0 +1,4 @@
+{"file": "src/ai/prompts.rs", "reason": "New module: init()/get_template()/seed/load_all + compile-time fallback and builtin constants"}
+{"file": "src/ai/engine.rs", "reason": "Remove DEFAULT_SYSTEM_PROMPT; rewrite build_system_prompt() to use prompts::get_template()"}
+{"file": "src/ai/mod.rs", "reason": "Add pub mod prompts"}
+{"file": "src/app.rs", "reason": "Add prompts::init() call in ZenixApp::new()"}
