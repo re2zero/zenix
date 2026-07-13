@@ -36,9 +36,6 @@ use crate::ai::herdr::{HerdrIpcClient, ReadSource};
 use crate::ai::tools::{Tool, ToolCall, ToolExecutor, ToolResult};
 use crate::api_provider::ApiProviderConfig;
 
-/// Default system prompt used when no dynamic prompt is provided.
-pub const DEFAULT_SYSTEM_PROMPT: &str = "你是 ZenixAI 编排器。你负责将用户的任务原样分发给专业 Agent CLI（如 Claude Code、Codex、OpenCode 等）。你不分析或改写任务内容，只负责分发和汇总结果。用中文回复。";
-
 /// Detect the language of user input based on character ranges.
 /// Returns `"zh"` if the text contains CJK characters, `"en"` otherwise.
 pub fn detect_language(text: &str) -> &'static str {
@@ -62,75 +59,35 @@ fn lang_instruction(lang: &str) -> &'static str {
     }
 }
 
-/// Build a dynamic system prompt that includes roles, workspace, tools,
-/// language instruction, and delegation pattern guidance.
+/// Build a dynamic system prompt by loading an external prompt template and
+/// appending runtime-dynamic sections (roles, workspace info).
+///
+/// The template is loaded from the startup cache by `prompts::get_template()`;
+/// it already includes the static instructions (persona, tools, delegation
+/// rules, workflow, constraints). `{lang_instruction}` placeholders are
+/// replaced with the appropriate language instruction.
 ///
 /// `roles_summary` — a newline-separated list of available roles and descriptions.
 /// `workspace_info` — description of the currently bound workspace.
 /// `lang` — detected user language (`"zh"` or `"en"`).
-/// If both roles and workspace are empty, the default prompt is returned unchanged.
 pub fn build_system_prompt(roles_summary: &str, workspace_info: &str, lang: &str) -> String {
-    let has_roles = !roles_summary.is_empty();
-    let has_workspace = !workspace_info.is_empty();
+    let mut template = crate::ai::prompts::get_template("orchestrator");
+    template = template.replace("{lang_instruction}", lang_instruction(lang));
 
-    if !has_roles && !has_workspace {
-        return DEFAULT_SYSTEM_PROMPT.to_string();
-    }
-
-    let lang_instr = lang_instruction(lang);
-
-    let mut prompt = String::with_capacity(2048);
-    prompt.push_str("你是 ZenixAI 编排器。你负责将用户的任务原样分发给专业 Agent CLI。你不分析或改写任务内容，只负责分发和汇总结果。");
-    prompt.push_str(lang_instr);
+    let mut prompt = String::with_capacity(template.len() + 512);
+    prompt.push_str(&template);
     prompt.push_str("\n\n");
 
-    if has_roles {
+    if !roles_summary.is_empty() {
         prompt.push_str("## 可用角色\n");
         prompt.push_str(roles_summary);
         prompt.push_str("\n\n");
     }
-
-    prompt.push_str(
-        "## 可用工具\n\
-        你通过 function calling 调用以下工具来完成工作。每个工具调用后会返回结果，\n\
-        你可以根据需要多次调用工具，然后给出最终回复。\n\n\
-        - spawn_worker: 创建一个 worker 并启动 Agent CLI，支持网格位置\n\
-        - send_text: 向 worker 发送文本指令\n\
-        - read_output: 读取 worker 的最新输出\n\
-        - wait_for_output: 等待 worker 输出包含指定模式（如 [DONE]）\n\
-        - list_workers: 查看所有运行中的 worker\n\
-        - close_worker: 关闭 worker pane\n\n",
-    );
-
-    if has_workspace {
+    if !workspace_info.is_empty() {
         prompt.push_str("## 当前工作空间\n");
         prompt.push_str(workspace_info);
         prompt.push_str("\n\n");
     }
-
-    prompt.push_str(
-        "## 任务分发\n\
-        - 用户说\"帮我问一下 X\"、\"帮我查一下 Y\"等委托请求 → 立即使用 spawn_worker\n\
-        - 直接将具体任务原样分发，不要分析或改写任务内容\n\
-        - 每个委托创建一个独立的 worker\n\
-        - 简单的问答或闲聊直接回复，不要 spawn worker\n\n\
-        ## worker_name 命名规范\n\
-        给每个 worker 分配一个简短有意义的名称，格式: <cli缩写>_<任务标识>\n\
-        例如：oc_checkgit、cc_refactor、claude_debug\n\n",
-    );
-
-    prompt.push_str(
-        "## 工作流\n\
-        1. 用 spawn_worker 创建 worker，分发具体任务\n\
-        2. 用 wait_for_output 等待 worker 完成\n\
-        3. 汇总结果，给出最终回复\n\n\
-        ## 约束\n\
-        - 不分析或改写要分发的任务内容，直接原样传递\n\
-        - 你不直接写代码或运行命令\n\
-        - ",
-    );
-    prompt.push_str(lang_instr);
-
     prompt
 }
 
@@ -391,7 +348,7 @@ impl OrchestratorEngine {
     ///
     /// Validates that the provider has a valid base_url, api_key, and model
     /// configured. The HTTP client uses a 120-second timeout.
-    /// Uses `DEFAULT_SYSTEM_PROMPT` unless overridden via `with_system_prompt()`.
+    /// Uses the orchestrator prompt template unless overridden via `with_system_prompt()`.
     pub fn new(provider: &ApiProviderConfig) -> Result<Self, AiError> {
         if provider.base_url.is_empty() {
             return Err(AiError::ConfigMissing("base_url is empty".into()));
@@ -415,7 +372,7 @@ impl OrchestratorEngine {
             endpoint_url: provider.endpoint_url(),
             model: provider.model.clone(),
             api_key: provider.api_key.clone(),
-            system_prompt: DEFAULT_SYSTEM_PROMPT.to_string(),
+            system_prompt: crate::ai::prompts::get_template("orchestrator"),
         })
     }
 

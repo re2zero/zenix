@@ -21,6 +21,7 @@ src/ai/
 │   ├── drawer.rs   # History + Agents drawer overlays
 │   ├── resize.rs   # Panel + input resize handles
 │   └── mention_popup.rs # @ worker mention popup overlay
+├── prompts.rs      # Prompt 模板管理 (init/seed/cache/get_template)
 ├── roles.rs        # RoleRegistry, RoleDef, built-in templates
 ├── workers.rs      # WorkerRegistry, WorkerInstance, WorkerStatus
 ├── session.rs      # SQLite 持久化 (CRUD、FTS5 搜索)
@@ -267,7 +268,7 @@ loop {
 `OrchestratorEngine` 使用 `system_prompt: String` 字段（非 `const`），通过 `build_system_prompt()` 构建。
 
 ```rust
-pub fn build_system_prompt(roles_summary: &str, workspace_info: &str) -> String;
+pub fn build_system_prompt(roles_summary: &str, workspace_info: &str, lang: &str) -> String;
 ```
 
 **构建时机**: `start_chat_streaming()` 中 LLM 调用前构建一次，通过 `engine.with_system_prompt()` 注入。
@@ -275,13 +276,21 @@ pub fn build_system_prompt(roles_summary: &str, workspace_info: &str) -> String;
 **注入内容**:
 | 部分 | 来源 | 说明 |
 |------|------|------|
-| 编排器角色定义 | 内嵌 | `DEFAULT_SYSTEM_PROMPT` 常量 |
-| 可用角色列表 | `RoleRegistry::list_roles()` | 每行 `- 角色名 (id) — 描述` |
-| 可用工具列表 | 内嵌 | 6 个工具的 name + description 硬编码 |
-| 工作空间信息 | `AiChatPanelData.selected_workspace` | `当前会话绑定到 workspace: xxx` |
-| 工作流 + 约束 | 内嵌 | 6 步流程 + 约束条件 |
+| 编排器角色定义 | `assets/prompts/orchestrator.md` | 通过 `include_str!` 编译嵌入 |
+| 可用角色列表 | `RoleRegistry::list_roles()` | 每行 `- 角色名 (id) — 描述`（动态追加） |
+| 工作空间信息 | `AiChatPanelData.selected_workspace` | `当前会话绑定到 workspace: xxx`（动态追加） |
+| `{lang_instruction}` 替换 | `lang_instruction()` | `"用中文回复。"` 或 `"Reply in the same language..."` |
 
-**降级行为**: 若 roles_summary 和 workspace_info 均为空，返回 `DEFAULT_SYSTEM_PROMPT`。
+**数据流**:
+```
+assets/prompts/orchestrator.md  ← 单文件源
+  → include_str! 编译嵌入二进制  ← 同时作 fallback
+  → seed_prompts() 首次运行写入 ~/.config/zenix/prompts/
+  → init() 启动时加载到缓存
+  → get_template() 运行时取模板 → replace {lang_instruction} → 追加动态内容
+```
+
+**降级行为**: 文件不可读/不存在时透明降级到编译期内嵌版本。
 
 ### 3.4 Agent 执行流程
 
@@ -515,7 +524,40 @@ LLM function calling → Tool trait → executor.execute() → 6 tools (spawn_wo
 - `ToolExecutor` 从 engine.rs 移至 tools.rs（解决循环依赖）
 - SSE 解析提取为独立 `parse_tool_call_sse_stream()` 函数
 
-### 6.6 ToolExecutor 位置 (2026-07-09)
+### 6.6 System Prompt 外部化 (2026-07-12)
+
+**决策**: 将硬编码的 `DEFAULT_SYSTEM_PROMPT` 和 `build_system_prompt()` 静态指令提取到 `assets/prompts/orchestrator.md`，通过 `include_str!` 在编译时嵌入。
+
+**原因**:
+1. **零编译调优**: 编辑 prompt 只需改 markdown 文件，无需重新编译
+2. **单一事实源**: `assets/prompts/orchestrator.md` 同时作为 fallback 和 seed 内容，避免两份常量不一致
+3. **用户可编辑**: 文件 seed 到 `~/.config/zenix/prompts/orchestrator.md`，用户可直接编辑
+
+**架构**:
+```rust
+// 编译时嵌入（fallback + seed 源）
+const EMBEDDED_ORCHESTRATOR: &str = include_str!("../../assets/prompts/orchestrator.md");
+
+// 启动时加载（种子 + 缓存）
+pub fn init() {
+    seed_prompts();  // 写入 ~/.config/zenix/prompts/orchestrator.md（如不存在）
+    load_all();      // 读取 prompts/*.md → Mutex<HashMap>
+}
+
+// 运行时获取
+pub fn get_template(name: &str) -> String {
+    // 缓存命中 → clone; 未命中 → EMBEDDED_ORCHESTRATOR
+}
+```
+
+**占位符机制**: `{lang_instruction}` 在运行时按检测到的语言替换（`"用中文回复。"` 或 `"Reply in the same language..."`），而非在启动时替换——因为聊天过程中用户语言可以变化。
+
+**注意事项**:
+- 修改 prompt 文件后需重启 zenix 生效（同 config.json 行为）
+- 新增工具时需同步更新 `assets/prompts/orchestrator.md` 中的工具列表
+- `{lang_instruction}` 占位符不能出现在 `#` 注释行（全量 replace 会误替换）
+
+### 6.7 ToolExecutor 位置 (2026-07-09)
 
 **决策**: `ToolExecutor` 定义在 `tools.rs` 而非 `engine.rs`。
 
@@ -577,6 +619,7 @@ let config = ConfigStore::load().context("load config")?;
 |------|----------|
 | `herdr.rs` | JSON 序列化/反序列化 round-trip（所有关键类型）、请求 ID 生成、响应解析（success/error/empty/invalid）、17 种 RPC 方法 wire protocol 校验 |
 | `engine.rs` | `build_tool_call_payload` JSON 结构、SSE 工具调用解析、`parse_tool_call_sse_stream` 双格式（OpenAI/Anthropic）、`build_system_prompt` 输出结构、`ToolExecutor` 分派 |
+| `prompts.rs` | `get_template` 缓存命中/未命中、嵌入内容包含工具/注释/占位符、`seed_one` 不覆盖已有文件 |
 | `roles.rs` | `RoleDef` serde round-trip、内置模板数量/唯一性、frontmatter 格式、`RoleRegistry` 路径、seed + load、create/delete |
 | `workers.rs` | 注册/状态更新/取消/cleanup、`send_to_worker` 路径、输出追加 |
 | `session.rs` | CRUD、FTS5 搜索（含特殊字符）、ON DELETE CASCADE、搜索范围过滤（仅 user 消息） |

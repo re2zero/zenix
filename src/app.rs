@@ -328,6 +328,8 @@ impl ZenixApp {
             agent_polling: false,
             single_instance_rx,
         };
+        // Initialize system prompt templates from disk.
+        crate::ai::prompts::init();
         // Start MCP orchestration server in the background.
         let mcp_enabled = result.config.mcp_server_enabled();
         let sse_enabled_val = result.config.mcp_server_sse_enabled();
