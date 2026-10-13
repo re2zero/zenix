@@ -9,6 +9,7 @@
 use std::rc::Rc;
 
 use gpui_kit::component::Theme;
+use gpui_kit::component::setting::SettingPage;
 use gpui_kit::*;
 use herdr_client::protocol::{ClientShellSnapshot, PaneSurfaceFrame};
 
@@ -16,12 +17,23 @@ use super::commands::Command;
 use crate::herdr::ConnectionStatus;
 
 /// One thing the shell mounts in a slot: a sidebar block, a status-bar
-/// segment, and later a panel, a settings section or an MCP tool.
+/// segment, and later a panel or an MCP tool.
 pub(crate) struct Contribution {
     /// Stable id, unique within its slot.
     pub(crate) id: &'static str,
     /// Builds the element, once per frame, from the invocation below.
     pub(crate) render: fn(&Invocation<'_>, &mut Window, &mut App) -> AnyElement,
+}
+
+/// One page of the settings surface. A page is built from the app rather than
+/// from an [`Invocation`]: its fields read and write the config global
+/// (`crate::config`), which is where a settings value lives, not the daemon's
+/// snapshot.
+pub(crate) struct SettingsSection {
+    /// Stable id, unique among the sections.
+    pub(crate) id: &'static str,
+    /// Builds the page, from the config as it is now.
+    pub(crate) page: fn(&App) -> SettingPage,
 }
 
 /// What the shell can be asked to do, by a chord or by a click on a
@@ -61,6 +73,7 @@ pub(crate) struct Invocation<'a> {
 pub(crate) struct Registry {
     panels: &'static [Contribution],
     status: &'static [Contribution],
+    settings: &'static [SettingsSection],
 }
 
 impl Registry {
@@ -70,6 +83,7 @@ impl Registry {
         Self {
             panels: super::panels::PANELS,
             status: super::panels::STATUS_SEGMENTS,
+            settings: super::settings::SETTINGS_SECTIONS,
         }
     }
 
@@ -81,6 +95,11 @@ impl Registry {
     /// The status bar's segments, left to right.
     pub(crate) fn status_segments(&self) -> &'static [Contribution] {
         self.status
+    }
+
+    /// The settings surface's pages, in the order it lists them.
+    pub(crate) fn settings_sections(&self) -> &'static [SettingsSection] {
+        self.settings
     }
 }
 
@@ -101,6 +120,15 @@ mod tests {
             ids.dedup();
             assert_eq!(ids.len(), total);
         }
+        let mut ids: Vec<&str> = registry
+            .settings_sections()
+            .iter()
+            .map(|section| section.id)
+            .collect();
+        let total = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), total, "settings section ids are unique");
     }
 
     #[test]
@@ -108,5 +136,10 @@ mod tests {
         let registry = Registry::builtin();
         assert!(!registry.panels().is_empty());
         assert!(!registry.status_segments().is_empty());
+    }
+
+    #[test]
+    fn the_settings_surface_mounts_at_least_one_page() {
+        assert!(!Registry::builtin().settings_sections().is_empty());
     }
 }

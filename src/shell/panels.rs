@@ -6,7 +6,7 @@
 //! change how the shell mounts them. The layout is skeleton level by decision
 //! (D3): a workspace's name, its cwd and git branch, and its agent's status.
 
-use gpui_kit::component::{Theme, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Theme, h_flex, v_flex};
 use gpui_kit::*;
 use herdr_client::protocol::{AgentStatus, ClientShellSnapshot, ClientShellWorkspace};
 
@@ -24,6 +24,10 @@ pub(crate) const STATUS_SEGMENTS: &[Contribution] = &[
     Contribution {
         id: "connection",
         render: render_connection,
+    },
+    Contribution {
+        id: "config",
+        render: render_config,
     },
     Contribution {
         id: "grid",
@@ -176,6 +180,29 @@ fn render_connection(invocation: &Invocation, _: &mut Window, _: &mut App) -> An
         .text_xs()
         .text_color(color)
         .child(label)
+        .into_any_element()
+}
+
+/// The config file's problems, so a hand-edited value that had no effect is
+/// visible without opening the settings surface. The Config page of the
+/// settings panel lists them one by one.
+fn render_config(_: &Invocation, _: &mut Window, cx: &mut App) -> AnyElement {
+    let theme = cx.theme().clone();
+    let diagnostics = crate::config::diagnostics(cx);
+    if diagnostics.is_empty() {
+        return div().into_any_element();
+    }
+    let color = if diagnostics.iter().any(|item| item.is_blocking()) {
+        theme.danger
+    } else {
+        theme.warning
+    };
+    div()
+        .text_xs()
+        .text_color(color)
+        .child(
+            rust_i18n::t!("settings.config.problems_short", count = diagnostics.len()).to_string(),
+        )
         .into_any_element()
 }
 

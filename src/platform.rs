@@ -34,8 +34,29 @@ pub fn config_dir() -> PathBuf {
     dirs::config_dir().unwrap_or_else(|| home_dir().join(".config"))
 }
 
+/// The zenix settings directory.
 pub fn zenix_config_dir() -> PathBuf {
     config_dir().join("zenix")
+}
+
+/// The herdr daemon's own config file: the settings *it* acts on (the shell a
+/// new pane starts, the cwd a new workspace starts in, the scrollback limit,
+/// keybindings, plugin settings). zenix only points at it; see
+/// `crate::config`'s module docs for where the boundary is.
+///
+/// Mirrors `herdr/src/config/io.rs`: `HERDR_CONFIG_PATH` when set, otherwise
+/// `<config dir>/<app dir>/config.toml`, where the app dir carries the `-dev`
+/// suffix in a debug build.
+pub fn herdr_config_path() -> PathBuf {
+    if let Ok(path) = std::env::var("HERDR_CONFIG_PATH") {
+        return PathBuf::from(path);
+    }
+    let app_dir = if cfg!(debug_assertions) {
+        "herdr-dev"
+    } else {
+        "herdr"
+    };
+    config_dir().join(app_dir).join("config.toml")
 }
 pub fn opencode_config_dir() -> PathBuf {
     config_dir().join("opencode")

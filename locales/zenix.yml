@@ -38,6 +38,47 @@ settings:
   title:
     en: "Settings"
     zh-CN: "设置"
+  close:
+    en: "Close"
+    zh-CN: "关闭"
+  layout:
+    title:
+      en: "Layout"
+      zh-CN: "布局"
+    description:
+      en: "zenix's own chrome. The panes belong to the daemon."
+      zh-CN: "zenix 自己的界面外壳。窗格归 daemon 所有。"
+    sidebar_visible:
+      en: "Sidebar"
+      zh-CN: "侧栏"
+    sidebar_width:
+      en: "Sidebar width"
+      zh-CN: "侧栏宽度"
+  config:
+    title:
+      en: "Config file"
+      zh-CN: "配置文件"
+    description:
+      en: "What zenix remembers, and what it found wrong with the file."
+      zh-CN: "zenix 记住的内容，以及它在文件里发现的问题。"
+    path:
+      en: "File"
+      zh-CN: "文件"
+    problems:
+      en: "Problems"
+      zh-CN: "问题"
+    problems_short:
+      en: "config: %{count} problems"
+      zh-CN: "配置: %{count} 个问题"
+    no_problems:
+      en: "No problems found"
+      zh-CN: "未发现问题"
+    daemon:
+      en: "Daemon settings"
+      zh-CN: "daemon 设置"
+    daemon_hint:
+      en: "Pane shell, new-workspace cwd, scrollback, keybindings and plugins live in the daemon's own config."
+      zh-CN: "窗格 shell、新工作区目录、回滚、键位与插件在 daemon 自己的配置里。"
   tab:
     general:
       en: "General"
@@ -80,9 +121,21 @@ settings:
     title:
       en: "Appearance"
       zh-CN: "外观"
+    description:
+      en: "How zenix itself is drawn. Both take effect at once and are remembered."
+      zh-CN: "zenix 自身的显示方式。两项都即时生效并被记住。"
     theme:
       en: "Theme"
       zh-CN: "主题"
+    theme_light:
+      en: "Light"
+      zh-CN: "浅色"
+    theme_dark:
+      en: "Dark"
+      zh-CN: "深色"
+    locale:
+      en: "Language"
+      zh-CN: "语言"
     font:
       en: "Font"
       zh-CN: "字体"
@@ -102,6 +155,15 @@ settings:
     title:
       en: "Terminal"
       zh-CN: "终端"
+    description:
+      en: "The palettes named cell colors resolve against, one per mode."
+      zh-CN: "终端命名颜色所使用的调色板，明暗各一套。"
+    palette_dark:
+      en: "Palette (dark)"
+      zh-CN: "调色板（深色）"
+    palette_light:
+      en: "Palette (light)"
+      zh-CN: "调色板（浅色）"
     font_family:
       en: "Font family"
       zh-CN: "字体"

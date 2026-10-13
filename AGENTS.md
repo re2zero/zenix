@@ -7,20 +7,20 @@
 ## OVERVIEW
 zenix is a cross-platform GPUI desktop frontend for herdr terminal workspace manager. It provides workspace/tab/pane management, system monitoring, theme engine, and plugin architecture via Rust + GPUI.
 
-The UI is being rebuilt on **gpui-kit 0.7.3** as a native client of the daemon's generation-1 endpoint protocol (multi-session plan in `.relay/PLAN.md` — local, gitignored). The old GPUI/PTY UI was deleted in M1, M3 rebuilt native pane rendering, and M4 has landed the workspace shell (`src/shell/`) with split-ratio and sidebar drag, tab reorder commands and the close chain, so the window is usable again. Remaining M4 residue: pointer-driven tab dragging, sidebar workspace reordering, command palette (deferred to M8a, when plugin actions become the palette's data source).
+The UI is being rebuilt on **gpui-kit 0.7.3** as a native client of the daemon's generation-1 endpoint protocol (multi-session plan in `.relay/PLAN.md` — local, gitignored). The old GPUI/PTY UI was deleted in M1, M3 rebuilt native pane rendering, and M4 has landed the workspace shell (`src/shell/`) with split-ratio and sidebar drag, tab reorder commands and the close chain, so the window is usable again. M5 has made the client's own settings real: `src/config/` holds a schema-checked `config.json` (with per-field diagnostics for a hand-edited file) and `src/shell/settings.rs` mounts the `gpui-kit` settings surface from the contribution registry. Remaining residue: pointer-driven tab dragging, sidebar workspace reordering, command palette (deferred to M8a, when plugin actions become the palette's data source).
 
 ## STRUCTURE
 ```
 zenix/
 ├── src/                    # Main GPUI application
-│   ├── main.rs            # Entry point: fonts, keymap, window, ShellView
+│   ├── main.rs            # Entry point: fonts, config init, keymap, window, ShellView
 │   ├── lib.rs             # Public SDK for plugins/sub-apps
 │   ├── bin/zenix-probe.rs # Daemon endpoint smoke gate (Welcome+Snapshot+Surface)
 │   ├── util.rs            # Shared helpers (timestamp_now)
-│   ├── shell/             # Workspace shell (M4): ShellView, command directory, keymap, contributions
+│   ├── shell/             # Workspace shell (M4) + settings surface (M5): ShellView, commands, keymap, contributions, settings.rs, panel_resize.rs
 │   ├── terminal/          # Cell painting + semantic input (M3): painter/, regions/splits, view.rs
 │   ├── herdr/             # Endpoint facade: Connection + LiveState (snapshots in, commands out)
-│   ├── config/            # Config store (~/.config/zenix/config.json) + jsonc.rs/scanner.rs
+│   ├── config/            # The client's config (M5): schema + diagnostics + store/global; jsonc.rs/scanner.rs
 │   ├── sys.rs             # System info collector (CPU, mem, net, disk)
 │   ├── client/mod.rs      # Herdr binary manager (install, start, endpoint socket)
 │   ├── provider/          # Theme/asset providers
@@ -51,7 +51,8 @@ zenix/
 |------|----------|-------|
 | App lifecycle, state, events | src/main.rs, src/shell/mod.rs | ShellView: title bar, sidebar, tab strip, status bar |
 | Commands & keymap | src/shell/commands.rs, src/shell/keymap.rs | One command directory; chords and palette read it |
-| UI contributions | src/shell/registry.rs, src/shell/panels.rs | Panels and status segments mount through the registry |
+| UI contributions | src/shell/registry.rs, src/shell/panels.rs | Panels, status segments and settings pages mount through the registry |
+| Client settings | src/config/mod.rs, src/shell/settings.rs | Schema + diagnostics + the config global; pages mount from the registry |
 | Terminal painting | src/terminal/view.rs, src/terminal/painter/ | One daemon surface painted natively |
 | Endpoint facade | src/herdr/connection.rs, src/herdr/state.rs | Commands out (in-flight tracked), snapshots in |
 | Plugin/sub-app SDK | src/lib.rs | Public API surface |
@@ -61,7 +62,7 @@ zenix/
 | Endpoint client | vendor/herdr-client/src/ | connect/session/surface/input; copy-only |
 | Theme system | src/provider/builtin.rs, assets/themes/ | 4 built-in themes |
 | System monitoring | src/sys.rs | sysinfo crate, real-time stats |
-| Config schema | src/config/mod.rs | JSONC with comments |
+| Config schema | src/config/mod.rs | JSONC walked against the schema; problems become diagnostics |
 | I18n (CN/EN) | src/i18n.rs, locales/zenix.yml | rust-i18n macro |
 | Build/packaging | Cargo.toml, build.rs | deb packaging, herdr embedding |
 | Plan & handoff | .relay/PLAN.md §8, .relay/journal/HANDOFF-*.md | Read the relay protocol first (local, gitignored) |
@@ -71,10 +72,11 @@ zenix/
 - **UI depends on `gpui-kit` only** — GPUI arrives via `use gpui_kit::*`; do not add git `gpui`/`gpui-component`/`gpui_platform` deps or `[patch]` entries
 - **GPUI patterns**: Entity/Context/Action model, `cx.spawn()` for async, `FocusHandle` for focus
 - **No state mutation in `render()`** except the one recorded call site: `Regions::views` in `src/terminal/view.rs` (gpui-kit 0.7.3 has no `compute_view`) — see `src/AGENTS.md`
-- **Shell surface mounts through the registry**: sidebar panels, status segments and the command list live in `src/shell/{registry,panels,commands}.rs`, not hardcoded in the shell
+- **Shell surface mounts through the registry**: sidebar panels, status segments, settings pages and the command list live in `src/shell/{registry,panels,settings,commands}.rs`, not hardcoded in the shell
 - **No `unwrap()` in production** — use `anyhow::Context` or `thiserror`
 - **Platform-gated code** in `src/platform.rs` only; core uses `#[cfg(...)]` on imports/fns
-- **Config uses JSONC** (JSON with comments) via `toml` crate for parsing
+- **Client settings live in the config global**: read with `config::get`, write with `config::update` (value + behavior + file move together); settings the daemon acts on belong in its own `config.toml` — see `src/config/mod.rs`'s module docs
+- **Config is JSONC** (comments allowed), walked against a schema on every load: an unknown key is dropped, a wrong type falls back per field, an out-of-range number is clamped, and each is reported as a diagnostic
 - **Endpoint is the state truth**: workspace/tab/pane/agent state comes from `ClientEvent::Snapshot` pushes — do not add polling
 - **No local PTY**: daemon panes are the only terminal source (the local PTY/alacritty path was removed by decision)
 - **Herdr binary**: auto-seeds to `~/.local/bin/herdr` on first run; herdr self-updates thereafter
@@ -84,7 +86,8 @@ zenix/
 - ❌ Editing `vendor/herdr-{protocol,client}/**` — copy-only; re-sync the whole directory from herdr-gpui instead
 - ❌ Adding UI deps or API calls without checking real `gpui-kit` / `gpui-pre` signatures first (see the gpui-dev skill)
 - ❌ Mutating state in GPUI `render()` anywhere other than the recorded `Regions::views` call site
-- ❌ Hardcoding a shell panel, status segment or command outside the contribution registry (`src/shell/registry.rs`)
+- ❌ Hardcoding a shell panel, status segment, settings page or command outside the contribution registry (`src/shell/registry.rs`)
+- ❌ Keeping a setting in a view struct beside the config, or writing `config.json` directly instead of through `config::update`
 - ❌ Hardcoding theme colors — use theme provider tokens
 - ❌ Assuming herdr builds from source without Zig 0.16.0 — see NOTES
 

@@ -76,6 +76,9 @@ fn main() {
         .with_quit_mode(QuitMode::LastWindowClosed)
         .run(|cx| {
             gpui_kit::init(cx);
+            // The stored config decides the chrome's mode and the locale
+            // before anything is drawn, so the first frame is already right.
+            config::init(cx);
             register_fonts(cx);
             shell::keymap::bind_keys(cx);
             gpui_kit::open_window(

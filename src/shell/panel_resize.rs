@@ -4,11 +4,14 @@
 //! beside it.
 //!
 //! Ported in shape from herdr-gpui (Apache-2.0)
-//! `crates/herdr-gpui/src/panel_resize.rs`. The sidebar is this client's own
-//! chrome, so its width is local; upstream saves it with the rest of its window
-//! chrome, which zenix does when settings land in M5.
+//! `crates/herdr-gpui/src/panel_resize.rs`, including its `restore`/`unsaved`
+//! pair: the width a drag leaves behind is saved once, when the gesture ends
+//! (`take_unsaved`), not on every frame of it. What is saved, and what a stored
+//! width may be, lives in [`crate::config`].
 
 use gpui_kit::*;
+
+use crate::config::{SIDEBAR_WIDTH_DEFAULT, SIDEBAR_WIDTH_MAX, SIDEBAR_WIDTH_MIN};
 
 /// How wide the grabbable edge is, laid over the sidebar's border.
 const HANDLE: f32 = 6.;
@@ -16,8 +19,6 @@ const HANDLE: f32 = 6.;
 const RESIZE_HOVER: u32 = 0x78a9ff44;
 /// The share of the window the sidebar may take.
 const MAX_SHARE: f32 = 0.6;
-/// A stored width beyond this is not a real panel.
-const MAX_WIDTH: f32 = 4096.;
 
 /// The sidebar's width: its default until the user drags it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -25,10 +26,12 @@ pub(crate) struct PanelWidth {
     chosen: Option<f32>,
     default: f32,
     min: f32,
+    /// Changed since it was last saved.
+    unsaved: bool,
 }
 
 /// The sidebar before it is dragged, as in herdr-gpui's `sidebar/metrics.rs`.
-pub(crate) const SIDEBAR: PanelWidth = PanelWidth::new(232., 160.);
+pub(crate) const SIDEBAR: PanelWidth = PanelWidth::new(SIDEBAR_WIDTH_DEFAULT, SIDEBAR_WIDTH_MIN);
 
 impl PanelWidth {
     pub(crate) const fn new(default: f32, min: f32) -> Self {
@@ -36,7 +39,21 @@ impl PanelWidth {
             chosen: None,
             default,
             min,
+            unsaved: false,
         }
+    }
+
+    /// The width the user chose, to save; `None` follows the default.
+    pub(crate) fn chosen(&self) -> Option<f32> {
+        self.chosen
+    }
+
+    /// The width a stored config names; anything unusable keeps the default.
+    pub(crate) fn restore(&mut self, stored: f32) {
+        self.chosen = Some(stored)
+            .filter(|width| width.is_finite() && *width > 0.)
+            .map(|width| width.clamp(self.min, SIDEBAR_WIDTH_MAX));
+        self.unsaved = false;
     }
 
     /// The width to draw beside `available` pixels of space: the chosen or
@@ -57,17 +74,25 @@ impl PanelWidth {
     /// dragged by its inner edge. The sidebar sits on the left, so its width
     /// runs from the panel's own left edge to the pointer. Whether it changed.
     pub(crate) fn drag(&mut self, bounds: Bounds<Pixels>, x: Pixels) -> bool {
-        let width = f32::from(x - bounds.left()).clamp(self.min, MAX_WIDTH);
+        let width = f32::from(x - bounds.left()).clamp(self.min, SIDEBAR_WIDTH_MAX);
         if self.chosen == Some(width) {
             return false;
         }
         self.chosen = Some(width);
+        self.unsaved = true;
         true
     }
 
     /// Back to the default width.
     pub(crate) fn reset(&mut self) {
         self.chosen = None;
+        self.unsaved = true;
+    }
+
+    /// Whether the width changed since this last answered, so a drag is saved
+    /// once, when it ends.
+    pub(crate) fn take_unsaved(&mut self) -> bool {
+        std::mem::take(&mut self.unsaved)
     }
 }
 
@@ -139,5 +164,33 @@ mod tests {
         // The minimum holds while the window has room for it, and gives way
         // only once the window is narrower than the minimum itself.
         assert_eq!(sidebar.width(150.), 150.);
+    }
+
+    /// A drag is worth saving once, when it ends, however many frames it took.
+    #[test]
+    fn only_a_finished_drag_is_worth_saving() {
+        let mut sidebar = SIDEBAR;
+        assert!(!sidebar.take_unsaved(), "nothing was dragged");
+        sidebar.drag(bounds(0., 232.), px(300.));
+        assert_eq!(sidebar.chosen(), Some(300.));
+        assert!(sidebar.take_unsaved());
+        assert!(!sidebar.take_unsaved(), "the same drag is saved once");
+        sidebar.drag(bounds(0., 300.), px(300.));
+        assert!(!sidebar.take_unsaved(), "a pointer that did not move");
+    }
+
+    /// What the config names is what is drawn, and it is not something to save
+    /// again: the panel only restores it.
+    #[test]
+    fn a_stored_width_is_restored_and_the_default_remains_the_fallback() {
+        let mut sidebar = SIDEBAR;
+        sidebar.restore(349.);
+        assert_eq!(sidebar.width(0.), 349.);
+        assert!(!sidebar.take_unsaved());
+        // A stored width below the minimum is drawn at the minimum rather than
+        // as a sliver; the config's own range check reports the file.
+        sidebar.restore(20.);
+        assert_eq!(sidebar.width(0.), 160.);
+        assert_eq!(sidebar.chosen(), Some(160.));
     }
 }

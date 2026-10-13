@@ -43,6 +43,20 @@ pub(crate) enum Command {
     ToggleSidebar,
     /// Local: light or dark chrome.
     ToggleTheme,
+    /// Local: the settings surface.
+    ToggleSettings,
+}
+
+impl Command {
+    /// Whether the shell runs this itself rather than sending it to the
+    /// daemon. The directory owns the answer so a chord and a click on a
+    /// contribution cannot disagree about where a command goes.
+    pub(crate) fn is_local(self) -> bool {
+        matches!(
+            self,
+            Command::ToggleSidebar | Command::ToggleTheme | Command::ToggleSettings
+        )
+    }
 }
 
 /// One command's entry in the directory: what it is called, and the keystrokes
@@ -233,6 +247,13 @@ pub(crate) const COMMANDS: &[CommandInfo] = &[
         direct: &["cmd-shift-l"],
         prefixed: &[],
     },
+    CommandInfo {
+        command: Command::ToggleSettings,
+        id: "view.settings",
+        label: "Settings",
+        direct: &["cmd-,"],
+        prefixed: &[],
+    },
 ];
 
 /// The daemon method a command becomes, or `None` when the shell runs it
@@ -366,7 +387,7 @@ pub(crate) fn request(command: Command, snapshot: &ClientShellSnapshot) -> Optio
             Method::PaneResize,
             json!({"pane_id": pane?.pane_id, "direction": direction(command)?}),
         ),
-        Command::ToggleSidebar | Command::ToggleTheme => return None,
+        Command::ToggleSidebar | Command::ToggleTheme | Command::ToggleSettings => return None,
     })
 }
 
@@ -420,6 +441,28 @@ mod tests {
         let snapshot = empty_snapshot();
         assert!(request(Command::ToggleSidebar, &snapshot).is_none());
         assert!(request(Command::ToggleTheme, &snapshot).is_none());
+        assert!(request(Command::ToggleSettings, &snapshot).is_none());
+    }
+
+    /// A command the shell runs itself must never also name a daemon method,
+    /// however full the snapshot is.
+    #[test]
+    fn a_local_command_never_becomes_a_daemon_method() {
+        let snapshot = empty_snapshot();
+        let local: Vec<&str> = COMMANDS
+            .iter()
+            .filter(|info| info.command.is_local())
+            .map(|info| info.id)
+            .collect();
+        assert_eq!(
+            local,
+            vec!["view.toggle-sidebar", "view.toggle-theme", "view.settings"]
+        );
+        for info in COMMANDS {
+            if info.command.is_local() {
+                assert!(request(info.command, &snapshot).is_none(), "{}", info.id);
+            }
+        }
     }
 
     #[test]

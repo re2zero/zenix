@@ -16,13 +16,15 @@ pub(crate) mod keymap;
 pub(crate) mod panel_resize;
 pub(crate) mod panels;
 pub(crate) mod registry;
+pub(crate) mod settings;
 
 use std::rc::Rc;
 
-use gpui_kit::component::{ActiveTheme, Theme as UiTheme, ThemeMode, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, ThemeMode, h_flex, v_flex};
 use gpui_kit::*;
 use herdr_client::protocol::ClientShellTab;
 
+use crate::config::{self, ConfigStore, SIDEBAR_WIDTH_DEFAULT};
 use crate::herdr::Connection;
 use crate::terminal::Theme as TerminalTheme;
 use crate::terminal::view::TerminalView;
@@ -39,10 +41,17 @@ pub(crate) struct ShellView {
     connection: Connection,
     registry: Registry,
     keymap: Keymap,
-    /// Whether the sidebar is shown. Local: the daemon does not know about it.
-    sidebar_visible: bool,
-    /// How wide the sidebar is drawn. Local, like its visibility.
+    /// How wide the sidebar is drawn. Local like its visibility, but saved to
+    /// the config when a drag ends, and restored from it when the settings
+    /// panel changes it.
     sidebar: PanelWidth,
+    /// A drag is in flight: the config must not overwrite the pointer.
+    sidebar_dragging: bool,
+    /// The settings surface is over the shell, and has the keyboard.
+    settings_open: bool,
+    /// The keyboard while the settings surface is open, so the pane beside it
+    /// stops receiving keystrokes.
+    settings_focus: FocusHandle,
     /// The prefix has been typed and the next keystroke is its chord.
     prefix_armed: bool,
     /// The terminal's last drawn revision, so a paint that changed nothing
@@ -50,6 +59,7 @@ pub(crate) struct ShellView {
     drawn: u64,
     _observe: Subscription,
     _prefix: Subscription,
+    _config: Subscription,
 }
 
 impl ShellView {
@@ -64,20 +74,39 @@ impl ShellView {
             }
         });
         let prefix = Self::intercept_prefix(cx);
+        let config = Self::follow_config(cx);
+        let mut sidebar = SIDEBAR;
+        sidebar.restore(config::get(cx).layout.sidebar_width);
         let mut shell = Self {
             terminal,
             connection,
             registry: Registry::builtin(),
             keymap: Keymap::default(),
-            sidebar_visible: true,
-            sidebar: SIDEBAR,
+            sidebar,
+            sidebar_dragging: false,
+            settings_open: false,
+            settings_focus: cx.focus_handle(),
             prefix_armed: false,
             drawn: 0,
             _observe: observe,
             _prefix: prefix,
+            _config: config,
         };
         shell.sync_terminal_theme(cx);
         shell
+    }
+
+    /// Keep the shell in step with the config: the settings panel can change
+    /// the sidebar's width, the palettes and the locale while the shell is
+    /// drawn beside it. A drag in flight owns the width until it ends.
+    fn follow_config(cx: &mut Context<Self>) -> Subscription {
+        cx.observe_global::<ConfigStore>(|shell, cx| {
+            if !shell.sidebar_dragging {
+                shell.sidebar.restore(config::get(cx).layout.sidebar_width);
+            }
+            shell.sync_terminal_theme(cx);
+            cx.notify();
+        })
     }
 
     /// The terminal keeps the keyboard: the shell has no focus of its own.
@@ -104,6 +133,11 @@ impl ShellView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // The settings surface owns the keyboard while it is open: its inputs
+        // must see every key, including the prefix.
+        if self.settings_open {
+            return;
+        }
         let is_prefix = self.keymap.is_prefix(keystroke);
         if !self.prefix_armed {
             if is_prefix {
@@ -130,18 +164,41 @@ impl ShellView {
 
     /// Run one directory command: locally when the shell owns it, otherwise as
     /// the daemon method the snapshot resolves it to.
-    fn run(&mut self, command: Command, _window: &mut Window, cx: &mut Context<Self>) {
+    fn run(&mut self, command: Command, window: &mut Window, cx: &mut Context<Self>) {
         match command {
             Command::ToggleSidebar => {
-                self.sidebar_visible = !self.sidebar_visible;
-                cx.notify();
+                let visible = !config::get(cx).layout.sidebar_visible;
+                config::update(cx, |config| config.layout.sidebar_visible = visible);
             }
+            // The mode the chrome is drawn in is a setting, so the title bar's
+            // button and the settings panel's item are the same write; the
+            // palette pair follows through the config observer.
             Command::ToggleTheme => {
-                toggle_theme(cx);
-                self.sync_terminal_theme(cx);
+                let mode = if cx.theme().is_dark() {
+                    ThemeMode::Light
+                } else {
+                    ThemeMode::Dark
+                };
+                config::update(cx, |config| config.appearance.theme_mode = mode);
             }
+            Command::ToggleSettings => self.toggle_settings(window, cx),
             command => self.dispatch(ShellRequest::Command(command), cx),
         }
+    }
+
+    /// Show the settings surface, or hide it and give the keyboard back to the
+    /// pane. Which one has the keyboard is the whole of the shell's interest in
+    /// it: the panel keeps its own page selection.
+    fn toggle_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.settings_open = !self.settings_open;
+        if self.settings_open {
+            let focus = self.settings_focus.clone();
+            window.focus(&focus, cx);
+        } else {
+            let focus = self.terminal.read(cx).focus_handle().clone();
+            window.focus(&focus, cx);
+        }
+        cx.notify();
     }
 
     /// A keystroke GPUI bound directly, dispatched as its action. The prefix
@@ -170,16 +227,16 @@ impl ShellView {
         }
     }
 
-    /// The terminal palette that matches the chrome's mode. The zenix theme
-    /// system and this one meet in M5; until then the terminal keeps its own
-    /// built-in palettes and follows the mode's light/dark pair. The gpui-kit
-    /// theme is the only source of truth for the mode: a second local flag
-    /// could disagree with it.
+    /// The terminal palette that matches the chrome's mode, named by the
+    /// config so a mode's palette can be chosen in the settings panel. The
+    /// gpui-kit theme is the only source of truth for the mode: a second local
+    /// flag could disagree with it.
     fn sync_terminal_theme(&mut self, cx: &mut Context<Self>) {
+        let config = config::get(cx);
         let name = if cx.theme().is_dark() {
-            "Default"
+            config.terminal.palette_dark.as_str()
         } else {
-            "Catppuccin Latte"
+            config.terminal.palette_light.as_str()
         };
         let theme = TerminalTheme::builtin(name).unwrap_or_default();
         self.terminal
@@ -188,34 +245,39 @@ impl ShellView {
 
     /// Follow the pointer with the sidebar's edge, resolved against the
     /// sidebar's own bounds: the drag reports where the pointer is, not how far
-    /// the panel should grow.
+    /// the panel should grow. The config is written once, when the drag ends.
     fn drag_sidebar(
         &mut self,
         event: &DragMoveEvent<SidebarDrag>,
         _: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.sidebar_dragging = true;
         if self.sidebar.drag(event.bounds, event.event.position.x) {
             cx.notify();
         }
     }
 
-    /// A double-click on the grip puts the sidebar back to its default width.
+    /// A drag is over: save the width it left, once, however many frames it
+    /// took. The release can also land outside the shell's edge, so both
+    /// `on_mouse_up` and `on_mouse_up_out` come here.
+    fn settle_sidebar(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.sidebar_dragging = false;
+        if self.sidebar.take_unsaved() {
+            let width = self.sidebar.chosen().unwrap_or(SIDEBAR_WIDTH_DEFAULT);
+            config::update(cx, |config| config.layout.set_sidebar_width(width));
+        }
+    }
+
+    /// A double-click on the grip puts the sidebar back to its default width,
+    /// and the config with it.
     fn reset_sidebar(&mut self, _: &MouseDownEvent, _: &mut Window, cx: &mut Context<Self>) {
         self.sidebar.reset();
-        cx.notify();
+        self.sidebar.take_unsaved();
+        config::update(cx, |config| {
+            config.layout.set_sidebar_width(SIDEBAR_WIDTH_DEFAULT)
+        });
     }
-}
-
-/// Flip the chrome between light and dark, reading the mode that is actually
-/// in effect rather than tracking one.
-fn toggle_theme(cx: &mut App) {
-    let mode = if cx.theme().is_dark() {
-        ThemeMode::Light
-    } else {
-        ThemeMode::Dark
-    };
-    UiTheme::change(mode, None, cx);
 }
 
 impl Render for ShellView {
@@ -223,26 +285,20 @@ impl Render for ShellView {
         let live = self.terminal.read(cx).live().clone();
         let error = self.connection.footer();
         let theme = cx.theme().clone();
+        let sidebar_visible = config::get(cx).layout.sidebar_visible;
         let dispatch: Dispatch = Rc::new({
             let connection = self.connection.clone();
             let snapshot = live.snapshot.clone();
             let entity = cx.entity();
-            move |request, _window, cx| match request {
+            move |request, window, cx| match request {
                 ShellRequest::FocusWorkspace(workspace_id) => {
                     connection.focus_workspace(&workspace_id)
                 }
                 ShellRequest::FocusTab(tab_id) => connection.focus_tab(&tab_id),
-                ShellRequest::Command(Command::ToggleSidebar) => {
-                    let _ = entity.update(cx, |shell, cx| {
-                        shell.sidebar_visible = !shell.sidebar_visible;
-                        cx.notify();
-                    });
-                }
-                ShellRequest::Command(Command::ToggleTheme) => {
-                    let _ = entity.update(cx, |shell, cx| {
-                        toggle_theme(cx);
-                        shell.sync_terminal_theme(cx);
-                    });
+                // A command the shell runs itself goes through `run` whether it
+                // arrived as a chord or as a click, so the two cannot part ways.
+                ShellRequest::Command(command) if command.is_local() => {
+                    let _ = entity.update(cx, |shell, cx| shell.run(command, window, cx));
                 }
                 ShellRequest::Command(command) => {
                     if let Some((method, params)) = snapshot
@@ -273,7 +329,7 @@ impl Render for ShellView {
             .sidebar
             .width(window.viewport_size().width.to_f64() as f32);
         let mut body = div().flex().flex_row().flex_1().min_h_0().w_full();
-        if self.sidebar_visible {
+        if sidebar_visible {
             body = body.child(
                 v_flex()
                     .relative()
@@ -285,8 +341,11 @@ impl Render for ShellView {
                     .border_r_1()
                     .border_color(theme.sidebar_border)
                     // The edge facing the grid is the sidebar's own handle, so
-                    // the drag is resolved inside the panel it resizes.
+                    // the drag is resolved inside the panel it resizes, and the
+                    // release that ends it is saved from here.
                     .on_drag_move(cx.listener(Self::drag_sidebar))
+                    .on_mouse_up(MouseButton::Left, cx.listener(Self::settle_sidebar))
+                    .on_mouse_up_out(MouseButton::Left, cx.listener(Self::settle_sidebar))
                     .child(panel_resize::grip(
                         "sidebar-grip",
                         cx.listener(Self::reset_sidebar),
@@ -299,14 +358,17 @@ impl Render for ShellView {
                     ),
             );
         }
-        v_flex()
+        let mut root = v_flex()
             .size_full()
+            // The settings surface is laid over the shell, so the shell is what
+            // it is laid over.
+            .relative()
             .bg(theme.background)
             .text_color(theme.foreground)
             // Every directly bound keystroke dispatches its action here: a
             // binding with no handler matches and does nothing.
             .on_action(cx.listener(Self::run_command))
-            .child(title_bar(&invocation, self.sidebar_visible))
+            .child(title_bar(&invocation, sidebar_visible))
             .child(
                 body.child(
                     v_flex()
@@ -337,11 +399,20 @@ impl Render for ShellView {
                             .iter()
                             .map(|segment| (segment.render)(&invocation, window, cx)),
                     ),
-            )
+            );
+        if self.settings_open {
+            root = root.child(settings::overlay(
+                self.registry.settings_sections(),
+                &self.settings_focus,
+                &dispatch,
+                cx,
+            ));
+        }
+        root
     }
 }
 
-/// The chrome above the grid: which workspace is in front, and the two local
+/// The chrome above the grid: which workspace is in front, and the local
 /// toggles. Window controls stay the platform's until M7 has a frameless
 /// window to draw them on.
 fn title_bar(invocation: &Invocation, sidebar_visible: bool) -> AnyElement {
@@ -375,6 +446,12 @@ fn title_bar(invocation: &Invocation, sidebar_visible: bool) -> AnyElement {
         ))
         .child(div().flex_1().text_sm().child(title))
         .child(toggle_button(
+            "settings",
+            crate::i18n::t("settings.title"),
+            Command::ToggleSettings,
+            invocation,
+        ))
+        .child(toggle_button(
             "toggle-theme",
             if theme.is_dark() { "light" } else { "dark" },
             Command::ToggleTheme,
@@ -385,7 +462,7 @@ fn title_bar(invocation: &Invocation, sidebar_visible: bool) -> AnyElement {
 
 fn toggle_button(
     id: &'static str,
-    label: &'static str,
+    label: impl Into<SharedString>,
     command: Command,
     invocation: &Invocation,
 ) -> AnyElement {
@@ -403,7 +480,7 @@ fn toggle_button(
         .on_click(move |_, window, cx| {
             dispatch(ShellRequest::Command(command), window, cx);
         })
-        .child(label)
+        .child(label.into())
         .into_any_element()
 }
 
