@@ -1,0 +1,32 @@
+{
+  "id": "chat-render-style",
+  "name": "chat-render-style",
+  "title": "AI 会话渲染样式优化 — 思考/工具调用/Bash 执行独立视觉容器",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "re2zero",
+  "assignee": "re2zero",
+  "createdAt": "2026-07-13",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "07-13-streaming-tool-cards",
+    "07-13-tool-card-types",
+    "07-13-reasoning-block-style",
+    "07-13-timeline-indicator",
+    "07-13-agent-monitor-style"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}
