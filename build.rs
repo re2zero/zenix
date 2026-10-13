@@ -30,6 +30,15 @@ fn main() {
         .unwrap() // .../target/<profile>/
         .join(name);
 
+    // Forced submodule build: wins over the cached copy and the installed-herdr
+    // shortcut, so `HERDR_BUILD=1` really does build herdr from the submodule.
+    #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
+    if env::var("HERDR_BUILD").is_ok() {
+        build_herdr(&herdr_dir, name, &dest);
+        emit(&dest);
+        return;
+    }
+
     // Cached from prior build
     if dest.exists() {
         emit(&dest);
@@ -58,20 +67,12 @@ fn main() {
             }
         }
     } else {
-        // Dev: copy system herdr for speed; fall back to submodule build
+        // Dev: copy the installed herdr for speed; HERDR_BUILD=1 forced a
+        // submodule build above.
         if let Some(sys) = find_system_herdr() {
             let _ = fs::create_dir_all(dest.parent().unwrap());
             fs::copy(&sys, &dest).expect("failed to copy system herdr");
             eprintln!("copied system herdr from {}", sys.display());
-        } else if env::var("HERDR_BUILD").is_ok() {
-            #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
-            {
-                build_herdr(&herdr_dir, name, &dest);
-            }
-            #[cfg(windows)]
-            {
-                eprintln!("NOTE: HERDR_BUILD is not supported on Windows. Install herdr to PATH.");
-            }
         } else {
             eprintln!(
                 "NOTE: herdr binary not found.\n\

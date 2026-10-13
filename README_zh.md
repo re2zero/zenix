@@ -36,7 +36,7 @@ res/
 assets/
   fonts/                   Lilex 字体族
   themes/                  主题 JSON 文件
-herdr/                     Git 子模块（ogulcancelik/herdr, v0.6.10）
+herdr/                     Git 子模块（ogulcancelik/herdr, v0.9.3）
 build.rs                   从子模块编译/嵌入 herdr
 ```
 
@@ -44,10 +44,10 @@ build.rs                   从子模块编译/嵌入 herdr
 
 | 依赖 | 许可证 | 关系 |
 |-----------|---------|-------------|
-| [gpui](https://github.com/zed-industries/zed) | GPL-3.0 | 静态链接 UI 框架 |
+| [gpui-kit](https://github.com/longbridge/gpui-kit) | Apache-2.0 | 静态链接 UI 框架 |
 | [gpui-component](https://github.com/longbridge/gpui-component) | Apache-2.0 | 静态链接组件库 |
-| [herdr](https://github.com/ogulcancelik/herdr) | AGPL-3.0 | 独立二进制，socket IPC（mere aggregation） |
-| [alacritty_terminal](https://github.com/zed-industries/alacritty) | Apache-2.0 | 终端仿真后端 |
+| [herdr](https://github.com/ogulcancelik/herdr) | Apache-2.0 | 独立二进制，socket IPC（mere aggregation） |
+| [herdr-protocol / herdr-client](vendor/) | Apache-2.0 | 内嵌端点协议与客户端（静态链接） |
 
 zenix 本体使用 **GPL-3.0-or-later** 许可证（详见 [LICENSE](LICENSE)）。
 

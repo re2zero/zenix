@@ -29,7 +29,8 @@ impl HerdrRequest {
     /// `{"id":"...","method":"...","params":{...}}`
     pub fn to_json_line(&self) -> Result<String, String> {
         let (method_name, params) = self.method.as_pair();
-        let params_val = params.unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
+        let params_val =
+            params.unwrap_or_else(|| serde_json::Value::Object(serde_json::Map::new()));
         let obj = serde_json::json!({
             "id": self.id,
             "method": method_name,
@@ -72,26 +73,82 @@ impl HerdrMethod {
         match self {
             HerdrMethod::ServerPing => ("ping", None),
             HerdrMethod::WorkspaceList => ("workspace.list", None),
-            HerdrMethod::WorkspaceGet(p) => ("workspace.get", Some(serde_json::to_value(p).unwrap_or_default())),
-            HerdrMethod::WorkspaceCreate(p) => ("workspace.create", Some(serde_json::to_value(p).unwrap_or_default())),
-            HerdrMethod::WorkspaceClose(p) => ("workspace.close", Some(serde_json::to_value(p).unwrap_or_default())),
-            HerdrMethod::TabList(p) => ("tab.list", Some(serde_json::to_value(p).unwrap_or_default())),
-            HerdrMethod::TabGet(p) => ("tab.get", Some(serde_json::to_value(p).unwrap_or_default())),
-            HerdrMethod::TabCreate(p) => ("tab.create", Some(serde_json::to_value(p).unwrap_or_default())),
-            HerdrMethod::TabClose(p) => ("tab.close", Some(serde_json::to_value(p).unwrap_or_default())),
+            HerdrMethod::WorkspaceGet(p) => (
+                "workspace.get",
+                Some(serde_json::to_value(p).unwrap_or_default()),
+            ),
+            HerdrMethod::WorkspaceCreate(p) => (
+                "workspace.create",
+                Some(serde_json::to_value(p).unwrap_or_default()),
+            ),
+            HerdrMethod::WorkspaceClose(p) => (
+                "workspace.close",
+                Some(serde_json::to_value(p).unwrap_or_default()),
+            ),
+            HerdrMethod::TabList(p) => (
+                "tab.list",
+                Some(serde_json::to_value(p).unwrap_or_default()),
+            ),
+            HerdrMethod::TabGet(p) => {
+                ("tab.get", Some(serde_json::to_value(p).unwrap_or_default()))
+            }
+            HerdrMethod::TabCreate(p) => (
+                "tab.create",
+                Some(serde_json::to_value(p).unwrap_or_default()),
+            ),
+            HerdrMethod::TabClose(p) => (
+                "tab.close",
+                Some(serde_json::to_value(p).unwrap_or_default()),
+            ),
             HerdrMethod::AgentList => ("agent.list", None),
-            HerdrMethod::AgentStart(p) => ("agent.start", Some(serde_json::to_value(p).unwrap_or_default())),
-            HerdrMethod::AgentSend(p) => ("agent.send", Some(serde_json::to_value(p).unwrap_or_default())),
-            HerdrMethod::AgentRead(p) => ("agent.read", Some(serde_json::to_value(p).unwrap_or_default())),
-            HerdrMethod::PaneList(p) => ("pane.list", Some(serde_json::to_value(p).unwrap_or_default())),
-            HerdrMethod::PaneGet(p) => ("pane.get", Some(serde_json::to_value(p).unwrap_or_default())),
-            HerdrMethod::PaneSplit(p) => ("pane.split", Some(serde_json::to_value(p).unwrap_or_default())),
-            HerdrMethod::PaneSendText(p) => ("pane.send_text", Some(serde_json::to_value(p).unwrap_or_default())),
-            HerdrMethod::PaneRead(p) => ("pane.read", Some(serde_json::to_value(p).unwrap_or_default())),
-            HerdrMethod::PaneWaitForOutput(p) => ("pane.wait_for_output", Some(serde_json::to_value(p).unwrap_or_default())),
-            HerdrMethod::PaneClose(p) => ("pane.close", Some(serde_json::to_value(p).unwrap_or_default())),
-            HerdrMethod::PaneRename(p) => ("pane.rename", Some(serde_json::to_value(p).unwrap_or_default())),
-            HerdrMethod::EventsSubscribe(p) => ("events.subscribe", Some(serde_json::to_value(p).unwrap_or_default())),
+            HerdrMethod::AgentStart(p) => (
+                "agent.start",
+                Some(serde_json::to_value(p).unwrap_or_default()),
+            ),
+            HerdrMethod::AgentSend(p) => (
+                "agent.send",
+                Some(serde_json::to_value(p).unwrap_or_default()),
+            ),
+            HerdrMethod::AgentRead(p) => (
+                "agent.read",
+                Some(serde_json::to_value(p).unwrap_or_default()),
+            ),
+            HerdrMethod::PaneList(p) => (
+                "pane.list",
+                Some(serde_json::to_value(p).unwrap_or_default()),
+            ),
+            HerdrMethod::PaneGet(p) => (
+                "pane.get",
+                Some(serde_json::to_value(p).unwrap_or_default()),
+            ),
+            HerdrMethod::PaneSplit(p) => (
+                "pane.split",
+                Some(serde_json::to_value(p).unwrap_or_default()),
+            ),
+            HerdrMethod::PaneSendText(p) => (
+                "pane.send_text",
+                Some(serde_json::to_value(p).unwrap_or_default()),
+            ),
+            HerdrMethod::PaneRead(p) => (
+                "pane.read",
+                Some(serde_json::to_value(p).unwrap_or_default()),
+            ),
+            HerdrMethod::PaneWaitForOutput(p) => (
+                "pane.wait_for_output",
+                Some(serde_json::to_value(p).unwrap_or_default()),
+            ),
+            HerdrMethod::PaneClose(p) => (
+                "pane.close",
+                Some(serde_json::to_value(p).unwrap_or_default()),
+            ),
+            HerdrMethod::PaneRename(p) => (
+                "pane.rename",
+                Some(serde_json::to_value(p).unwrap_or_default()),
+            ),
+            HerdrMethod::EventsSubscribe(p) => (
+                "events.subscribe",
+                Some(serde_json::to_value(p).unwrap_or_default()),
+            ),
         }
     }
 }

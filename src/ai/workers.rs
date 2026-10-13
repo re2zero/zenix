@@ -93,7 +93,9 @@ impl Default for WorkerRegistry {
 
 impl Clone for WorkerRegistry {
     fn clone(&self) -> Self {
-        Self { inner: self.inner.clone() }
+        Self {
+            inner: self.inner.clone(),
+        }
     }
 }
 
@@ -116,7 +118,7 @@ impl WorkerRegistry {
         let mut inner = self.inner.lock().unwrap();
         let id = inner.next_id;
         inner.next_id += 1;
-        let now = crate::app::timestamp_now();
+        let now = crate::util::timestamp_now();
         inner.workers.push(WorkerInstance {
             id,
             worker_name,

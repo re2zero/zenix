@@ -1,91 +1,119 @@
 # PROJECT KNOWLEDGE BASE
 
-**Generated:** 2026-06-23
-**Commit:** a1b2c3d
+**Generated:** 2026-10-13
+**Commit:** 809cd6e
 **Branch:** main
 
 ## OVERVIEW
 zenix is a cross-platform GPUI desktop frontend for herdr terminal workspace manager. It provides workspace/tab/pane management, system monitoring, theme engine, and plugin architecture via Rust + GPUI.
 
+The UI is being rebuilt on **gpui-kit 0.7.3** as a native client of the daemon's generation-1 endpoint protocol (multi-session plan in `.relay/PLAN.md` — local, gitignored). The old GPUI/PTY UI was deleted in M1, M3 rebuilt native pane rendering, and M4 has landed the workspace shell (`src/shell/`) with split-ratio and sidebar drag, tab reorder commands and the close chain, so the window is usable again. Remaining M4 residue: pointer-driven tab dragging, sidebar workspace reordering, command palette (deferred to M8a, when plugin actions become the palette's data source).
+
 ## STRUCTURE
 ```
 zenix/
 ├── src/                    # Main GPUI application
-│   ├── main.rs            # Entry point
+│   ├── main.rs            # Entry point: fonts, keymap, window, ShellView
 │   ├── lib.rs             # Public SDK for plugins/sub-apps
-│   ├── app.rs             # ZenixApp — state, events, render
-│   ├── config.rs          # Config store (~/.config/zenix/config.json)
+│   ├── bin/zenix-probe.rs # Daemon endpoint smoke gate (Welcome+Snapshot+Surface)
+│   ├── util.rs            # Shared helpers (timestamp_now)
+│   ├── shell/             # Workspace shell (M4): ShellView, command directory, keymap, contributions
+│   ├── terminal/          # Cell painting + semantic input (M3): painter/, regions/splits, view.rs
+│   ├── herdr/             # Endpoint facade: Connection + LiveState (snapshots in, commands out)
+│   ├── config/            # Config store (~/.config/zenix/config.json) + jsonc.rs/scanner.rs
 │   ├── sys.rs             # System info collector (CPU, mem, net, disk)
-│   ├── client/mod.rs      # Herdr binary manager (install, start, socket IPC)
-│   ├── terminal/          # PTY backend + GPUI rendering
-│   ├── ui/                # Sidebar, settings, system info panels
+│   ├── client/mod.rs      # Herdr binary manager (install, start, endpoint socket)
 │   ├── provider/          # Theme/asset providers
 │   ├── api_provider/      # REST API for external integrations
 │   ├── mcp/               # Model Context Protocol integration
 │   ├── agent/             # Agent detection/integration
 │   ├── skills/            # Skill system for extensibility
+│   ├── config_adapters/   # Per-agent config adapters
+│   ├── i18n.rs            # rust-i18n wiring (strings in locales/zenix.yml)
 │   └── platform.rs        # Platform-specific code (Linux/macOS/Windows)
-├── herdr/                 # Git submodule (ogulcancelik/herdr v0.6.10)
-├── vendor/
-│   ├── gpui_wgpu_patched/ # Patched wgpu renderer for GPUI
-│   └── libghostty-vt/     # Vendored terminal parser (Zig)
+├── herdr/                 # Git submodule (ogulcancelik/herdr v0.9.3, Apache-2.0)
+├── vendor/                # Vendored endpoint crates, byte-identical to upstream (Apache-2.0)
+│   ├── herdr-protocol/    # Generation-1 wire + handshake model
+│   ├── herdr-client/      # Endpoint client (connect/session/surface/input)
+│   └── test-support/      # sandbox.rs, only for herdr-client's opt-in live tests
 ├── assets/
 │   ├── fonts/             # Lilex font family
+│   ├── prompts/           # Prompt assets
 │   └── themes/            # Theme JSON (gruvbox, solarized, tokyonight, matrix)
-├── build.rs               # Compiles/embeds herdr from submodule
-├── Cargo.toml             # Workspace manifest
-└── justfile               # Task runner (if present)
+├── locales/zenix.yml      # I18n strings (rust-i18n)
+├── build.rs               # Makes the herdr binary available (copy installed, or build from submodule)
+├── Cargo.toml             # Package manifest (path deps into vendor/)
+└── .relay/                # Session relay: PLAN.md / state.json / journal/ (local, gitignored)
 ```
 
 ## WHERE TO LOOK
 | Task | Location | Notes |
 |------|----------|-------|
-| App lifecycle, state, events | src/app.rs | ZenixApp core |
+| App lifecycle, state, events | src/main.rs, src/shell/mod.rs | ShellView: title bar, sidebar, tab strip, status bar |
+| Commands & keymap | src/shell/commands.rs, src/shell/keymap.rs | One command directory; chords and palette read it |
+| UI contributions | src/shell/registry.rs, src/shell/panels.rs | Panels and status segments mount through the registry |
+| Terminal painting | src/terminal/view.rs, src/terminal/painter/ | One daemon surface painted natively |
+| Endpoint facade | src/herdr/connection.rs, src/herdr/state.rs | Commands out (in-flight tracked), snapshots in |
 | Plugin/sub-app SDK | src/lib.rs | Public API surface |
-| Herdr IPC & lifecycle | src/client/mod.rs | Unix socket, binary bootstrap |
-| Terminal rendering | src/terminal/element.rs | GPUI element + alacritty_terminal |
+| Herdr IPC & lifecycle | src/client/mod.rs | Endpoint socket via `herdr_client::ConnectTarget`, binary bootstrap |
+| Daemon smoke gate | src/bin/zenix-probe.rs | `cargo run --bin zenix-probe` — Welcome + Snapshot + Surface |
+| Endpoint protocol | vendor/herdr-protocol/src/wire.rs | Wire field/variant order is a bincode compatibility contract |
+| Endpoint client | vendor/herdr-client/src/ | connect/session/surface/input; copy-only |
 | Theme system | src/provider/builtin.rs, assets/themes/ | 4 built-in themes |
 | System monitoring | src/sys.rs | sysinfo crate, real-time stats |
 | Config schema | src/config/mod.rs | JSONC with comments |
-| I18n (CN/EN) | src/i18n.rs | rust-i18n macro |
+| I18n (CN/EN) | src/i18n.rs, locales/zenix.yml | rust-i18n macro |
 | Build/packaging | Cargo.toml, build.rs | deb packaging, herdr embedding |
+| Plan & handoff | .relay/PLAN.md §8, .relay/journal/HANDOFF-*.md | Read the relay protocol first (local, gitignored) |
 
 ## CONVENTIONS
 - **Rust 2024 edition**, GPL-3.0-or-later
+- **UI depends on `gpui-kit` only** — GPUI arrives via `use gpui_kit::*`; do not add git `gpui`/`gpui-component`/`gpui_platform` deps or `[patch]` entries
 - **GPUI patterns**: Entity/Context/Action model, `cx.spawn()` for async, `FocusHandle` for focus
+- **No state mutation in `render()`** except the one recorded call site: `Regions::views` in `src/terminal/view.rs` (gpui-kit 0.7.3 has no `compute_view`) — see `src/AGENTS.md`
+- **Shell surface mounts through the registry**: sidebar panels, status segments and the command list live in `src/shell/{registry,panels,commands}.rs`, not hardcoded in the shell
 - **No `unwrap()` in production** — use `anyhow::Context` or `thiserror`
 - **Platform-gated code** in `src/platform.rs` only; core uses `#[cfg(...)]` on imports/fns
 - **Config uses JSONC** (JSON with comments) via `toml` crate for parsing
+- **Endpoint is the state truth**: workspace/tab/pane/agent state comes from `ClientEvent::Snapshot` pushes — do not add polling
+- **No local PTY**: daemon panes are the only terminal source (the local PTY/alacritty path was removed by decision)
 - **Herdr binary**: auto-seeds to `~/.local/bin/herdr` on first run; herdr self-updates thereafter
-- **Terminal PATH isolation**: PTY sessions prepend `~/.local/bin` to PATH
 
 ## ANTI-PATTERNS (THIS PROJECT)
-- ❌ Direct `cargo run` without checking herdr binary — use `just` or ensure `HERDR_BUILD=1`
-- ❌ Editing vendored `vendor/gpui_wgpu_patched/` without updating patch index
-- ❌ Adding deps without checking `gpui`, `gpui-component`, `alacritty_terminal` first
-- ❌ Mutating state in GPUI `render()` — use `compute_view()` or actions
+- ❌ Direct `cargo run` without checking the herdr binary — dev copies the installed herdr, so install it or set `HERDR_BUILD=1`
+- ❌ Editing `vendor/herdr-{protocol,client}/**` — copy-only; re-sync the whole directory from herdr-gpui instead
+- ❌ Adding UI deps or API calls without checking real `gpui-kit` / `gpui-pre` signatures first (see the gpui-dev skill)
+- ❌ Mutating state in GPUI `render()` anywhere other than the recorded `Regions::views` call site
+- ❌ Hardcoding a shell panel, status segment or command outside the contribution registry (`src/shell/registry.rs`)
 - ❌ Hardcoding theme colors — use theme provider tokens
+- ❌ Assuming herdr builds from source without Zig 0.16.0 — see NOTES
 
 ## COMMANDS
 ```bash
 # Development
-cargo run                    # Uses system herdr (fast)
-HERDR_BUILD=1 cargo run      # Force build herdr from submodule
+cargo run                                 # Uses the installed herdr (fast)
+HERDR_BUILD=1 cargo run                   # Force building herdr from the submodule (needs ZIG)
+ZIG=/media/zero/data2/tools/zig-0.16.0/zig HERDR_BUILD=1 cargo build   # Explicit toolchain
 
 # Build
 cargo build --release        # Full release (compiles herdr from submodule)
 cargo deb                    # Build .deb package
 
 # Testing/Quality
-cargo check                  # Type check
-cargo fmt --check            # Format check
-cargo clippy                 # Lint
+cargo fmt --check                       # Format check
+cargo check --workspace --all-targets   # Type check
+cargo test --lib                        # Unit tests (248 passed at M4 first half)
+cargo run --bin zenix-probe             # Daemon endpoint smoke gate (every session since M2)
+cargo test -p herdr-protocol -p herdr-client   # Vendored crate tests
+cargo clippy                            # Lint
 ```
 
 ## NOTES
-- **Herdr submodule** at `herdr/` is pinned to v0.6.10 tag; update via `git submodule update --remote`
-- **GPUI from zed-industries/zed** git dep — breaks occasionally; pin rev in Cargo.lock if needed
-- **wgpu patch** in `vendor/gpui_wgpu_patched/` fixes subpixel rendering; tracked via `[patch]` in Cargo.toml
-- **I18n**: Chinese/English via `rust-i18n` macro; add keys in `src/i18n.rs` and `.po` files
-- **Desktop entry** at `res/zenix.desktop`, icon at `res/zenix.svg` → PNG at build
-- **License**: GPL-3.0-or-later (zenix), AGPL-3.0 (herdr), Apache-2.0 (gpui-component, alacritty_terminal)
+- **Herdr submodule** at `herdr/` targets the v0.9.3 tag (Apache-2.0 since v0.8.0); update via `git submodule update --remote`
+- **herdr from source needs Zig 0.16.0 exactly** (0.17 is rejected by `build.zig.zon` + `src/build/zig.zig`). Installed at `/media/zero/data2/tools/zig-0.16.0/` — pass it as `ZIG=...`. The zig build fetches its own deps from github/codeberg, so retry once on a network hiccup
+- **UI stack**: `gpui-kit = "0.7.3"` → `gpui-pre 0.3.9` / `gpui-component 0.7.3`; the old git `gpui` dep, the target `gpui_platform` blocks and `vendor/gpui_wgpu_patched` are gone
+- **gpui-kit `test-support`**: the crate's GPUI test entry (`#[gpui_kit::test]`) is a normal feature and lives in `[dev-dependencies]`. Enabling it makes Cargo resolve `gpui-fast-web` → `unicode-properties =0.1.3`, while `gpui-pre-web` pins `0.1.4`; the two cannot coexist, so `Cargo.lock` holds 0.1.3 via `cargo update -p unicode-properties --precise 0.1.3`. Re-apply that command if the lock is regenerated.
+- **Vendored crates**: `vendor/herdr-protocol` + `vendor/herdr-client` (plus `vendor/test-support/sandbox.rs`) are byte-identical to herdr-gpui upstream, with `NOTICE.md`/`LICENSE-APACHE` kept
+- **I18n**: Chinese/English via `rust-i18n` macro; keys live in `locales/zenix.yml`
+- **Desktop entry** at `res/zenix.desktop`, icon at `res/zenix.png`
+- **License**: GPL-3.0-or-later (zenix), Apache-2.0 (herdr, gpui-kit/gpui-component, vendored endpoint crates)

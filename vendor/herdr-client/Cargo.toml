@@ -1,0 +1,36 @@
+# Vendored verbatim from herdr-gpui crates/herdr-client (Apache-2.0; see NOTICE.md
+# and LICENSE-APACHE). Workspace-inherited fields are inlined here; src/ and tests/
+# are byte-identical to upstream.
+[package]
+name = "herdr-client"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+license = "Apache-2.0"
+description = "Vendored generation-1 endpoint client for the herdr daemon"
+publish = false
+
+[dependencies]
+crossbeam-channel = "0.5"
+herdr-protocol = { path = "../herdr-protocol" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tracing = "0.1"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "=1.1.5", features = ["event", "fs", "process"] }
+
+# The Windows daemon binds a named pipe, not an AF_UNIX socket; `interprocess`
+# maps a socket path into the NPFS namespace exactly as upstream Herdr does.
+[target.'cfg(windows)'.dependencies]
+interprocess = "2.4.2"
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Pipes"] }
+
+[lints.rust]
+unsafe_code = "deny"
+unused_qualifications = "deny"
+
+[lints.clippy]
+expect_used = "deny"
+unwrap_used = "deny"

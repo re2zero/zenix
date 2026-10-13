@@ -1,145 +1,46 @@
 #![windows_subsystem = "windows"]
 rust_i18n::i18n!("locales");
 
+use std::borrow::Cow;
 use std::sync::OnceLock;
+
+use gpui_kit::*;
 
 pub static TOKIO_HANDLE: OnceLock<tokio::runtime::Handle> = OnceLock::new();
 
 mod agent;
 mod ai;
 mod api_provider;
-mod app;
 mod client;
 mod config;
 mod config_adapters;
+mod herdr;
 mod i18n;
 mod mcp;
 mod platform;
 mod provider;
+mod shell;
 mod single_instance;
 mod skills;
 mod sys;
 mod terminal;
-mod ui;
+mod util;
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-use std::sync::{Arc, LazyLock};
+/// The terminal font family, registered from the bundled Lilex faces.
+const TERMINAL_FONT: &str = "Lilex";
 
-use gpui::{App, AppContext, Bounds, point, size};
-use gpui_component::{Root, Theme, ThemeRegistry};
-use gpui_component_assets::Assets;
-
-use crate::app::ZenixApp;
-
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-static APP_ICON: LazyLock<Option<Arc<image::RgbaImage>>> = LazyLock::new(|| {
-    const BYTES: &[u8] = include_bytes!("../res/zenix.png");
-    image::ImageReader::new(std::io::Cursor::new(BYTES))
-        .with_guessed_format()
-        .ok()
-        .and_then(|r| r.decode().ok())
-        .map(|img| Arc::new(img.into()))
-        .or_else(|| {
-            tracing::warn!("failed to load app icon");
-            None
-        })
-});
-
-const EMBEDDED_THEME_JSONS: &[&str] = &[
-    include_str!("../assets/themes/matrix.json"),
-    include_str!("../assets/themes/tokyonight.json"),
-    include_str!("../assets/themes/gruvbox.json"),
-    include_str!("../assets/themes/solarized.json"),
-];
-
-fn load_embedded_themes(cx: &mut App) {
-    let registry = ThemeRegistry::global_mut(cx);
-    for theme_json in EMBEDDED_THEME_JSONS {
-        if let Err(err) = registry.load_themes_from_str(theme_json) {
-            tracing::warn!("failed to load embedded theme: {err:#}");
-        }
+fn register_fonts(cx: &App) {
+    let fonts: Vec<Cow<'static, [u8]>> = vec![
+        Cow::Borrowed(include_bytes!("../assets/fonts/Lilex-Regular.ttf")),
+        Cow::Borrowed(include_bytes!("../assets/fonts/Lilex-Bold.ttf")),
+        Cow::Borrowed(include_bytes!("../assets/fonts/Lilex-Italic.ttf")),
+        Cow::Borrowed(include_bytes!("../assets/fonts/Lilex-BoldItalic.ttf")),
+    ];
+    if let Err(err) = cx.text_system().add_fonts(fonts) {
+        tracing::error!(%err, "failed to register the terminal font");
     }
 }
 
-const EMBEDDED_FONTS: &[&[u8]] = &[
-    include_bytes!("../assets/fonts/Lilex-Regular.ttf"),
-    include_bytes!("../assets/fonts/Lilex-Bold.ttf"),
-    include_bytes!("../assets/fonts/Lilex-Italic.ttf"),
-    include_bytes!("../assets/fonts/Lilex-BoldItalic.ttf"),
-];
-
-fn load_embedded_fonts(cx: &mut App) {
-    let text_system = cx.text_system();
-    let fonts: Vec<std::borrow::Cow<'static, [u8]>> = EMBEDDED_FONTS
-        .iter()
-        .map(|data| std::borrow::Cow::Borrowed(*data))
-        .collect();
-    if let Err(err) = text_system.add_fonts(fonts) {
-        tracing::warn!("failed to load embedded fonts: {err:#}");
-    }
-}
-
-fn open_main_window(
-    cx: &mut App,
-    single_instance_rx: std::sync::mpsc::Receiver<single_instance::Signal>,
-) {
-    let config = config::ConfigStore::load().unwrap_or_default();
-
-    // Apply saved locale, falling back to LANG env var
-    let saved_locale = config.locale();
-    let locale = if !saved_locale.is_empty() {
-        saved_locale.to_string()
-    } else {
-        std::env::var("LANG")
-            .unwrap_or_default()
-            .split('.')
-            .next()
-            .map(|s| s.replace("_", "-"))
-            .filter(|s| s == "zh-CN" || s == "en")
-            .unwrap_or_else(|| "en".to_string())
-    };
-    crate::i18n::set_locale(&locale);
-    let bounds = cx.displays().first().map(|display| {
-        let db = display.bounds();
-        let width = db.size.width * 0.8;
-        let height = db.size.height * 0.9;
-        let x = db.origin.x + (db.size.width - width) / 2.0;
-        let y = db.origin.y + (db.size.height - height) / 2.0;
-        Bounds::new(point(x, y), size(width, height))
-    });
-
-    let options = gpui::WindowOptions {
-        window_bounds: bounds.map(gpui::WindowBounds::Windowed),
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        icon: APP_ICON.as_ref().cloned(),
-        app_id: Some("zenix".into()),
-        ..gpui::WindowOptions::default()
-    };
-
-    let saved_theme = config.theme_name().to_string();
-
-    cx.open_window(options, |window, cx| {
-        window.activate_window();
-        window.set_window_title("zenix");
-        Theme::sync_system_appearance(Some(window), cx);
-
-        // Apply persisted theme AFTER system appearance sync
-        if !saved_theme.is_empty() {
-            let registry = ThemeRegistry::global(cx);
-            if let Some(tc) = registry.themes().get(saved_theme.as_str()).cloned() {
-                Theme::global_mut(cx).apply_config(&tc);
-            }
-        }
-        // Apply UI font from config — ".default" means use GPUI's default (.SystemUIFont)
-        if let Some(ff) = config.effective_ui_font() {
-            Theme::global_mut(cx).font_family = ff.into();
-        }
-
-        let view = cx.new(|cx| ZenixApp::new(window, cx, config, Some(single_instance_rx)));
-        cx.new(|cx| Root::new(view, window, cx))
-    })
-    .expect("failed to open window");
-}
 fn main() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -149,38 +50,58 @@ fn main() {
         .init();
 
     // Initialize tokio runtime for async HTTP (reqwest SSE streaming).
-    // This must be done before any async operations that need a tokio context.
+    // GPUI's async executor is not a tokio runtime, so code that needs tokio
+    // fetches this handle from `TOKIO_HANDLE` and spawns on it.
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("failed to build tokio runtime");
-    let _ = crate::TOKIO_HANDLE.set(rt.handle().clone());
+    let _ = TOKIO_HANDLE.set(rt.handle().clone());
     let _guard = rt.enter();
 
     // Ensure config dir exists for socket
     std::fs::create_dir_all(crate::platform::zenix_config_dir()).ok();
 
     // Acquire single-instance lock
-    let single_instance_rx = match single_instance::try_acquire() {
+    let _second_launch_rx = match single_instance::try_acquire() {
         Ok(rx) => rx,
         Err(e) => {
-            eprintln!("zenix: {}", e);
+            eprintln!("zenix: {e}");
             std::process::exit(1);
         }
     };
 
-    let app = gpui_platform::application()
-        .with_assets(Assets)
-        .with_quit_mode(gpui::QuitMode::LastWindowClosed);
-
-    app.run(move |cx| {
-        gpui_component::init(cx);
-        load_embedded_themes(cx);
-        load_embedded_fonts(cx);
-        app::init_actions(cx);
-
-        open_main_window(cx, single_instance_rx);
-    });
+    gpui_kit::application()
+        .with_assets(gpui_kit::assets::Assets)
+        .with_quit_mode(QuitMode::LastWindowClosed)
+        .run(|cx| {
+            gpui_kit::init(cx);
+            register_fonts(cx);
+            shell::keymap::bind_keys(cx);
+            gpui_kit::open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::centered(size(px(1100.), px(720.)), cx)),
+                    window_min_size: Some(size(px(640.), px(400.))),
+                    titlebar: Some(TitlebarOptions {
+                        title: Some("zenix".into()),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                },
+                cx,
+                |window, cx| {
+                    let view = cx.new(shell::ShellView::new);
+                    // The pane takes the keyboard as soon as the window opens, as
+                    // upstream focuses in its constructor; without this, keys reach
+                    // the pane only after the first click. The handle is cloned
+                    // first: `read`'s shared borrow conflicts with `&mut App`.
+                    let focus = view.read(cx).focus_handle(cx);
+                    window.focus(&focus, cx);
+                    view
+                },
+            )
+            .expect("failed to open window");
+        });
 
     // Release lock on exit
     single_instance::release();

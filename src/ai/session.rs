@@ -20,6 +20,26 @@ pub struct Session {
     pub thinking_level: String,
 }
 
+/// Status of a streaming tool call.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ToolCallStatus {
+    Running,
+    Completed,
+    Failed,
+}
+
+/// State for a single tool call during streaming.
+#[derive(Debug, Clone)]
+pub struct ToolCallState {
+    pub id: String,
+    pub name: String,
+    pub args: serde_json::Value,
+    pub status: ToolCallStatus,
+    pub result_summary: Option<String>,
+    pub started_at: u64,
+    pub completed_at: Option<u64>,
+}
+
 #[derive(Clone)]
 pub struct ChatMessage {
     pub id: i64,
@@ -34,6 +54,8 @@ pub struct ChatMessage {
     /// Elapsed time for reasoning in milliseconds, set on stream completion.
     /// Displayed in the collapsed reasoning block header as "Thought: Xms".
     pub reasoning_duration_ms: Option<u64>,
+    /// Tool calls made during this message (ephemeral, not persisted).
+    pub tool_calls: Vec<ToolCallState>,
     pub timestamp: String,
     pub sequence: i64,
 }
@@ -269,7 +291,9 @@ impl SessionManager {
     }
 
     pub fn create_session(&self, session: &Session) -> Result<()> {
-        self.conn.lock().unwrap()
+        self.conn
+            .lock()
+            .unwrap()
             .execute(
                 "INSERT INTO sessions
                     (id, title, created_at, updated_at, workspace,
@@ -291,7 +315,9 @@ impl SessionManager {
     }
 
     pub fn update_session(&self, session: &Session) -> Result<()> {
-        self.conn.lock().unwrap()
+        self.conn
+            .lock()
+            .unwrap()
             .execute(
                 "UPDATE sessions SET
                     title = ?2,
@@ -317,14 +343,18 @@ impl SessionManager {
 
     /// Associated messages are removed via `ON DELETE CASCADE`.
     pub fn delete_session(&self, id: &str) -> Result<()> {
-        self.conn.lock().unwrap()
+        self.conn
+            .lock()
+            .unwrap()
             .execute("DELETE FROM sessions WHERE id = ?1", params![id])
             .context("delete session")?;
         Ok(())
     }
 
     pub fn add_message(&self, msg: &ChatMessage) -> Result<()> {
-        self.conn.lock().unwrap()
+        self.conn
+            .lock()
+            .unwrap()
             .execute(
                 "INSERT INTO messages
                     (session_id, role, content, agent_activities, timestamp, sequence)
@@ -425,7 +455,9 @@ impl SessionManager {
 
     /// Write a key/value pair to the memories table (UPSERT).
     pub fn write_memory(&self, key: &str, value: &str, session_id: &str) -> Result<()> {
-        self.conn.lock().unwrap()
+        self.conn
+            .lock()
+            .unwrap()
             .execute(
                 "INSERT INTO memories (key, value, session_id, updated_at)
                  VALUES (?1, ?2, ?3, datetime('now'))
@@ -483,7 +515,9 @@ impl SessionManager {
 
     /// Delete a memory entry.
     pub fn delete_memory(&self, key: &str) -> Result<()> {
-        self.conn.lock().unwrap()
+        self.conn
+            .lock()
+            .unwrap()
             .execute("DELETE FROM memories WHERE key = ?1", params![key])
             .context("delete memory")?;
         Ok(())
@@ -513,6 +547,7 @@ fn map_message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatMessage> {
         agent_activities: row.get(4)?,
         reasoning_text: None,
         reasoning_duration_ms: None,
+        tool_calls: Vec::new(),
         timestamp: row.get(5)?,
         sequence: row.get(6)?,
     })
@@ -529,6 +564,7 @@ fn map_search_hit_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SearchHit> {
             agent_activities: row.get(4)?,
             reasoning_text: None,
             reasoning_duration_ms: None,
+            tool_calls: Vec::new(),
             timestamp: row.get(5)?,
             sequence: row.get(6)?,
         },
@@ -587,6 +623,7 @@ mod tests {
             agent_activities: None,
             reasoning_text: None,
             reasoning_duration_ms: None,
+            tool_calls: Vec::new(),
             timestamp: "2024-01-01T00:00:00".to_string(),
             sequence: seq,
         }

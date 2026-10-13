@@ -1,0 +1,26 @@
+# Vendored from https://github.com/herdrdev/herdr via herdr-gpui crates/herdr-protocol.
+# Workspace-inherited fields are inlined here; contents of src/ and tests/ are
+# byte-identical to upstream (see NOTICE.md and LICENSE-APACHE).
+[package]
+name = "herdr-protocol"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+license = "Apache-2.0"
+description = "Vendored generation-1 endpoint wire model for the herdr daemon"
+publish = false
+
+[dependencies]
+base64 = "0.23.1"
+bincode = { version = "2", default-features = false, features = ["serde", "std"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+
+[lints.rust]
+unsafe_code = "deny"
+unused_qualifications = "deny"
+
+[lints.clippy]
+expect_used = "deny"
+unwrap_used = "deny"

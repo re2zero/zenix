@@ -125,38 +125,59 @@ mod tests {
     fn test_get_template_orchestrator_has_content() {
         let t = get_template("orchestrator");
         assert!(!t.is_empty(), "orchestrator template should not be empty");
-        assert!(t.contains("{lang_instruction}"), "template should contain lang placeholder");
+        assert!(
+            t.contains("{lang_instruction}"),
+            "template should contain lang placeholder"
+        );
     }
 
     #[test]
     fn test_get_template_unknown_falls_back() {
         let t = get_template("nonexistent");
-        assert!(!t.is_empty(), "unknown template should fall back to orchestrator");
+        assert!(
+            !t.is_empty(),
+            "unknown template should fall back to orchestrator"
+        );
     }
 
     #[test]
     fn test_embedded_contains_tools() {
         assert!(EMBEDDED_ORCHESTRATOR.contains("spawn_worker"));
         assert!(EMBEDDED_ORCHESTRATOR.contains("send_text"));
-        let tools = ["spawn_worker", "send_text", "read_output", "wait_for_output",
-                     "list_workers", "close_worker"];
+        let tools = [
+            "spawn_worker",
+            "send_text",
+            "read_output",
+            "wait_for_output",
+            "list_workers",
+            "close_worker",
+        ];
         for tool in &tools {
-            assert!(EMBEDDED_ORCHESTRATOR.contains(tool), "embedded missing tool: {tool}");
+            assert!(
+                EMBEDDED_ORCHESTRATOR.contains(tool),
+                "embedded missing tool: {tool}"
+            );
         }
     }
 
     #[test]
     fn test_embedded_has_comment_header() {
-        assert!(EMBEDDED_ORCHESTRATOR.starts_with("#"),
-            "embedded orchestrator.md should start with comment header");
-        assert!(EMBEDDED_ORCHESTRATOR.contains("编辑此文件"),
-            "embedded orchestrator.md should mention editability");
+        assert!(
+            EMBEDDED_ORCHESTRATOR.starts_with("#"),
+            "embedded orchestrator.md should start with comment header"
+        );
+        assert!(
+            EMBEDDED_ORCHESTRATOR.contains("编辑此文件"),
+            "embedded orchestrator.md should mention editability"
+        );
     }
 
     #[test]
     fn test_embedded_has_lang_placeholder() {
-        assert!(EMBEDDED_ORCHESTRATOR.contains("{lang_instruction}"),
-            "embedded should contain lang placeholder");
+        assert!(
+            EMBEDDED_ORCHESTRATOR.contains("{lang_instruction}"),
+            "embedded should contain lang placeholder"
+        );
     }
 
     #[test]
@@ -178,7 +199,10 @@ mod tests {
         let result2 = seed_one(&tmp, "test-prompt", "overwritten content");
         assert!(result2.is_ok());
         let content2 = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(content2, "test content", "seed_one should not overwrite existing files");
+        assert_eq!(
+            content2, "test content",
+            "seed_one should not overwrite existing files"
+        );
 
         let _ = std::fs::remove_dir_all(&tmp);
     }
@@ -195,7 +219,10 @@ mod tests {
         // but we can manually insert)
         {
             let mut c = cache().lock().unwrap();
-            c.insert("custom".to_string(), "custom prompt {lang_instruction}".to_string());
+            c.insert(
+                "custom".to_string(),
+                "custom prompt {lang_instruction}".to_string(),
+            );
         }
 
         let t = get_template("custom");

@@ -187,8 +187,10 @@ impl Tool for SpawnWorker {
 
         // Pre-check herdr connection before attempting tool execution
         if let Err(e) = client.connect() {
-            return ToolResult::error("spawn_worker",
-                format!("无法连接到 herdr daemon: {e}。请确认 herdr 正在运行。"));
+            return ToolResult::error(
+                "spawn_worker",
+                format!("无法连接到 herdr daemon: {e}。请确认 herdr 正在运行。"),
+            );
         }
 
         // Resolve the agent binary full path before passing to herdr.

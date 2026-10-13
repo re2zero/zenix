@@ -45,7 +45,7 @@ res/
 assets/
   fonts/                   Lilex font family / 字体
   themes/                  Theme JSON files / 主题文件
-herdr/                     Git submodule (ogulcancelik/herdr, v0.6.10) / 子模块
+herdr/                     Git submodule (ogulcancelik/herdr, v0.9.3) / 子模块
 build.rs                   Compiles/embeds herdr from submodule / 构建脚本
 ```
 
@@ -53,10 +53,10 @@ build.rs                   Compiles/embeds herdr from submodule / 构建脚本
 
 | Dependency | License | Relationship / 关系 |
 |-----------|---------|-------------|
-| [gpui](https://github.com/zed-industries/zed) | GPL-3.0 | Statically linked UI framework / 静态链接 |
+| [gpui-kit](https://github.com/longbridge/gpui-kit) | Apache-2.0 | Statically linked UI framework / 静态链接 |
 | [gpui-component](https://github.com/longbridge/gpui-component) | Apache-2.0 | Widget components (statically linked) / 静态链接 |
-| [herdr](https://github.com/ogulcancelik/herdr) | AGPL-3.0 | Bundled binary, socket IPC (mere aggregation) / 独立二进制 |
-| [alacritty_terminal](https://github.com/zed-industries/alacritty) | Apache-2.0 | Terminal emulation backend / 终端后端 |
+| [herdr](https://github.com/ogulcancelik/herdr) | Apache-2.0 | Bundled binary, socket IPC (mere aggregation) / 独立二进制 |
+| [herdr-protocol / herdr-client](vendor/) | Apache-2.0 | Vendored endpoint protocol and client (statically linked) / 端点协议与客户端 |
 
 zenix itself is licensed under **GPL-3.0-or-later** (see [LICENSE](LICENSE)).
 

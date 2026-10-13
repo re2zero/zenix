@@ -120,7 +120,11 @@ pub enum StreamEvent {
     /// The stream has finished.
     Done,
     /// The LLM returned a tool call (id, tool_name, arguments JSON).
-    ToolCall { id: String, name: String, args: serde_json::Value },
+    ToolCall {
+        id: String,
+        name: String,
+        args: serde_json::Value,
+    },
     /// A tool was executed (tool_name, result content, is_error).
     ToolResult(String, String, bool),
 }
@@ -227,9 +231,18 @@ pub enum DispatchStreamEvent {
     /// An agent has completed.
     AgentComplete(AgentResult),
     /// A tool was called by the LLM (id, tool_name, arguments JSON).
-    ToolCall { id: String, name: String, args: serde_json::Value },
-    /// A tool was executed (tool_name, result content, is_error).
-    ToolResult(String, String, bool),
+    ToolCall {
+        id: String,
+        name: String,
+        args: serde_json::Value,
+    },
+    /// A tool was executed, with tool_call_id for result matching.
+    ToolResult {
+        id: String,
+        tool_name: String,
+        content: String,
+        is_error: bool,
+    },
     /// The conversation was compacted to fit within the context window.
     Compacted(CompactionInfo),
     /// An error occurred.
@@ -516,9 +529,9 @@ pub(crate) fn accumulate_sse_tool_calls(
 ) {
     if let Some(tool_calls) = &delta.tool_calls {
         for tc in tool_calls {
-            let entry = accumulator.entry(tc.index).or_insert_with(|| {
-                (tc.id.clone(), tc.function.name.clone(), String::new())
-            });
+            let entry = accumulator
+                .entry(tc.index)
+                .or_insert_with(|| (tc.id.clone(), tc.function.name.clone(), String::new()));
             if !tc.id.is_empty() {
                 entry.0 = tc.id.clone();
             }
@@ -561,8 +574,12 @@ pub(crate) fn finalize_accumulated_calls(
 
 // ── Tool Call Loop Engine ─────────────────────────────────────────────
 
-/// Maximum tool call rounds before giving up.
-const MAX_TOOL_ROUNDS: u32 = 10;
+/// Maximum tool call rounds (safety net — loop detection should fire first).
+pub const MAX_TOOL_ROUNDS: u32 = 1000;
+
+/// How many consecutive rounds of the exact same tool+args before
+/// we declare the LLM is stuck and break the loop.
+const MAX_CONSECUTIVE_IDENTICAL: u32 = 3;
 
 /// Build the request payload for a tool-calling LLM request.
 ///
@@ -751,6 +768,10 @@ impl OrchestratorEngine {
         let max_rounds = max_tool_rounds.min(MAX_TOOL_ROUNDS);
         let mut loop_messages: Vec<ChatMessageRef> = messages.to_vec();
         let mut tool_round = 0;
+        // Tracks previous round's tool signatures for loop detection.
+        // Each entry: (tool_name, canonical_args_string).
+        let mut prev_tool_sigs: Vec<(String, String)> = Vec::new();
+        let mut consecutive_identical: u32 = 0;
 
         let on_event: Arc<dyn Fn(DispatchStreamEvent) + Send + Sync + 'static> = Arc::new(on_event);
 
@@ -826,26 +847,27 @@ impl OrchestratorEngine {
                         return Err(AiError::ApiError(format!("HTTP {status}: {text}")));
                     }
 
-                    let tool_calls = parse_tool_call_sse_stream(resp, current_round, move |event| match event {
-                        StreamEvent::Token(text) => {
-                            collected_clone.lock().unwrap().push_str(&text);
-                            on_event_clone(DispatchStreamEvent::Token(text));
-                        }
-                        StreamEvent::Thinking { round, text } => {
-                            on_event_clone(DispatchStreamEvent::Thinking { round, text });
-                        }
-                        StreamEvent::ToolCall { id, name, args } => {
-                            on_event_clone(DispatchStreamEvent::ToolCall { id, name, args });
-                        }
-                        StreamEvent::Error(err) => {
-                            on_event_clone(DispatchStreamEvent::Error(err));
-                        }
-                        StreamEvent::Done => {
-                            on_event_clone(DispatchStreamEvent::Done);
-                        }
-                        StreamEvent::ToolResult(_, _, _) => {}
-                    })
-                    .await;
+                    let tool_calls =
+                        parse_tool_call_sse_stream(resp, current_round, move |event| match event {
+                            StreamEvent::Token(text) => {
+                                collected_clone.lock().unwrap().push_str(&text);
+                                on_event_clone(DispatchStreamEvent::Token(text));
+                            }
+                            StreamEvent::Thinking { round, text } => {
+                                on_event_clone(DispatchStreamEvent::Thinking { round, text });
+                            }
+                            StreamEvent::ToolCall { id, name, args } => {
+                                on_event_clone(DispatchStreamEvent::ToolCall { id, name, args });
+                            }
+                            StreamEvent::Error(err) => {
+                                on_event_clone(DispatchStreamEvent::Error(err));
+                            }
+                            StreamEvent::Done => {
+                                on_event_clone(DispatchStreamEvent::Done);
+                            }
+                            StreamEvent::ToolResult(_, _, _) => {}
+                        })
+                        .await;
 
                     Ok(tool_calls)
                 })
@@ -876,26 +898,30 @@ impl OrchestratorEngine {
             let results: Vec<ToolResult> =
                 tool_calls.iter().map(|tc| executor.execute(tc)).collect();
 
-            for result in &results {
-                on_event(DispatchStreamEvent::ToolResult(
-                    result.tool_name.clone(),
-                    result.content.clone(),
-                    result.is_error,
-                ));
+            for (tc, result) in tool_calls.iter().zip(results.iter()) {
+                on_event(DispatchStreamEvent::ToolResult {
+                    id: tc.id.clone(),
+                    tool_name: result.tool_name.clone(),
+                    content: result.content.clone(),
+                    is_error: result.is_error,
+                });
             }
 
             // Add assistant message with tool_calls before tool results
             // (required by OpenAI API message format)
-            let api_tool_calls: Vec<serde_json::Value> = tool_calls.iter().map(|tc| {
-                serde_json::json!({
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.name,
-                        "arguments": serde_json::to_string(&tc.arguments).unwrap_or_default()
-                    }
+            let api_tool_calls: Vec<serde_json::Value> = tool_calls
+                .iter()
+                .map(|tc| {
+                    serde_json::json!({
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": serde_json::to_string(&tc.arguments).unwrap_or_default()
+                        }
+                    })
                 })
-            }).collect();
+                .collect();
             loop_messages.push(ChatMessageRef {
                 role: "assistant".into(),
                 content: response_text,
@@ -918,7 +944,9 @@ impl OrchestratorEngine {
                 });
             }
 
-            on_event(DispatchStreamEvent::RoundStart { round: tool_round + 1 });
+            on_event(DispatchStreamEvent::RoundStart {
+                round: tool_round + 1,
+            });
 
             tool_round += 1;
             if tool_round >= max_rounds {
@@ -926,6 +954,37 @@ impl OrchestratorEngine {
                     "工具调用循环超过最大迭代次数 ({max_rounds})"
                 )));
             }
+
+            // ── Loop detection ─────────────────────────────────────────
+            // If every tool in this round has the exact same name + args
+            // as the previous round, the LLM is stuck in a polling loop.
+            let current_sigs: Vec<(String, String)> = tool_calls
+                .iter()
+                .map(|tc| {
+                    (
+                        tc.name.clone(),
+                        serde_json::to_string(&tc.arguments).unwrap_or_default(),
+                    )
+                })
+                .collect();
+            if current_sigs == prev_tool_sigs && !current_sigs.is_empty() {
+                consecutive_identical += 1;
+                tracing::warn!(
+                    target: "zenixai",
+                    round = tool_round,
+                    consecutive = consecutive_identical,
+                    tools = ?current_sigs.iter().map(|(n, _)| n).collect::<Vec<_>>(),
+                    "tool call loop detection: same tools + args repeated"
+                );
+                if consecutive_identical >= MAX_CONSECUTIVE_IDENTICAL {
+                    return Err(AiError::Timeout(format!(
+                        "工具调用循环检测: 同一工具同一参数连续出现 {consecutive_identical} 次，判断为卡死"
+                    )));
+                }
+            } else {
+                consecutive_identical = 0;
+            }
+            prev_tool_sigs = current_sigs;
         }
     }
 }
@@ -958,6 +1017,8 @@ impl OrchestratorEngine {
 
         let mut loop_messages = effective_messages;
         let mut tool_round = 0;
+        let mut prev_tool_sigs: Vec<(String, String)> = Vec::new();
+        let mut consecutive_identical: u32 = 0;
 
         loop {
             let payload = build_tool_call_payload(&loop_messages, tools, &self.current_model());
@@ -1044,16 +1105,19 @@ impl OrchestratorEngine {
                 tool_calls.iter().map(|tc| executor.execute(tc)).collect();
 
             // Add assistant message with tool_calls before tool results
-            let api_tool_calls: Vec<serde_json::Value> = tool_calls.iter().map(|tc| {
-                serde_json::json!({
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.name,
-                        "arguments": serde_json::to_string(&tc.arguments).unwrap_or_default()
-                    }
+            let api_tool_calls: Vec<serde_json::Value> = tool_calls
+                .iter()
+                .map(|tc| {
+                    serde_json::json!({
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": serde_json::to_string(&tc.arguments).unwrap_or_default()
+                        }
+                    })
                 })
-            }).collect();
+                .collect();
             loop_messages.push(ChatMessageRef {
                 role: "assistant".into(),
                 content: String::new(),
@@ -1081,6 +1145,28 @@ impl OrchestratorEngine {
                     "工具调用循环超过最大迭代次数 ({MAX_TOOL_ROUNDS})"
                 )));
             }
+
+            // Loop detection (same as chat_with_tools)
+            let current_sigs: Vec<(String, String)> = tool_calls
+                .iter()
+                .map(|tc| {
+                    (
+                        tc.name.clone(),
+                        serde_json::to_string(&tc.arguments).unwrap_or_default(),
+                    )
+                })
+                .collect();
+            if current_sigs == prev_tool_sigs && !current_sigs.is_empty() {
+                consecutive_identical += 1;
+                if consecutive_identical >= MAX_CONSECUTIVE_IDENTICAL {
+                    return Err(AiError::Timeout(format!(
+                        "工具调用循环检测: 同一工具同一参数连续出现 {consecutive_identical} 次，判断为卡死"
+                    )));
+                }
+            } else {
+                consecutive_identical = 0;
+            }
+            prev_tool_sigs = current_sigs;
         }
     }
 }

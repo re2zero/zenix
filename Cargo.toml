@@ -7,14 +7,14 @@ description = "A cross-platform GPUI frontend for herdr terminal workspace manag
 license = "GPL-3.0-or-later"
 
 [dependencies]
-gpui = { git = "https://github.com/zed-industries/zed" }
-gpui-component = { git = "https://github.com/longbridge/gpui-component" }
-gpui-component-assets = { git = "https://github.com/longbridge/gpui-component" }
-alacritty_terminal = { git = "https://github.com/zed-industries/alacritty", rev = "fcf32feacb367b75ec84dd40f041e4fd411d3cc1" }
-portable-pty = "0.8"
+# Vendored daemon-facing crates (not published; see vendor/*/NOTICE.md).
+herdr-client = { path = "vendor/herdr-client" }
+herdr-protocol = { path = "vendor/herdr-protocol" }
+gpui-kit = "0.7.3"
 ureq = { version = "2", features = ["json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+crossbeam-channel = "0.5"
 anyhow = "1"
 thiserror = "1"
 tracing = "0.1"
@@ -26,6 +26,7 @@ rust-i18n = "4"
 rust-i18n-macro = "4"
 toml = "0.8"
 image = "0.25"
+unicode-width = "0.2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 reqwest = { version = "0.12", features = ["json", "stream"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "io-util", "process"] }
@@ -33,11 +34,10 @@ futures = "0.3"
 open = "5"
 rmcp = { version = "2.2", default-features = true, features = ["transport-io"] }
 
-[target.'cfg(target_os = "linux")'.dependencies]
-gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit", "runtime_shaders", "x11", "wayland"] }
-
-[target.'cfg(not(target_os = "linux"))'.dependencies]
-gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["font-kit"] }
+[dev-dependencies]
+# Tests need GPUI's test support (headless windows, painted-frame inspection).
+# Resolver 2 keeps this off the production dependency graph.
+gpui-kit = { version = "0.7.3", features = ["test-support"] }
 
 [target.'cfg(windows)'.dependencies]
 interprocess = "2"
@@ -73,6 +73,3 @@ architecture, plus system monitoring and plugin support.
 .
 This package contains the GPUI frontend that embeds the herdr
 terminal client and auto-connects on first launch."""
-
-[patch."https://github.com/zed-industries/zed"]
-gpui_wgpu = { path = "vendor/gpui_wgpu_patched" }

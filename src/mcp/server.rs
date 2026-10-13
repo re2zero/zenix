@@ -38,7 +38,8 @@ impl McpOrchestrationServer {
         // Stdio server
         let (stdin, stdout) = rmcp::transport::io::stdio();
         let transport = (stdin, stdout).into_transport();
-        let running = serve_server(handler.clone(), transport).await
+        let running = serve_server(handler.clone(), transport)
+            .await
             .map_err(|e| anyhow::anyhow!("MCP stdio server failed: {e}"))?;
 
         // SSE server (optional)
@@ -65,20 +66,34 @@ impl McpOrchestrationServer {
 
         let shutdown_tx = ShutdownTx {
             stdio: stdio_shutdown_tx,
-            sse: if enable_sse { Some(sse_shutdown_tx) } else { None },
+            sse: if enable_sse {
+                Some(sse_shutdown_tx)
+            } else {
+                None
+            },
         };
 
-        tracing::info!("MCP orchestration server started (stdio{})",
-            if enable_sse { " + sse" } else { "" });
-        Ok(Self { shutdown_tx: Some(shutdown_tx), join_handle: Some(join_handle), socket_path })
+        tracing::info!(
+            "MCP orchestration server started (stdio{})",
+            if enable_sse { " + sse" } else { "" }
+        );
+        Ok(Self {
+            shutdown_tx: Some(shutdown_tx),
+            join_handle: Some(join_handle),
+            socket_path,
+        })
     }
 
     pub async fn shutdown(mut self) {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.stdio.send(());
-            if let Some(sse_tx) = tx.sse { let _ = sse_tx.send(()); }
+            if let Some(sse_tx) = tx.sse {
+                let _ = sse_tx.send(());
+            }
         }
-        if let Some(handle) = self.join_handle.take() { let _ = handle.await; }
+        if let Some(handle) = self.join_handle.take() {
+            let _ = handle.await;
+        }
         tracing::info!("MCP orchestration server stopped");
     }
 }
@@ -87,7 +102,9 @@ impl Drop for McpOrchestrationServer {
     fn drop(&mut self) {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.stdio.send(());
-            if let Some(sse_tx) = tx.sse { let _ = sse_tx.send(()); }
+            if let Some(sse_tx) = tx.sse {
+                let _ = sse_tx.send(());
+            }
         }
     }
 }

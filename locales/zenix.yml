@@ -135,7 +135,6 @@ settings:
     blink_off:
       en: "off"
       zh-CN: "关"
-  agent_cli:
   ai:
     chat:
       placeholder:
@@ -260,38 +259,6 @@ settings:
         zh-CN: "URL"
     en: "No API provider bound"
     zh-CN: "未绑定 API 提供商"
-  mcp:
-    title:
-      en: "MCP Servers"
-      zh-CN: "MCP 服务器"
-    no_zenix_servers:
-      en: "No zenix-managed servers"
-      zh-CN: "没有 Zenix 管理的服务器"
-    search:
-      en: "Search servers..."
-      zh-CN: "搜索服务器..."
-    form:
-      name:
-        en: "Name"
-        zh-CN: "名称"
-      type:
-        en: "Type"
-        zh-CN: "类型"
-      command:
-        en: "Command"
-        zh-CN: "命令"
-      args:
-        en: "Args"
-        zh-CN: "参数"
-      env:
-        en: "Env"
-        zh-CN: "环境变量"
-      title_add:
-        en: "Add MCP Server"
-        zh-CN: "添加 MCP 服务器"
-      title_edit:
-        en: "Edit MCP Server"
-        zh-CN: "编辑 MCP 服务器"
   api:
     title:
       en: "API Providers"

@@ -56,9 +56,21 @@ pub fn find_herdr_binary() -> Option<PathBuf> {
     ensure_herdr()
 }
 
-/// Compute the herdr client socket path.
+/// Path of the daemon's endpoint socket — the `herdr-client.sock` that speaks
+/// the generation-1 endpoint protocol, never the JSON API `herdr.sock`.
+///
+/// Resolution is delegated to the vendored endpoint client, so it follows the
+/// daemon's own rules: `HERDR_SOCKET_PATH` / `HERDR_CLIENT_SOCKET_PATH`
+/// overrides, then `HERDR_SESSION` (else the default session) under the config
+/// root. An unusable override degrades to the default config root.
 pub fn herdr_socket_path() -> PathBuf {
-    platform::config_dir().join("herdr/herdr.sock")
+    match herdr_client::ConnectTarget::Local.socket_path() {
+        Ok(path) => path,
+        Err(err) => {
+            tracing::warn!(%err, "ignoring herdr socket override");
+            platform::config_dir().join("herdr/herdr-client.sock")
+        }
+    }
 }
 
 /// Start the herdr server in the background.

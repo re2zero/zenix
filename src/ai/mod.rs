@@ -1,10 +1,8 @@
-pub mod chat;
 pub mod compactor;
 pub mod engine;
 pub mod error;
 pub mod file_ops;
 pub mod herdr;
-pub mod markdown;
 pub mod prompts;
 pub mod roles;
 pub mod session;
