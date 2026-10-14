@@ -1,15 +1,22 @@
-//! Daemon endpoint smoke gate: connect to the local herdr daemon and print the
-//! Welcome, Snapshot and Surface it sends.
+//! Daemon smoke gate: connect to the local herdr daemon and print the Welcome,
+//! Snapshot and Surface it sends, then prove the orchestration lane answers.
 //!
 //! Usage: `cargo run --bin zenix-probe` (honours `HERDR_SESSION`,
 //! `HERDR_SOCKET_PATH` and `HERDR_CLIENT_SOCKET_PATH` like the daemon does).
-//! Exit code is 0 only when all three messages arrived before the deadline.
+//! Exit code is 0 only when all three endpoint messages arrived before the
+//! deadline and the daemon's JSON API socket answered `agent.list`.
+//!
+//! Both lanes are checked because they are not interchangeable: the endpoint
+//! lane carries rendering and input but refuses `agent.*` / `pane.read` with
+//! `unsupported_method`, and the orchestration tools are defined on the API
+//! lane. See `.relay/notes/herdr-agent-api-lane.md`.
 
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
 use herdr_client::protocol::PaneSurfaceFrame;
 use herdr_client::{ClientEvent, ConnectOptions, ConnectTarget, connect};
+use zenix::ai::endpoint::ApiEndpoint;
 
 /// Budget for the full handshake plus the first pushed surface.
 const DEADLINE: Duration = Duration::from_secs(15);
@@ -123,11 +130,33 @@ fn main() -> ExitCode {
 
     client.handle.disconnect();
 
+    // The orchestration lane: `agent.list` is served only here, and the tools
+    // the MCP server exposes are defined on it.
+    let api = ApiEndpoint::local();
+    let api_lane = match api.list_agents() {
+        Ok(agents) => {
+            println!(
+                "api: socket={} agent.list={} agents",
+                api.socket_path().display(),
+                agents.len()
+            );
+            true
+        }
+        Err(error) => {
+            eprintln!(
+                "api: {} did not answer: {error}",
+                api.socket_path().display()
+            );
+            false
+        }
+    };
+
     println!(
-        "result: welcome={welcome} snapshot={snapshot} surface={surface} elapsed={:?}",
+        "result: welcome={welcome} snapshot={snapshot} surface={surface} api={api_lane} \
+         elapsed={:?}",
         started.elapsed()
     );
-    if welcome && snapshot && surface && !mismatch {
+    if welcome && snapshot && surface && api_lane && !mismatch {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE

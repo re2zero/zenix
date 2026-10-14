@@ -31,8 +31,8 @@ use futures::StreamExt as _;
 use serde::{Deserialize, Serialize};
 
 use crate::ai::compactor::Compactor;
+use crate::ai::endpoint::{ApiEndpoint, ReadSource, SplitDirection};
 use crate::ai::error::{AiError, user_friendly};
-use crate::ai::herdr::{HerdrIpcClient, ReadSource};
 use crate::ai::tools::{Tool, ToolCall, ToolExecutor, ToolResult};
 use crate::api_provider::ApiProviderConfig;
 
@@ -138,6 +138,10 @@ pub const DEFAULT_AGENT_TIMEOUT_MS: u64 = 300_000;
 /// Pattern substring to match for agent completion.
 #[allow(dead_code)]
 pub const AGENT_DONE_PATTERN: &str = "[AGENT_DONE]";
+
+/// How long the daemon gets to launch an interactive agent CLI in a pane. The
+/// daemon accepts 3000..=300000 ms.
+const AGENT_START_TIMEOUT_MS: u64 = 30_000;
 
 /// An agent task dispatched by the orchestrator.
 #[derive(Debug, Clone)]
@@ -1173,16 +1177,16 @@ impl OrchestratorEngine {
 
 // ── Agent Execution Helpers ─────────────────────────────────────────────
 
-/// Execute a single agent task via herdr IPC.
+/// Execute a single agent task through the daemon's API lane.
 ///
-/// The herdr IPC methods are synchronous (Unix socket, JSON-line protocol).
-/// This function runs them directly. Callers in an async context should
-/// wrap with `tokio::task::spawn_blocking` if needed.
+/// The API lane is synchronous — one JSON line per request over a Unix socket —
+/// so this runs the calls directly. Callers in an async context should wrap
+/// with `tokio::task::spawn_blocking` if needed.
 ///
 /// Returns the agent result with collected output.
 #[allow(dead_code)]
 pub fn execute_agent_task(
-    herdr_client: &mut HerdrIpcClient,
+    endpoint: &ApiEndpoint,
     task: &AgentTask,
     workspace_id: &str,
     timeout_ms: u64,
@@ -1199,60 +1203,99 @@ pub fn execute_agent_task(
         cwd,
     );
 
-    // Start the agent CLI
-    let agent_info = match herdr_client.start_agent(
-        &agent_name,
-        Some(workspace_id),
-        if cwd.is_empty() { None } else { Some(&cwd) },
-        vec![],
-    ) {
-        Ok(info) => info,
-        Err(e) => {
-            tracing::error!("failed to start agent '{agent_name}': {e}");
-            let msg = e.to_string();
-            let error_kind = if msg.contains("not found")
-                || msg.contains("no such file")
-                || msg.contains("executable")
-            {
-                AiError::AgentCliNotFound(msg.clone())
-            } else if msg.contains("connection refused") || msg.contains("connect") {
-                AiError::AgentCliNotFound(format!("herdr not running: {msg}"))
-            } else {
-                e.clone()
+    // The API lane starts an agent inside an existing pane, so the pane is
+    // opened first; an empty workspace or cwd lets the daemon use its own.
+    let workspace = (!workspace_id.is_empty()).then_some(workspace_id);
+    let cwd = (!cwd.is_empty()).then_some(cwd.as_str());
+    let pane = match endpoint.split_pane(workspace, cwd, SplitDirection::Down) {
+        Ok(pane) => pane,
+        Err(error) => {
+            let error_kind = AiError::IpcError(error.to_string());
+            on_event(DispatchStreamEvent::Error(format!(
+                "Failed to open a pane for agent '{agent_name}': {}",
+                user_friendly(&error_kind)
+            )));
+            return AgentResult {
+                agent_name,
+                pane_id: String::new(),
+                exit_status: "failed".into(),
+                output: format!("Pane split failed: {error}"),
+                summary: Some(error_kind.to_string()),
             };
+        }
+    };
+
+    // The daemon names the agent itself and starts the CLI in the pane.
+    let name = crate::ai::tools::agent_name(Some(&agent_name), &agent_name);
+    let started = match endpoint.start_agent(
+        &name,
+        &agent_name,
+        &pane.pane_id,
+        Vec::new(),
+        AGENT_START_TIMEOUT_MS,
+    ) {
+        Ok(started) => started,
+        Err(error) => {
+            let _ = endpoint.close_pane(&pane.pane_id);
+            let message = error.to_string();
+            let error_kind = if matches!(error.code(), Some("unsupported_agent_kind")) {
+                AiError::AgentCliNotFound(message.clone())
+            } else if message.contains("connect") || message.contains("No such file") {
+                AiError::AgentCliNotFound(format!("herdr not running: {message}"))
+            } else {
+                AiError::IpcError(message)
+            };
+            tracing::error!("failed to start agent '{agent_name}': {error}");
             on_event(DispatchStreamEvent::Error(format!(
                 "Failed to start agent '{agent_name}': {}",
                 user_friendly(&error_kind)
             )));
             return AgentResult {
-                agent_name: agent_name.clone(),
-                pane_id: String::new(),
+                agent_name,
+                pane_id: pane.pane_id.clone(),
                 exit_status: "failed".into(),
-                output: format!("Agent start failed: {e}"),
-                summary: Some(format!("{error_kind}: {e}")),
+                output: format!("Agent start failed: {error}"),
+                summary: Some(format!("{error_kind}: {error}")),
             };
         }
     };
 
-    let pane_id = agent_info.pane_id.clone();
-    let terminal_id = agent_info.terminal_id.clone();
+    let pane_id = started.agent.pane_id.clone();
 
-    // Give the agent a moment to initialize
-    std::thread::sleep(Duration::from_millis(500));
+    // Wait for the CLI to settle: `agent.start` returns before the agent takes
+    // prompts, and a prompt sent in between is refused.
+    if let Err(error) =
+        endpoint.wait_for_agent_ready(&name, Duration::from_millis(AGENT_START_TIMEOUT_MS))
+    {
+        tracing::warn!("agent '{agent_name}' never became ready: {error}");
+        on_event(DispatchStreamEvent::Error(format!(
+            "Agent '{agent_name}' did not become ready: {error}"
+        )));
+        return AgentResult {
+            agent_name,
+            pane_id,
+            exit_status: "timeout".into(),
+            output: String::new(),
+            summary: Some(error.to_string()),
+        };
+    }
 
-    // Send the instruction
-    if let Err(e) = herdr_client.send_agent_text(&terminal_id, &instruction) {
-        tracing::warn!("failed to send instruction to agent '{}': {e}", agent_name);
+    // The daemon's own submit path, so the agent sees a finished prompt.
+    if let Err(error) = endpoint.prompt_agent(&name, &instruction) {
+        tracing::warn!(
+            "failed to send instruction to agent '{}': {error}",
+            agent_name
+        );
     }
 
     // Wait for output with DONE pattern
-    let output = match herdr_client.wait_for_output(&pane_id, AGENT_DONE_PATTERN, timeout_ms) {
-        Ok(text) => text,
-        Err(e) => {
-            tracing::warn!("wait_for_output failed for agent '{}': {e}", agent_name);
+    let output = match endpoint.wait_for_output(&pane_id, AGENT_DONE_PATTERN, 500, timeout_ms) {
+        Ok(read) => read.text,
+        Err(error) => {
+            tracing::warn!("wait_for_output failed for agent '{}': {error}", agent_name);
             // Fallback: read recent output
-            match herdr_client.read_agent(&terminal_id, ReadSource::Recent, 500) {
-                Ok(text) => text,
+            match endpoint.read_pane(&pane_id, ReadSource::Recent, 500) {
+                Ok(read) => read.text,
                 Err(read_err) => {
                     return AgentResult {
                         agent_name: agent_name.clone(),
@@ -1377,8 +1420,8 @@ mod tests {
     // ── ToolExecutor tests ──────────────────────────────────────────────
 
     fn make_executor() -> ToolExecutor {
-        let herdr = HerdrIpcClient::new(std::path::PathBuf::from("/tmp/nonexistent"));
-        ToolExecutor::new(herdr, "workspace-1".into())
+        let endpoint = ApiEndpoint::at(std::path::PathBuf::from("/tmp/zenix-engine-test.sock"));
+        ToolExecutor::new(endpoint, "workspace-1".into())
     }
 
     #[test]

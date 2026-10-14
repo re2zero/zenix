@@ -60,6 +60,9 @@ pub(crate) struct ShellView {
     _observe: Subscription,
     _prefix: Subscription,
     _config: Subscription,
+    /// The in-process MCP orchestrator agents connect to. Held (not read) so it
+    /// lives exactly as long as the window: dropping the shell stops it.
+    _orchestrator: Option<crate::mcp::server::McpOrchestrationServer>,
 }
 
 impl ShellView {
@@ -77,6 +80,9 @@ impl ShellView {
         let config = Self::follow_config(cx);
         let mut sidebar = SIDEBAR;
         sidebar.restore(config::get(cx).layout.sidebar_width);
+        // The orchestrator's pane commands follow the daemon's focused
+        // workspace (an empty id), because the first snapshot has not landed yet.
+        let orchestrator = crate::mcp::start_orchestrator(String::new());
         let mut shell = Self {
             terminal,
             connection,
@@ -91,6 +97,7 @@ impl ShellView {
             _observe: observe,
             _prefix: prefix,
             _config: config,
+            _orchestrator: orchestrator,
         };
         shell.sync_terminal_theme(cx);
         shell

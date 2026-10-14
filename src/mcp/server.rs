@@ -1,95 +1,60 @@
+//! The built-in orchestrator: one MCP server, listening on a unix socket in
+//! zenix's own config directory.
+//!
+//! stdio is deliberately not used. zenix is a GUI process whose stdin/stdout
+//! belong to the desktop it was launched from, not to a protocol; the socket is
+//! what an agent connects to. It follows the process: the shell holds this
+//! value, and dropping the window drops the listener.
+
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::Result;
-use rmcp::service::serve_server;
-use rmcp::transport::IntoTransport;
 use tokio::sync::oneshot;
 
 use super::handler::McpToolHandler;
 use crate::ai::session::SessionManager;
 use crate::ai::tools::ToolExecutor;
 use crate::ai::workers::WorkerRegistry;
-use crate::platform;
 
-struct ShutdownTx {
-    stdio: oneshot::Sender<()>,
-    sse: Option<oneshot::Sender<()>>,
-}
-
+/// A running orchestrator listener.
 pub struct McpOrchestrationServer {
-    shutdown_tx: Option<ShutdownTx>,
+    shutdown_tx: Option<oneshot::Sender<()>>,
     join_handle: Option<tokio::task::JoinHandle<()>>,
-    pub socket_path: Option<PathBuf>,
+    /// The socket the listener is bound to, for logs and for the MCP entry that
+    /// points at it (`super::builtin_orchestrator_server`).
+    pub socket_path: PathBuf,
 }
 
 impl McpOrchestrationServer {
-    pub async fn start(
+    /// Queue the listener on the process's tokio runtime. Returns immediately:
+    /// binding happens on that task, and a bind failure is logged there.
+    pub fn start(
         executor: Arc<ToolExecutor>,
         worker_registry: Arc<WorkerRegistry>,
         session_manager: Arc<SessionManager>,
         workspace_id: String,
-        enable_sse: bool,
-    ) -> Result<Self> {
+    ) -> Self {
         let handler = McpToolHandler::new(executor, worker_registry, session_manager, workspace_id);
-        let (stdio_shutdown_tx, stdio_shutdown_rx) = oneshot::channel::<()>();
-        let (sse_shutdown_tx, sse_shutdown_rx) = oneshot::channel::<()>();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        let socket_path = super::orchestrator_socket_path();
+        let listening_on = socket_path.clone();
 
-        // Stdio server
-        let (stdin, stdout) = rmcp::transport::io::stdio();
-        let transport = (stdin, stdout).into_transport();
-        let running = serve_server(handler.clone(), transport)
-            .await
-            .map_err(|e| anyhow::anyhow!("MCP stdio server failed: {e}"))?;
-
-        // SSE server (optional)
-        let socket_path = if enable_sse {
-            let path = platform::zenix_config_dir().join("mcp-orchestrator.sock");
-            let sse_path = path.clone();
-            let sse_handler = handler.clone();
-            tokio::task::spawn(async move {
-                super::sse::start_sse_server(sse_handler, sse_path, sse_shutdown_rx).await;
-            });
-            Some(path)
-        } else {
-            None
-        };
-
-        let join_handle = tokio::task::spawn(async move {
-            tokio::select! {
-                _ = stdio_shutdown_rx => {
-                    tracing::info!("MCP server shutting down");
-                }
-            }
-            drop(running);
+        let join_handle = tokio_handle().spawn(async move {
+            super::sse::start_sse_server(handler, listening_on, shutdown_rx).await;
         });
 
-        let shutdown_tx = ShutdownTx {
-            stdio: stdio_shutdown_tx,
-            sse: if enable_sse {
-                Some(sse_shutdown_tx)
-            } else {
-                None
-            },
-        };
-
-        tracing::info!(
-            "MCP orchestration server started (stdio{})",
-            if enable_sse { " + sse" } else { "" }
-        );
-        Ok(Self {
+        tracing::info!(socket = %socket_path.display(), "MCP orchestration server starting");
+        Self {
             shutdown_tx: Some(shutdown_tx),
             join_handle: Some(join_handle),
             socket_path,
-        })
+        }
     }
 
+    /// Stop the listener and wait for its task.
     pub async fn shutdown(mut self) {
         if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.stdio.send(());
-            if let Some(sse_tx) = tx.sse {
-                let _ = sse_tx.send(());
-            }
+            let _ = tx.send(());
         }
         if let Some(handle) = self.join_handle.take() {
             let _ = handle.await;
@@ -100,11 +65,21 @@ impl McpOrchestrationServer {
 
 impl Drop for McpOrchestrationServer {
     fn drop(&mut self) {
+        // The task removes its socket when its shutdown lands, so a window
+        // closing is enough; `shutdown` is only for callers that need to wait.
         if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.stdio.send(());
-            if let Some(sse_tx) = tx.sse {
-                let _ = sse_tx.send(());
-            }
+            let _ = tx.send(());
         }
     }
+}
+
+/// The process's tokio runtime. GPUI's executor is not tokio, so a listener
+/// started from the shell spawns here.
+fn tokio_handle() -> tokio::runtime::Handle {
+    tokio::runtime::Handle::try_current().unwrap_or_else(|_| {
+        crate::TOKIO_HANDLE
+            .get()
+            .expect("TOKIO_HANDLE is set before any window opens")
+            .clone()
+    })
 }

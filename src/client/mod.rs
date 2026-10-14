@@ -73,6 +73,22 @@ pub fn herdr_socket_path() -> PathBuf {
     }
 }
 
+/// Path of the daemon's JSON API socket — the `herdr.sock` the herdr CLI itself
+/// talks to, and the only lane that advertises the agent and pane-read methods
+/// the orchestration tools need. The endpoint socket beside it
+/// (`herdr-client.sock`) speaks generation 1 with a fixed 40-method set and
+/// refuses everything else; see `.relay/notes/herdr-agent-api-lane.md`.
+///
+/// Resolution mirrors the endpoint socket so both lanes reach the same daemon:
+/// `HERDR_SOCKET_PATH` names this socket directly, otherwise it is the endpoint
+/// socket's sibling under the same config root and session directory.
+pub fn herdr_api_socket_path() -> PathBuf {
+    if let Ok(path) = std::env::var("HERDR_SOCKET_PATH") {
+        return PathBuf::from(path);
+    }
+    herdr_socket_path().with_file_name("herdr.sock")
+}
+
 /// Start the herdr server in the background.
 /// Returns true if the process was spawned successfully.
 pub fn start_herdr_server() -> bool {

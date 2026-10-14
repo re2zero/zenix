@@ -1,8 +1,8 @@
 pub mod compactor;
+pub mod endpoint;
 pub mod engine;
 pub mod error;
 pub mod file_ops;
-pub mod herdr;
 pub mod prompts;
 pub mod roles;
 pub mod session;

@@ -4,21 +4,39 @@
 //! Each tool implements the `Tool` trait with a name, description, JSON Schema
 //! parameters, and an execute method.
 //!
-//! The ToolExecutor holds shared state (herdr IPC) and is passed
-//! to every tool's execute method.
+//! The `ToolExecutor` holds the shared [`ApiEndpoint`] — the daemon's JSON API
+//! lane, the only one that carries the agent and pane-read methods these tools
+//! are defined on — and is passed to every tool's execute method.
 //!
 //! Built-in tools (6):
-//!   - `spawn_worker`:   Create a worker agent in a grid-positioned pane
-//!   - `send_text`:      Send text/instruction to a worker
+//!   - `spawn_worker`:   Split a pane, start an agent CLI in it, send the task
+//!   - `send_text`:      Send text/instruction to a worker pane
 //!   - `read_output`:    Read a worker's recent output
 //!   - `wait_for_output`: Wait for a completion pattern from a worker
 //!   - `list_workers`:   List running workers
 //!   - `close_worker`:   Terminate and remove a worker pane
+//!
+//! The tool names, parameter schemas and result texts are the MCP contract
+//! (`crate::mcp::handler`), so their shapes stay put across this rewrite.
 
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use std::time::Duration;
 
-use crate::ai::herdr::{HerdrIpcClient, SplitDirection};
+use crate::ai::endpoint::{ApiEndpoint, EndpointError, ReadSource, SplitDirection};
+
+/// How long the daemon gets to launch an interactive agent CLI in a pane. The
+/// daemon accepts 3000..=300000 ms.
+const AGENT_START_TIMEOUT_MS: u64 = 30_000;
+
+/// Lines a pattern wait keeps as its result, so a match arrives with context.
+const WAIT_CONTEXT_LINES: u32 = 200;
+
+/// Recent lines a read returns by default.
+const DEFAULT_READ_LINES: u32 = 100;
+
+/// How much text a read result may carry before it is cut, in bytes.
+const MAX_READ_BYTES: usize = 8_000;
 
 // ── Core Types ─────────────────────────────────────────────────────────
 
@@ -83,19 +101,32 @@ pub trait Tool: Send + Sync {
 
 /// Shared execution context passed to all tools.
 ///
-/// Holds references to the herdr IPC client and the current workspace ID.
+/// Holds the daemon's JSON API endpoint and the workspace the orchestrator was
+/// started for. An empty workspace id means "whatever the daemon has focused",
+/// which is what the pane commands then omit.
 pub struct ToolExecutor {
-    herdr_client: Arc<Mutex<HerdrIpcClient>>,
+    endpoint: Arc<ApiEndpoint>,
     workspace_id: String,
 }
 
 impl ToolExecutor {
     /// Create a new tool executor.
-    pub fn new(herdr_client: HerdrIpcClient, workspace_id: String) -> Self {
+    pub fn new(endpoint: ApiEndpoint, workspace_id: String) -> Self {
         Self {
-            herdr_client: Arc::new(Mutex::new(herdr_client)),
+            endpoint: Arc::new(endpoint),
             workspace_id,
         }
+    }
+
+    /// The endpoint every tool reaches the daemon through.
+    pub fn endpoint(&self) -> &ApiEndpoint {
+        &self.endpoint
+    }
+
+    /// The workspace pane commands start from; `None` when the executor follows
+    /// the daemon's focused workspace.
+    fn workspace(&self) -> Option<&str> {
+        (!self.workspace_id.is_empty()).then_some(self.workspace_id.as_str())
     }
 
     /// Execute a single tool call, dispatching by name.
@@ -115,14 +146,40 @@ impl ToolExecutor {
     }
 }
 
+/// The one place a tool turns an API failure into the text the LLM sees.
+fn report(tool: &str, action: &str, error: EndpointError) -> ToolResult {
+    ToolResult::error(tool, format!("{action}: {error}"))
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // Tool Implementations
 // ═══════════════════════════════════════════════════════════════════════════
 
 // ── spawn_worker ───────────────────────────────────────────────────────
 
-/// Create a worker agent in a new grid-positioned pane.
+/// Split a pane, start an agent CLI in it and send the task.
 pub struct SpawnWorker;
+
+impl SpawnWorker {
+    /// Split once, in the direction that moves toward the requested grid cell.
+    fn direction(position: Option<&serde_json::Value>) -> SplitDirection {
+        let col = position
+            .and_then(|pos| pos.get("col"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or(0);
+        let row = position
+            .and_then(|pos| pos.get("row"))
+            .and_then(|value| value.as_u64())
+            .unwrap_or(0);
+        if col > 0 {
+            SplitDirection::Right
+        } else if row > 0 {
+            SplitDirection::Down
+        } else {
+            SplitDirection::Down
+        }
+    }
+}
 
 impl Tool for SpawnWorker {
     fn name(&self) -> &str {
@@ -167,142 +224,136 @@ impl Tool for SpawnWorker {
     }
 
     fn execute(&self, executor: &ToolExecutor, args: serde_json::Value) -> ToolResult {
-        let agent = match args.get("agent").and_then(|v| v.as_str()) {
-            Some(s) if !s.is_empty() => s,
-            _ => {
-                return ToolResult::error("spawn_worker", "参数 agent 是必需的非空字符串");
-            }
+        let agent = match args.get("agent").and_then(|value| value.as_str()) {
+            Some(value) if !value.is_empty() => value,
+            _ => return ToolResult::error("spawn_worker", "参数 agent 是必需的非空字符串"),
         };
-        let instruction = match args.get("instruction").and_then(|v| v.as_str()) {
-            Some(s) if !s.is_empty() => s,
-            _ => {
-                return ToolResult::error("spawn_worker", "参数 instruction 是必需的非空字符串");
-            }
+        let instruction = match args.get("instruction").and_then(|value| value.as_str()) {
+            Some(value) if !value.is_empty() => value,
+            _ => return ToolResult::error("spawn_worker", "参数 instruction 是必需的非空字符串"),
         };
-        let cwd = args.get("cwd").and_then(|v| v.as_str());
-        let worker_name = args.get("worker_name").and_then(|v| v.as_str());
+        let cwd = args.get("cwd").and_then(|value| value.as_str());
+        let worker_name = args.get("worker_name").and_then(|value| value.as_str());
         let position = args.get("position");
+        let direction = Self::direction(position);
 
-        let mut client = executor.herdr_client.lock().unwrap();
+        // The daemon names agents itself and requires a lowercase name it can put
+        // in a pane label, so an unusable `worker_name` is cleaned rather than
+        // rejected.
+        let name = agent_name(worker_name, agent);
 
-        // Pre-check herdr connection before attempting tool execution
-        if let Err(e) = client.connect() {
+        let endpoint = executor.endpoint();
+        let pane = match endpoint.split_pane(executor.workspace(), cwd, direction) {
+            Ok(pane) => pane,
+            Err(error) => return report("spawn_worker", "创建 worker pane 失败", error),
+        };
+
+        let started = match endpoint.start_agent(
+            &name,
+            agent,
+            &pane.pane_id,
+            Vec::new(),
+            AGENT_START_TIMEOUT_MS,
+        ) {
+            Ok(started) => started,
+            Err(error) => {
+                // The pane is already there; leaving it behind would silently change
+                // the layout the caller asked for, so it is closed again.
+                let _ = endpoint.close_pane(&pane.pane_id);
+                return report("spawn_worker", &format!("启动 Agent '{agent}' 失败"), error);
+            }
+        };
+
+        // `agent.start` returns once the launch command is written, not once the
+        // CLI takes prompts; a prompt sent in between is refused with
+        // `agent_not_ready`.
+        if let Err(error) =
+            endpoint.wait_for_agent_ready(&name, Duration::from_millis(AGENT_START_TIMEOUT_MS))
+        {
             return ToolResult::error(
                 "spawn_worker",
-                format!("无法连接到 herdr daemon: {e}。请确认 herdr 正在运行。"),
+                format!(
+                    "Worker '{agent}' 的 pane 已创建（pane_id={}），但 Agent 未就绪: {error}",
+                    started.agent.pane_id
+                ),
             );
         }
 
-        // Resolve the agent binary full path before passing to herdr.
-        // herdr server runs with a limited PATH and may not find the
-        // agent CLI by name alone; pass the resolved path as argv.
-        let argv = crate::agent::detect_all_agents()
-            .into_iter()
-            .find(|a| a.name == agent)
-            .and_then(|a| a.binary_path)
-            .or_else(|| crate::agent::find_any_binary(&[agent]))
-            .map(|p| vec![p.to_string_lossy().to_string()])
-            .unwrap_or_else(|| vec![agent.to_string()]);
-
-        let workspace_id = &executor.workspace_id;
-
-        // Handle grid layout if position is specified
-        if let Some(pos) = position {
-            let row = pos.get("row").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-            let col = pos.get("col").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
-            let target_cols = col + 1;
-            let target_rows = row + 1;
-            let target_count = target_rows * target_cols;
-
-            // List current panes
-            let current_count = match client.list_panes(Some(workspace_id)) {
-                Ok(panes) => panes.len(),
-                Err(_) => 0,
-            };
-
-            // Create new panes if needed to reach the grid size
-            if current_count < target_count {
-                let to_create = target_count - current_count;
-                let mut dir = SplitDirection::Right;
-                for _ in 0..to_create {
-                    if let Err(e) = client.split_pane(Some(workspace_id), dir, None) {
-                        return ToolResult::error("spawn_worker", format!("创建网格窗格失败: {e}"));
-                    }
-                    dir = if matches!(dir, SplitDirection::Right) {
-                        SplitDirection::Down
-                    } else {
-                        SplitDirection::Right
-                    };
-                }
-            }
-
-            // After creating, list panes again to get the target pane
-            let panes = match client.list_panes(Some(workspace_id)) {
-                Ok(p) => p,
-                Err(e) => {
-                    return ToolResult::error("spawn_worker", format!("获取窗格列表失败: {e}"));
-                }
-            };
-
-            let target_idx = row * target_cols + col;
-            let _pane = panes.into_iter().nth(target_idx);
-
-            // Start the agent in the target pane
-            let ws = Some(workspace_id.as_str());
-            match client.start_agent(agent, ws, cwd, argv.clone()) {
-                Ok(agent_info) => {
-                    // Send the instruction text after agent starts (with trailing newline)
-                    let term_id = &agent_info.terminal_id;
-                    let pane_id = &agent_info.pane_id;
-                    let _ = client.send_agent_text(term_id, &format!("{instruction}\r"));
-                    if let Some(name) = worker_name {
-                        let _ = client.rename_pane(pane_id, name);
-                    } else {
-                        let short = instruction.chars().take(16).collect::<String>();
-                        let _ = client.rename_pane(pane_id, &format!("{agent}: {short}..."));
-                    }
-
-                    ToolResult::ok(
-                        "spawn_worker",
-                        format!(
-                            "Worker '{}' 已启动: pane_id={}, terminal_id={}, 位置=({},{})",
-                            agent, agent_info.pane_id, agent_info.terminal_id, row, col
-                        ),
-                    )
-                }
-                Err(e) => {
-                    ToolResult::error("spawn_worker", format!("启动 Agent '{}' 失败: {e}", agent))
-                }
-            }
-        } else {
-            // No position — simple spawn
-            let ws = Some(workspace_id.as_str());
-            match client.start_agent(agent, ws, cwd, argv.clone()) {
-                Ok(agent_info) => {
-                    let term_id = &agent_info.terminal_id;
-                    let pane_id = &agent_info.pane_id;
-                    let _ = client.send_agent_text(term_id, &format!("{instruction}\r"));
-                    if let Some(name) = worker_name {
-                        let _ = client.rename_pane(pane_id, name);
-                    } else {
-                        let short = instruction.chars().take(16).collect::<String>();
-                        let _ = client.rename_pane(pane_id, &format!("{agent}: {short}..."));
-                    }
-
-                    ToolResult::ok(
-                        "spawn_worker",
-                        format!(
-                            "Worker '{}' 已启动: pane_id={}, terminal_id={}",
-                            agent, agent_info.pane_id, agent_info.terminal_id
-                        ),
-                    )
-                }
-                Err(e) => {
-                    ToolResult::error("spawn_worker", format!("启动 Agent '{}' 失败: {e}", agent))
-                }
-            }
+        if let Err(error) = endpoint.prompt_agent(&name, instruction) {
+            return ToolResult::error(
+                "spawn_worker",
+                format!(
+                    "Worker '{agent}' 已启动（pane_id={}, name={}），但发送指令失败: {error}",
+                    started.agent.pane_id, name
+                ),
+            );
         }
+
+        let label = worker_name.map(str::to_owned).unwrap_or_else(|| {
+            let short: String = instruction.chars().take(16).collect();
+            format!("{agent}: {short}...")
+        });
+        let _ = endpoint.rename_pane(&started.agent.pane_id, &label);
+
+        let terminal_id = started.agent.terminal_id.as_deref().unwrap_or("-");
+        let position = match position {
+            Some(_) => {
+                let row = position_value(position, "row");
+                let col = position_value(position, "col");
+                format!(", 位置=({row},{col})")
+            }
+            None => String::new(),
+        };
+        ToolResult::ok(
+            "spawn_worker",
+            format!(
+                "Worker '{agent}' 已启动: pane_id={}, terminal_id={terminal_id}{position}",
+                started.agent.pane_id
+            ),
+        )
     }
+}
+
+fn position_value(position: Option<&serde_json::Value>, key: &str) -> u64 {
+    position
+        .and_then(|pos| pos.get(key))
+        .and_then(|value| value.as_u64())
+        .unwrap_or(0)
+}
+
+/// A pane label that fits the daemon's agent-name rule: lowercase letters,
+/// digits, `-` and `_`, starting with a letter, at most 32 bytes.
+pub(crate) fn agent_name(requested: Option<&str>, agent: &str) -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+
+    let candidate = requested.filter(|name| !name.is_empty()).unwrap_or(agent);
+    let mut cleaned: String = candidate
+        .chars()
+        .map(|ch| {
+            let lowered = ch.to_ascii_lowercase();
+            if lowered.is_ascii_lowercase()
+                || lowered.is_ascii_digit()
+                || matches!(lowered, '-' | '_')
+            {
+                lowered
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    if !cleaned
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_lowercase())
+    {
+        cleaned.insert(0, 'w');
+    }
+    let suffix = NEXT.fetch_add(1, Ordering::Relaxed);
+    let tail = format!("-{suffix}");
+    cleaned.truncate(32usize.saturating_sub(tail.len()));
+    cleaned.push_str(&tail);
+    cleaned
 }
 
 // ── send_text ──────────────────────────────────────────────────────────
@@ -337,23 +388,21 @@ impl Tool for SendText {
     }
 
     fn execute(&self, executor: &ToolExecutor, args: serde_json::Value) -> ToolResult {
-        let pane_id = match args.get("pane_id").and_then(|v| v.as_str()) {
-            Some(s) if !s.is_empty() => s,
-            _ => {
-                return ToolResult::error("send_text", "参数 pane_id 是必需的非空字符串");
-            }
+        let pane_id = match args.get("pane_id").and_then(|value| value.as_str()) {
+            Some(value) if !value.is_empty() => value,
+            _ => return ToolResult::error("send_text", "参数 pane_id 是必需的非空字符串"),
         };
-        let text = match args.get("text").and_then(|v| v.as_str()) {
-            Some(s) => s,
-            _ => {
-                return ToolResult::error("send_text", "参数 text 是必需的字符串");
-            }
+        let text = match args.get("text").and_then(|value| value.as_str()) {
+            Some(value) => value,
+            _ => return ToolResult::error("send_text", "参数 text 是必需的字符串"),
         };
 
-        let mut client = executor.herdr_client.lock().unwrap();
-        match client.send_pane_text(pane_id, &format!("{text}\r")) {
+        match executor
+            .endpoint()
+            .send_pane_text(pane_id, &format!("{text}\r"))
+        {
             Ok(()) => ToolResult::ok("send_text", format!("文本已发送到 pane {pane_id}")),
-            Err(e) => ToolResult::error("send_text", format!("发送文本失败: {e}")),
+            Err(error) => report("send_text", "发送文本失败", error),
         }
     }
 }
@@ -391,33 +440,36 @@ impl Tool for ReadOutput {
     }
 
     fn execute(&self, executor: &ToolExecutor, args: serde_json::Value) -> ToolResult {
-        let pane_id = match args.get("pane_id").and_then(|v| v.as_str()) {
-            Some(s) if !s.is_empty() => s,
-            _ => {
-                return ToolResult::error("read_output", "参数 pane_id 是必需的非空字符串");
-            }
+        let pane_id = match args.get("pane_id").and_then(|value| value.as_str()) {
+            Some(value) if !value.is_empty() => value,
+            _ => return ToolResult::error("read_output", "参数 pane_id 是必需的非空字符串"),
         };
-        let lines: u32 = args
+        let lines = args
             .get("lines")
-            .and_then(|v| v.as_u64())
-            .map(|n| n as u32)
-            .unwrap_or(100);
+            .and_then(|value| value.as_u64())
+            .map(|lines| lines as u32)
+            .unwrap_or(DEFAULT_READ_LINES);
 
-        let mut client = executor.herdr_client.lock().unwrap();
-        match client.read_pane(pane_id, crate::ai::herdr::ReadSource::Recent, lines) {
-            Ok(text) => {
-                if text.len() > 8000 {
-                    ToolResult::ok(
-                        "read_output",
-                        format!("{}...[已截断，共 {} 字符]", &text[..8000], text.len()),
-                    )
-                } else {
-                    ToolResult::ok("read_output", text)
-                }
-            }
-            Err(e) => ToolResult::error("read_output", format!("读取 pane {pane_id} 失败: {e}")),
+        match executor
+            .endpoint()
+            .read_pane(pane_id, ReadSource::Recent, lines)
+        {
+            Ok(read) => ToolResult::ok("read_output", clipped(read.text)),
+            Err(error) => report("read_output", &format!("读取 pane {pane_id} 失败"), error),
         }
     }
+}
+
+/// Keep a read result inside the model's budget, on a character boundary.
+fn clipped(text: String) -> String {
+    if text.len() <= MAX_READ_BYTES {
+        return text;
+    }
+    let mut end = MAX_READ_BYTES;
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}...[已截断，共 {} 字符]", &text[..end], text.len())
 }
 
 // ── wait_for_output ────────────────────────────────────────────────────
@@ -457,27 +509,25 @@ impl Tool for WaitForOutput {
     }
 
     fn execute(&self, executor: &ToolExecutor, args: serde_json::Value) -> ToolResult {
-        let pane_id = match args.get("pane_id").and_then(|v| v.as_str()) {
-            Some(s) if !s.is_empty() => s,
-            _ => {
-                return ToolResult::error("wait_for_output", "参数 pane_id 是必需的非空字符串");
-            }
+        let pane_id = match args.get("pane_id").and_then(|value| value.as_str()) {
+            Some(value) if !value.is_empty() => value,
+            _ => return ToolResult::error("wait_for_output", "参数 pane_id 是必需的非空字符串"),
         };
-        let pattern = match args.get("pattern").and_then(|v| v.as_str()) {
-            Some(s) if !s.is_empty() => s,
-            _ => {
-                return ToolResult::error("wait_for_output", "参数 pattern 是必需的非空字符串");
-            }
+        let pattern = match args.get("pattern").and_then(|value| value.as_str()) {
+            Some(value) if !value.is_empty() => value,
+            _ => return ToolResult::error("wait_for_output", "参数 pattern 是必需的非空字符串"),
         };
-        let timeout_ms: u64 = args
+        let timeout_ms = args
             .get("timeout_ms")
-            .and_then(|v| v.as_u64())
+            .and_then(|value| value.as_u64())
             .unwrap_or(300_000);
 
-        let mut client = executor.herdr_client.lock().unwrap();
-        match client.wait_for_output(pane_id, pattern, timeout_ms) {
-            Ok(matched) => ToolResult::ok("wait_for_output", matched),
-            Err(e) => ToolResult::error("wait_for_output", format!("等待超时或失败: {e}")),
+        match executor
+            .endpoint()
+            .wait_for_output(pane_id, pattern, WAIT_CONTEXT_LINES, timeout_ms)
+        {
+            Ok(read) => ToolResult::ok("wait_for_output", clipped(read.text)),
+            Err(error) => report("wait_for_output", "等待超时或失败", error),
         }
     }
 }
@@ -505,32 +555,31 @@ impl Tool for ListWorkers {
     }
 
     fn execute(&self, executor: &ToolExecutor, _args: serde_json::Value) -> ToolResult {
-        let mut client = executor.herdr_client.lock().unwrap();
-        match client.list_agents() {
-            Ok(agents) => {
-                if agents.is_empty() {
-                    return ToolResult::ok("list_workers", "当前没有运行中的 worker。");
-                }
-                let mut lines = Vec::new();
-                for (i, agent) in agents.iter().enumerate() {
-                    let name = agent.name.as_deref().unwrap_or("(unnamed)");
-                    let status = agent.agent_status.as_str();
-                    lines.push(format!(
-                        "{}. {} | pane={} | status={} | workspace={}",
-                        i + 1,
-                        name,
-                        agent.pane_id,
-                        status,
-                        agent.workspace_id
-                    ));
-                }
-                ToolResult::ok(
-                    "list_workers",
-                    format!("找到 {} 个 worker:\n{}", agents.len(), lines.join("\n")),
-                )
-            }
-            Err(e) => ToolResult::error("list_workers", format!("获取 worker 列表失败: {e}")),
+        let agents = match executor.endpoint().list_agents() {
+            Ok(agents) => agents,
+            Err(error) => return report("list_workers", "获取 worker 列表失败", error),
+        };
+        if agents.is_empty() {
+            return ToolResult::ok("list_workers", "当前没有运行中的 worker。");
         }
+        let lines: Vec<String> = agents
+            .iter()
+            .enumerate()
+            .map(|(index, agent)| {
+                format!(
+                    "{}. {} | pane={} | status={} | workspace={}",
+                    index + 1,
+                    agent.name.as_deref().unwrap_or("(unnamed)"),
+                    agent.pane_id,
+                    agent.agent_status.as_deref().unwrap_or("unknown"),
+                    agent.workspace_id.as_deref().unwrap_or("-"),
+                )
+            })
+            .collect();
+        ToolResult::ok(
+            "list_workers",
+            format!("找到 {} 个 worker:\n{}", agents.len(), lines.join("\n")),
+        )
     }
 }
 
@@ -562,17 +611,14 @@ impl Tool for CloseWorker {
     }
 
     fn execute(&self, executor: &ToolExecutor, args: serde_json::Value) -> ToolResult {
-        let pane_id = match args.get("pane_id").and_then(|v| v.as_str()) {
-            Some(s) if !s.is_empty() => s,
-            _ => {
-                return ToolResult::error("close_worker", "参数 pane_id 是必需的非空字符串");
-            }
+        let pane_id = match args.get("pane_id").and_then(|value| value.as_str()) {
+            Some(value) if !value.is_empty() => value,
+            _ => return ToolResult::error("close_worker", "参数 pane_id 是必需的非空字符串"),
         };
 
-        let mut client = executor.herdr_client.lock().unwrap();
-        match client.close_pane(pane_id) {
+        match executor.endpoint().close_pane(pane_id) {
             Ok(()) => ToolResult::ok("close_worker", format!("Worker pane {pane_id} 已关闭")),
-            Err(e) => ToolResult::error("close_worker", format!("关闭 pane 失败: {e}")),
+            Err(error) => report("close_worker", "关闭 pane 失败", error),
         }
     }
 }
@@ -596,7 +642,7 @@ pub fn builtin_tools() -> Vec<Box<dyn Tool>> {
 /// Find a tool by name.
 #[allow(dead_code)]
 pub fn find_tool(name: &str) -> Option<Box<dyn Tool>> {
-    builtin_tools().into_iter().find(|t| t.name() == name)
+    builtin_tools().into_iter().find(|tool| tool.name() == name)
 }
 
 /// Execute a tool call with the given executor.
@@ -605,5 +651,151 @@ pub fn execute_tool_call(call: &ToolCall, executor: &ToolExecutor) -> ToolResult
     match find_tool(&call.name) {
         Some(tool) => tool.execute(executor, call.arguments.clone()),
         None => ToolResult::error("tool_dispatch", format!("未知工具: {}", call.name)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn executor() -> ToolExecutor {
+        ToolExecutor::new(
+            ApiEndpoint::at("/tmp/zenix-tools-test.sock".into()),
+            String::new(),
+        )
+    }
+
+    #[test]
+    fn the_six_tool_names_are_stable() {
+        let names: Vec<String> = builtin_tools()
+            .iter()
+            .map(|tool| tool.name().to_string())
+            .collect();
+        assert_eq!(
+            names,
+            [
+                "spawn_worker",
+                "send_text",
+                "read_output",
+                "wait_for_output",
+                "list_workers",
+                "close_worker"
+            ]
+        );
+    }
+
+    #[test]
+    fn every_tool_declares_an_object_schema() {
+        for tool in builtin_tools() {
+            let schema = tool.parameters();
+            assert_eq!(
+                schema["type"],
+                "object",
+                "{} declares an object",
+                tool.name()
+            );
+            assert!(schema["properties"].is_object(), "{}", tool.name());
+        }
+    }
+
+    #[test]
+    fn an_unreachable_daemon_becomes_an_error_result_not_a_panic() {
+        let result = executor().execute(&ToolCall {
+            id: "1".into(),
+            name: "list_workers".into(),
+            arguments: serde_json::json!({}),
+        });
+        assert!(result.is_error);
+        assert!(result.content.contains("获取 worker 列表失败"));
+    }
+
+    #[test]
+    fn an_unknown_tool_is_reported_by_name() {
+        let result = executor().execute(&ToolCall {
+            id: "1".into(),
+            name: "nope".into(),
+            arguments: serde_json::json!({}),
+        });
+        assert!(result.is_error);
+        assert!(result.content.contains("nope"));
+    }
+
+    #[test]
+    fn missing_required_arguments_are_reported_before_any_call() {
+        for (tool, args) in [
+            ("spawn_worker", serde_json::json!({})),
+            ("send_text", serde_json::json!({"pane_id": "w1:p1"})),
+            ("read_output", serde_json::json!({})),
+            ("wait_for_output", serde_json::json!({"pane_id": "w1:p1"})),
+            ("close_worker", serde_json::json!({})),
+        ] {
+            let result = executor().execute(&ToolCall {
+                id: "1".into(),
+                name: tool.into(),
+                arguments: args,
+            });
+            assert!(result.is_error, "{tool} rejects its missing argument");
+        }
+    }
+
+    #[test]
+    fn a_worker_name_becomes_a_legal_agent_name() {
+        let name = agent_name(Some("OC CheckGit"), "claude");
+        assert!(
+            name.starts_with("oc-checkgit-"),
+            "cleaned and letter-initial: {name}"
+        );
+        assert!(name.len() <= 32);
+        assert!(
+            name.chars().all(|ch| ch.is_ascii_lowercase()
+                || ch.is_ascii_digit()
+                || matches!(ch, '-' | '_'))
+        );
+    }
+
+    #[test]
+    fn a_name_that_cannot_start_an_agent_name_gains_a_letter_prefix() {
+        let name = agent_name(Some("9lives"), "codex");
+        assert!(name.starts_with("w9lives-"), "{name}");
+    }
+
+    #[test]
+    fn two_workers_never_share_a_name() {
+        let first = agent_name(Some("check"), "claude");
+        let second = agent_name(Some("check"), "claude");
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    fn a_long_requested_name_is_cut_to_the_daemons_limit() {
+        let long = "a".repeat(80);
+        let name = agent_name(Some(&long), "claude");
+        assert!(name.len() <= 32, "{name}");
+    }
+
+    #[test]
+    fn a_split_aims_at_the_requested_grid_cell() {
+        assert_eq!(
+            SpawnWorker::direction(Some(&serde_json::json!({"row": 0, "col": 1}))),
+            SplitDirection::Right
+        );
+        assert_eq!(
+            SpawnWorker::direction(Some(&serde_json::json!({"row": 1, "col": 0}))),
+            SplitDirection::Down
+        );
+        assert_eq!(SpawnWorker::direction(None), SplitDirection::Down);
+    }
+
+    #[test]
+    fn a_long_read_is_cut_on_a_character_boundary() {
+        let text = "汉".repeat(MAX_READ_BYTES);
+        let clipped = clipped(text);
+        assert!(clipped.starts_with('汉'));
+        assert!(clipped.contains("已截断"));
+    }
+
+    #[test]
+    fn a_short_read_is_returned_untouched() {
+        assert_eq!(clipped("hello".into()), "hello");
     }
 }
