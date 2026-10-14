@@ -222,6 +222,7 @@ impl ShellView {
                 self.connection.focus_workspace(&workspace_id)
             }
             ShellRequest::FocusTab(tab_id) => self.connection.focus_tab(&tab_id),
+            ShellRequest::FocusPane(pane_id) => self.connection.focus_pane(&pane_id),
             ShellRequest::Command(command) => {
                 let snapshot = self.terminal.read(cx).live().snapshot.clone();
                 if let Some((method, params)) = snapshot
@@ -302,6 +303,7 @@ impl Render for ShellView {
                     connection.focus_workspace(&workspace_id)
                 }
                 ShellRequest::FocusTab(tab_id) => connection.focus_tab(&tab_id),
+                ShellRequest::FocusPane(pane_id) => connection.focus_pane(&pane_id),
                 // A command the shell runs itself goes through `run` whether it
                 // arrived as a chord or as a click, so the two cannot part ways.
                 ShellRequest::Command(command) if command.is_local() => {

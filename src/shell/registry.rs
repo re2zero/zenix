@@ -45,6 +45,8 @@ pub(crate) enum ShellRequest {
     FocusWorkspace(String),
     /// Bring a tab to the front.
     FocusTab(String),
+    /// Focus a pane, which also brings its workspace and tab forward.
+    FocusPane(String),
 }
 
 /// A request's way back into the shell. Shared rather than borrowed because
