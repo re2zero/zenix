@@ -26,7 +26,12 @@
 //! {
 //!   "appearance": { "theme_mode": "light", "locale": "en" },
 //!   "terminal": { "palette_dark": "Default", "palette_light": "Catppuccin Latte" },
-//!   "layout": { "sidebar_visible": true, "sidebar_width": 232.0 }
+//!   "layout": {
+//!     "sidebar_visible": true,
+//!     "sidebar_width": 232.0,
+//!     "aside_visible": false,
+//!     "aside_width": 380.0
+//!   }
 //! }
 //! ```
 //!
@@ -67,6 +72,14 @@ pub const SIDEBAR_WIDTH_DEFAULT: f32 = 232.;
 pub const SIDEBAR_WIDTH_MIN: f32 = 160.;
 /// The widest a stored sidebar width may be: past this it is not a panel.
 pub const SIDEBAR_WIDTH_MAX: f32 = 4096.;
+
+/// The right-hand panel's width before anyone drags it, in pixels: wide enough
+/// for a message and its tool card, which is what it is for.
+pub const ASIDE_WIDTH_DEFAULT: f32 = 380.;
+/// The narrowest a stored right-hand panel width may be.
+pub const ASIDE_WIDTH_MIN: f32 = 240.;
+/// The widest a stored right-hand panel width may be.
+pub const ASIDE_WIDTH_MAX: f32 = 4096.;
 
 /// The locales this client ships strings for.
 const LOCALES: &[&str] = &["en", "zh-CN"];
@@ -135,6 +148,9 @@ impl Default for TerminalConfig {
 pub struct Layout {
     pub sidebar_visible: bool,
     pub sidebar_width: f32,
+    /// Whether the right-hand panel is drawn beside the grid.
+    pub aside_visible: bool,
+    pub aside_width: f32,
 }
 
 impl Default for Layout {
@@ -142,6 +158,10 @@ impl Default for Layout {
         Self {
             sidebar_visible: true,
             sidebar_width: SIDEBAR_WIDTH_DEFAULT,
+            // Closed until it is asked for: the grid is what the window is
+            // for, and the panel is one chord or one click away.
+            aside_visible: false,
+            aside_width: ASIDE_WIDTH_DEFAULT,
         }
     }
 }
@@ -153,6 +173,11 @@ impl Layout {
     /// carries a fraction of a pixel.
     pub fn set_sidebar_width(&mut self, width: f32) {
         self.sidebar_width = width.clamp(SIDEBAR_WIDTH_MIN, SIDEBAR_WIDTH_MAX).round();
+    }
+
+    /// Set the right-hand panel's width, under the same rule as the sidebar's.
+    pub fn set_aside_width(&mut self, width: f32) {
+        self.aside_width = width.clamp(ASIDE_WIDTH_MIN, ASIDE_WIDTH_MAX).round();
     }
 }
 
@@ -200,6 +225,14 @@ const SECTIONS: &[Section] = &[
                 Field::Size {
                     min: SIDEBAR_WIDTH_MIN,
                     max: SIDEBAR_WIDTH_MAX,
+                },
+            ),
+            ("aside_visible", Field::Flag),
+            (
+                "aside_width",
+                Field::Size {
+                    min: ASIDE_WIDTH_MIN,
+                    max: ASIDE_WIDTH_MAX,
                 },
             ),
         ],
@@ -712,6 +745,27 @@ mod tests {
         assert_eq!(config.layout.sidebar_width, SIDEBAR_WIDTH_MIN);
         config.layout.set_sidebar_width(9000.);
         assert_eq!(config.layout.sidebar_width, SIDEBAR_WIDTH_MAX);
+    }
+
+    /// The right-hand panel's width follows the sidebar's rules, with its own
+    /// range: the file cannot hold a panel too narrow to draw a message in.
+    #[test]
+    fn the_right_hand_panel_width_has_its_own_range() {
+        let mut config = ConfigFile::default();
+        config.layout.set_aside_width(511.6);
+        assert_eq!(config.layout.aside_width, 512.);
+        config.layout.set_aside_width(8.);
+        assert_eq!(config.layout.aside_width, ASIDE_WIDTH_MIN);
+        config.layout.set_aside_width(9000.);
+        assert_eq!(config.layout.aside_width, ASIDE_WIDTH_MAX);
+        assert!(!Layout::default().aside_visible, "closed until asked for");
+
+        let (parsed, diagnostics) = parse(r#"{"layout": { "aside_width": 10.0 }}"#);
+        assert_eq!(parsed.layout.aside_width, ASIDE_WIDTH_MIN);
+        assert_eq!(
+            kinds(&diagnostics),
+            vec![("layout.aside_width".to_owned(), DiagnosticKind::OutOfRange)]
+        );
     }
 
     #[test]

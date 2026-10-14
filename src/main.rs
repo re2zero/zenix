@@ -79,6 +79,10 @@ fn main() {
             // The stored config decides the chrome's mode and the locale
             // before anything is drawn, so the first frame is already right.
             config::init(cx);
+            // The prompt templates the orchestrator sends, seeded to the config
+            // directory and cached; without this the embedded copy is used and
+            // an edited `prompts/orchestrator.md` would never be read.
+            ai::prompts::init();
             register_fonts(cx);
             shell::keymap::bind_keys(cx);
             gpui_kit::open_window(

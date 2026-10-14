@@ -16,8 +16,8 @@ use herdr_client::protocol::{ClientShellSnapshot, PaneSurfaceFrame};
 use super::commands::Command;
 use crate::herdr::ConnectionStatus;
 
-/// One thing the shell mounts in a slot: a sidebar block, a status-bar
-/// segment, and later a panel or an MCP tool.
+/// One thing the shell mounts in a slot: a sidebar block, a block of the
+/// right-hand panel, a status-bar segment, and later an MCP tool.
 pub(crate) struct Contribution {
     /// Stable id, unique within its slot.
     pub(crate) id: &'static str,
@@ -74,6 +74,7 @@ pub(crate) struct Invocation<'a> {
 /// Where the shell mounts its contributions.
 pub(crate) struct Registry {
     panels: &'static [Contribution],
+    aside: &'static [Contribution],
     status: &'static [Contribution],
     settings: &'static [SettingsSection],
 }
@@ -84,6 +85,7 @@ impl Registry {
     pub(crate) fn builtin() -> Self {
         Self {
             panels: super::panels::PANELS,
+            aside: super::chat::ASIDE,
             status: super::panels::STATUS_SEGMENTS,
             settings: super::settings::SETTINGS_SECTIONS,
         }
@@ -92,6 +94,12 @@ impl Registry {
     /// The sidebar's blocks, top to bottom.
     pub(crate) fn panels(&self) -> &'static [Contribution] {
         self.panels
+    }
+
+    /// The right-hand panel's blocks, top to bottom. Unlike the sidebar's,
+    /// these are only built while the panel is open.
+    pub(crate) fn aside_panels(&self) -> &'static [Contribution] {
+        self.aside
     }
 
     /// The status bar's segments, left to right.
@@ -115,7 +123,11 @@ mod tests {
     #[test]
     fn built_in_contribution_ids_are_unique_within_their_slot() {
         let registry = Registry::builtin();
-        for slot in [registry.panels(), registry.status_segments()] {
+        for slot in [
+            registry.panels(),
+            registry.aside_panels(),
+            registry.status_segments(),
+        ] {
             let mut ids: Vec<&str> = slot.iter().map(|item| item.id).collect();
             let total = ids.len();
             ids.sort_unstable();
@@ -137,6 +149,7 @@ mod tests {
     fn the_shell_mounts_at_least_one_panel_and_one_status_segment() {
         let registry = Registry::builtin();
         assert!(!registry.panels().is_empty());
+        assert!(!registry.aside_panels().is_empty());
         assert!(!registry.status_segments().is_empty());
     }
 

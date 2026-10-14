@@ -41,6 +41,8 @@ pub(crate) enum Command {
     ResizeDown,
     /// Local: the sidebar's own visibility.
     ToggleSidebar,
+    /// Local: the right-hand panel's visibility.
+    ToggleAside,
     /// Local: light or dark chrome.
     ToggleTheme,
     /// Local: the settings surface.
@@ -54,7 +56,10 @@ impl Command {
     pub(crate) fn is_local(self) -> bool {
         matches!(
             self,
-            Command::ToggleSidebar | Command::ToggleTheme | Command::ToggleSettings
+            Command::ToggleSidebar
+                | Command::ToggleAside
+                | Command::ToggleTheme
+                | Command::ToggleSettings
         )
     }
 }
@@ -241,6 +246,13 @@ pub(crate) const COMMANDS: &[CommandInfo] = &[
         prefixed: &["b"],
     },
     CommandInfo {
+        command: Command::ToggleAside,
+        id: "view.toggle-chat",
+        label: "Toggle Chat",
+        direct: &[],
+        prefixed: &["a"],
+    },
+    CommandInfo {
         command: Command::ToggleTheme,
         id: "view.toggle-theme",
         label: "Toggle Light/Dark",
@@ -387,7 +399,10 @@ pub(crate) fn request(command: Command, snapshot: &ClientShellSnapshot) -> Optio
             Method::PaneResize,
             json!({"pane_id": pane?.pane_id, "direction": direction(command)?}),
         ),
-        Command::ToggleSidebar | Command::ToggleTheme | Command::ToggleSettings => return None,
+        Command::ToggleSidebar
+        | Command::ToggleAside
+        | Command::ToggleTheme
+        | Command::ToggleSettings => return None,
     })
 }
 
@@ -440,6 +455,7 @@ mod tests {
     fn local_commands_become_no_request() {
         let snapshot = empty_snapshot();
         assert!(request(Command::ToggleSidebar, &snapshot).is_none());
+        assert!(request(Command::ToggleAside, &snapshot).is_none());
         assert!(request(Command::ToggleTheme, &snapshot).is_none());
         assert!(request(Command::ToggleSettings, &snapshot).is_none());
     }
@@ -456,7 +472,12 @@ mod tests {
             .collect();
         assert_eq!(
             local,
-            vec!["view.toggle-sidebar", "view.toggle-theme", "view.settings"]
+            vec![
+                "view.toggle-sidebar",
+                "view.toggle-chat",
+                "view.toggle-theme",
+                "view.settings"
+            ]
         );
         for info in COMMANDS {
             if info.command.is_local() {

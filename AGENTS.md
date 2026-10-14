@@ -7,7 +7,7 @@
 ## OVERVIEW
 zenix is a cross-platform GPUI desktop frontend for herdr terminal workspace manager. It provides workspace/tab/pane management, system monitoring, theme engine, and plugin architecture via Rust + GPUI.
 
-The UI is being rebuilt on **gpui-kit 0.7.3** as a native client of the daemon's generation-1 endpoint protocol (multi-session plan in `.relay/PLAN.md` — local, gitignored). The old GPUI/PTY UI was deleted in M1, M3 rebuilt native pane rendering, and M4 has landed the workspace shell (`src/shell/`) with split-ratio and sidebar drag, tab reorder commands and the close chain, so the window is usable again. M5 has made the client's own settings real: `src/config/` holds a schema-checked `config.json` (with per-field diagnostics for a hand-edited file) and `src/shell/settings.rs` mounts the `gpui-kit` settings surface from the contribution registry. Remaining residue: pointer-driven tab dragging, sidebar workspace reordering, command palette (deferred to M8a, when plugin actions become the palette's data source).
+The UI is being rebuilt on **gpui-kit 0.7.3** as a native client of the daemon's generation-1 endpoint protocol (multi-session plan in `.relay/PLAN.md` — local, gitignored). The old GPUI/PTY UI was deleted in M1, M3 rebuilt native pane rendering, and M4 has landed the workspace shell (`src/shell/`) with split-ratio and sidebar drag, tab reorder commands and the close chain, so the window is usable again. M5 has made the client's own settings real: `src/config/` holds a schema-checked `config.json` (with per-field diagnostics for a hand-edited file) and `src/shell/settings.rs` mounts the `gpui-kit` settings surface from the contribution registry. M6 has made the AI side real again: `src/shell/panels.rs` shows the daemon's agents from snapshot pushes, and `src/shell/chat.rs` is the right-hand panel's chat block — real turns over `src/ai` (streamed, with tool cards) persisted to `ai/zenix-ai.db`, mounted through the registry's aside slot. Remaining residue: pointer-driven tab dragging, sidebar workspace reordering, command palette (deferred to M8a, when plugin actions become the palette's data source).
 
 ## STRUCTURE
 ```
@@ -17,7 +17,7 @@ zenix/
 │   ├── lib.rs             # Public SDK for plugins/sub-apps
 │   ├── bin/zenix-probe.rs # Daemon endpoint smoke gate (Welcome+Snapshot+Surface)
 │   ├── util.rs            # Shared helpers (timestamp_now)
-│   ├── shell/             # Workspace shell (M4) + settings surface (M5): ShellView, commands, keymap, contributions, settings.rs, panel_resize.rs
+│   ├── shell/             # Workspace shell (M4) + settings (M5) + chat panel (M6): ShellView, commands, keymap, contributions, settings.rs, chat.rs, panel_resize.rs
 │   ├── terminal/          # Cell painting + semantic input (M3): painter/, regions/splits, view.rs
 │   ├── herdr/             # Endpoint facade: Connection + LiveState (snapshots in, commands out)
 │   ├── config/            # The client's config (M5): schema + diagnostics + store/global; jsonc.rs/scanner.rs
@@ -53,6 +53,8 @@ zenix/
 | Commands & keymap | src/shell/commands.rs, src/shell/keymap.rs | One command directory; chords and palette read it |
 | UI contributions | src/shell/registry.rs, src/shell/panels.rs | Panels, status segments and settings pages mount through the registry |
 | Client settings | src/config/mod.rs, src/shell/settings.rs | Schema + diagnostics + the config global; pages mount from the registry |
+| AI chat panel | src/shell/chat.rs | Right-hand panel: turns over `src/ai`, tool cards, sessions in `ai/zenix-ai.db` |
+| Agent monitor | src/shell/panels.rs | Sidebar rows built from snapshot `agents` + `agent_order` (push, no polling) |
 | Terminal painting | src/terminal/view.rs, src/terminal/painter/ | One daemon surface painted natively |
 | Endpoint facade | src/herdr/connection.rs, src/herdr/state.rs | Commands out (in-flight tracked), snapshots in |
 | Plugin/sub-app SDK | src/lib.rs | Public API surface |

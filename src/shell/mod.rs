@@ -11,6 +11,7 @@
 //! worktree grouping, the browser tabs, the menus and the command palette
 //! stay upstream.
 
+pub(crate) mod chat;
 pub(crate) mod commands;
 pub(crate) mod keymap;
 pub(crate) mod panel_resize;
@@ -24,13 +25,13 @@ use gpui_kit::component::{ActiveTheme, ThemeMode, h_flex, v_flex};
 use gpui_kit::*;
 use herdr_client::protocol::ClientShellTab;
 
-use crate::config::{self, ConfigStore, SIDEBAR_WIDTH_DEFAULT};
+use crate::config::{self, ASIDE_WIDTH_DEFAULT, ConfigStore, SIDEBAR_WIDTH_DEFAULT};
 use crate::herdr::Connection;
 use crate::terminal::Theme as TerminalTheme;
 use crate::terminal::view::TerminalView;
 use commands::Command;
 use keymap::{Keymap, RunCommand};
-use panel_resize::{PanelWidth, SIDEBAR, SidebarDrag};
+use panel_resize::{ASIDE, AsideDrag, Edge, PanelWidth, SIDEBAR, SidebarDrag};
 use registry::{Dispatch, Invocation, Registry, ShellRequest};
 
 const TITLE_BAR_HEIGHT: f32 = 34.;
@@ -47,6 +48,10 @@ pub(crate) struct ShellView {
     sidebar: PanelWidth,
     /// A drag is in flight: the config must not overwrite the pointer.
     sidebar_dragging: bool,
+    /// The right-hand panel's width, under the sidebar's rules but measured
+    /// from the other edge.
+    aside: PanelWidth,
+    aside_dragging: bool,
     /// The settings surface is over the shell, and has the keyboard.
     settings_open: bool,
     /// The keyboard while the settings surface is open, so the pane beside it
@@ -80,6 +85,8 @@ impl ShellView {
         let config = Self::follow_config(cx);
         let mut sidebar = SIDEBAR;
         sidebar.restore(config::get(cx).layout.sidebar_width);
+        let mut aside = ASIDE;
+        aside.restore(config::get(cx).layout.aside_width);
         // The orchestrator's pane commands follow the daemon's focused
         // workspace (an empty id), because the first snapshot has not landed yet.
         let orchestrator = crate::mcp::start_orchestrator(String::new());
@@ -90,6 +97,8 @@ impl ShellView {
             keymap: Keymap::default(),
             sidebar,
             sidebar_dragging: false,
+            aside,
+            aside_dragging: false,
             settings_open: false,
             settings_focus: cx.focus_handle(),
             prefix_armed: false,
@@ -110,6 +119,9 @@ impl ShellView {
         cx.observe_global::<ConfigStore>(|shell, cx| {
             if !shell.sidebar_dragging {
                 shell.sidebar.restore(config::get(cx).layout.sidebar_width);
+            }
+            if !shell.aside_dragging {
+                shell.aside.restore(config::get(cx).layout.aside_width);
             }
             shell.sync_terminal_theme(cx);
             cx.notify();
@@ -176,6 +188,12 @@ impl ShellView {
             Command::ToggleSidebar => {
                 let visible = !config::get(cx).layout.sidebar_visible;
                 config::update(cx, |config| config.layout.sidebar_visible = visible);
+            }
+            // The right-hand panel: shown or hidden, width remembered, exactly
+            // as the sidebar's own toggle works.
+            Command::ToggleAside => {
+                let visible = !config::get(cx).layout.aside_visible;
+                config::update(cx, |config| config.layout.aside_visible = visible);
             }
             // The mode the chrome is drawn in is a setting, so the title bar's
             // button and the settings panel's item are the same write; the
@@ -286,6 +304,36 @@ impl ShellView {
             config.layout.set_sidebar_width(SIDEBAR_WIDTH_DEFAULT)
         });
     }
+
+    /// The right-hand panel's edge, dragged the other way: its width runs from
+    /// the pointer to the panel's own right edge.
+    fn drag_aside(
+        &mut self,
+        event: &DragMoveEvent<AsideDrag>,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.aside_dragging = true;
+        if self.aside.drag(event.bounds, event.event.position.x) {
+            cx.notify();
+        }
+    }
+
+    fn settle_aside(&mut self, _: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.aside_dragging = false;
+        if self.aside.take_unsaved() {
+            let width = self.aside.chosen().unwrap_or(ASIDE_WIDTH_DEFAULT);
+            config::update(cx, |config| config.layout.set_aside_width(width));
+        }
+    }
+
+    fn reset_aside(&mut self, _: &MouseDownEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.aside.reset();
+        self.aside.take_unsaved();
+        config::update(cx, |config| {
+            config.layout.set_aside_width(ASIDE_WIDTH_DEFAULT)
+        });
+    }
 }
 
 impl Render for ShellView {
@@ -294,6 +342,7 @@ impl Render for ShellView {
         let error = self.connection.footer();
         let theme = cx.theme().clone();
         let sidebar_visible = config::get(cx).layout.sidebar_visible;
+        let aside_visible = config::get(cx).layout.aside_visible;
         let dispatch: Dispatch = Rc::new({
             let connection = self.connection.clone();
             let snapshot = live.snapshot.clone();
@@ -357,11 +406,59 @@ impl Render for ShellView {
                     .on_mouse_up_out(MouseButton::Left, cx.listener(Self::settle_sidebar))
                     .child(panel_resize::grip(
                         "sidebar-grip",
+                        Edge::Right,
+                        SidebarDrag,
                         cx.listener(Self::reset_sidebar),
                     ))
                     .children(
                         self.registry
                             .panels()
+                            .iter()
+                            .map(|panel| (panel.render)(&invocation, window, cx)),
+                    ),
+            );
+        }
+        // The grid takes what the two panels leave, so it is added between
+        // them: the sidebar on the left, the right-hand panel last.
+        body = body.child(
+            v_flex()
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .child(tab_strip(&invocation))
+                // The grid needs the remaining height: inside a flex
+                // column a childless `size_full` collapses to the height
+                // its own content asks for, which for a canvas is one row.
+                .child(div().flex_1().min_h_0().child(self.terminal.clone())),
+        );
+        if aside_visible {
+            let aside_width = self
+                .aside
+                .width(window.viewport_size().width.to_f64() as f32);
+            body = body.child(
+                v_flex()
+                    .relative()
+                    .w(px(aside_width))
+                    .h_full()
+                    .flex_none()
+                    .overflow_hidden()
+                    .bg(theme.sidebar)
+                    .border_l_1()
+                    .border_color(theme.sidebar_border)
+                    // The same arrangement as the sidebar's, on the other side:
+                    // the edge facing the grid is this panel's own handle.
+                    .on_drag_move(cx.listener(Self::drag_aside))
+                    .on_mouse_up(MouseButton::Left, cx.listener(Self::settle_aside))
+                    .on_mouse_up_out(MouseButton::Left, cx.listener(Self::settle_aside))
+                    .child(panel_resize::grip(
+                        "aside-grip",
+                        Edge::Left,
+                        AsideDrag,
+                        cx.listener(Self::reset_aside),
+                    ))
+                    .children(
+                        self.registry
+                            .aside_panels()
                             .iter()
                             .map(|panel| (panel.render)(&invocation, window, cx)),
                     ),
@@ -378,19 +475,7 @@ impl Render for ShellView {
             // binding with no handler matches and does nothing.
             .on_action(cx.listener(Self::run_command))
             .child(title_bar(&invocation, sidebar_visible))
-            .child(
-                body.child(
-                    v_flex()
-                        .flex_1()
-                        .min_w_0()
-                        .min_h_0()
-                        .child(tab_strip(&invocation))
-                        // The grid needs the remaining height: inside a flex
-                        // column a childless `size_full` collapses to the height
-                        // its own content asks for, which for a canvas is one row.
-                        .child(div().flex_1().min_h_0().child(self.terminal.clone())),
-                ),
-            )
+            .child(body)
             .child(
                 h_flex()
                     .flex_none()
@@ -454,6 +539,12 @@ fn title_bar(invocation: &Invocation, sidebar_visible: bool) -> AnyElement {
             invocation,
         ))
         .child(div().flex_1().text_sm().child(title))
+        .child(toggle_button(
+            "toggle-aside",
+            crate::i18n::t("ai.chat.title"),
+            Command::ToggleAside,
+            invocation,
+        ))
         .child(toggle_button(
             "settings",
             crate::i18n::t("settings.title"),

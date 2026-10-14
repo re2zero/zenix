@@ -54,6 +54,12 @@ settings:
     sidebar_width:
       en: "Sidebar width"
       zh-CN: "侧栏宽度"
+    aside_visible:
+      en: "Chat panel"
+      zh-CN: "对话面板"
+    aside_width:
+      en: "Chat panel width"
+      zh-CN: "对话面板宽度"
   config:
     title:
       en: "Config file"
@@ -607,6 +613,12 @@ ai:
     en: "Go to Settings → Extensions → API Providers to add one."
     zh-CN: "前往「设置 → 扩展 → API 提供商」添加一个。"
   chat:
+    title:
+      en: "Chat"
+      zh-CN: "对话"
+    empty_hint:
+      en: "Ask for a task: the orchestrator can start, drive and read the daemon's panes."
+      zh-CN: "直接下达任务：编排器可以启停 daemon 的窗格并读取其输出。"
     new_chat:
       en: "New Chat"
       zh-CN: "新会话"

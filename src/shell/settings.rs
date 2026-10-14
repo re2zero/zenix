@@ -19,7 +19,10 @@ use gpui_kit::*;
 
 use super::commands::Command;
 use super::registry::{Dispatch, SettingsSection, ShellRequest};
-use crate::config::{self, SIDEBAR_WIDTH_DEFAULT, SIDEBAR_WIDTH_MAX, SIDEBAR_WIDTH_MIN};
+use crate::config::{
+    self, ASIDE_WIDTH_DEFAULT, ASIDE_WIDTH_MAX, ASIDE_WIDTH_MIN, SIDEBAR_WIDTH_DEFAULT,
+    SIDEBAR_WIDTH_MAX, SIDEBAR_WIDTH_MIN,
+};
 use crate::i18n::t;
 use crate::platform;
 use crate::terminal::Theme as TerminalTheme;
@@ -134,7 +137,8 @@ fn terminal_page(_: &App) -> SettingPage {
         )
 }
 
-/// The client's own chrome: the sidebar, which the daemon knows nothing about.
+/// The client's own chrome: the sidebar and the right-hand chat panel, neither
+/// of which the daemon knows anything about.
 fn layout_page(_: &App) -> SettingPage {
     SettingPage::new(t("settings.layout.title"))
         .description(t("settings.layout.description"))
@@ -167,6 +171,33 @@ fn layout_page(_: &App) -> SettingPage {
                         },
                     )
                     .default_value(f64::from(SIDEBAR_WIDTH_DEFAULT)),
+                ))
+                .item(SettingItem::new(
+                    t("settings.layout.aside_visible"),
+                    SettingField::switch(
+                        |cx: &App| config::get(cx).layout.aside_visible,
+                        |value: bool, cx: &mut App| {
+                            config::update(cx, |config| config.layout.aside_visible = value);
+                        },
+                    )
+                    .default_value(false),
+                ))
+                .item(SettingItem::new(
+                    t("settings.layout.aside_width"),
+                    SettingField::number_input(
+                        NumberFieldOptions {
+                            min: f64::from(ASIDE_WIDTH_MIN),
+                            max: f64::from(ASIDE_WIDTH_MAX),
+                            step: 1.0,
+                        },
+                        |cx: &App| f64::from(config::get(cx).layout.aside_width),
+                        |value: f64, cx: &mut App| {
+                            config::update(cx, |config| {
+                                config.layout.set_aside_width(value as f32)
+                            });
+                        },
+                    )
+                    .default_value(f64::from(ASIDE_WIDTH_DEFAULT)),
                 )),
         )
 }

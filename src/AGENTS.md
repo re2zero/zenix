@@ -3,7 +3,7 @@
 ## OVERVIEW
 Core GPUI application for zenix desktop frontend. All UI, state, IPC, and system integration.
 
-The UI is being rebuilt on **gpui-kit 0.7.3**: M1 deleted the old GPUI/PTY UI, M3 rebuilt native pane rendering, M4 built the workspace shell (`src/shell/`) on top of it, and M5 made the client's settings real (`src/config/` + `src/shell/settings.rs`). See `../.relay/PLAN.md` (local, gitignored) for the milestone plan.
+The UI is being rebuilt on **gpui-kit 0.7.3**: M1 deleted the old GPUI/PTY UI, M3 rebuilt native pane rendering, M4 built the workspace shell (`src/shell/`) on top of it, M5 made the client's settings real (`src/config/` + `src/shell/settings.rs`), and M6 added the right-hand AI chat panel (`src/shell/chat.rs`, mounted through the registry's aside slot). See `../.relay/PLAN.md` (local, gitignored) for the milestone plan.
 
 ## STRUCTURE
 ```
@@ -19,7 +19,8 @@ src/
 │   ├── registry.rs    # Contribution registry: panels, status segments, settings pages
 │   ├── panels.rs      # Built-in contributions (workspace panel, status segments)
 │   ├── settings.rs    # Built-in settings pages, mounted from the registry
-│   └── panel_resize.rs# The sidebar's edge: drag, reset, and what to save
+│   ├── chat.rs        # The right-hand panel's block: turns, tool cards, session store (M6)
+│   └── panel_resize.rs# A panel's edge: drag, reset, and what to save
 ├── terminal/          # Cell painting + semantic input (M3)
 │   ├── mod.rs         # Grid geometry, hit testing, key/mouse mapping
 │   ├── painter/       # Cell-grid painter (glyphs, images, graphics, regions parts)
@@ -49,6 +50,7 @@ src/
 | Commands & keymap | shell/commands.rs, shell/keymap.rs | One directory; chords and the palette read it |
 | UI contributions | shell/registry.rs, shell/panels.rs, shell/settings.rs | Panels, status segments and settings pages mount through the registry |
 | Client settings | config/mod.rs | Schema, schema diagnostics, and the config global |
+| AI chat panel | shell/chat.rs | Turns over `crate::ai`, tool cards, sessions in `ai/zenix-ai.db` |
 | Plugin API surface | lib.rs | Public exports only |
 | Daemon smoke gate | bin/zenix-probe.rs | `cargo run --bin zenix-probe` |
 | Endpoint facade | herdr/connection.rs, herdr/state.rs | Commands out, snapshots in |
@@ -68,7 +70,10 @@ src/
   calls `Regions::views` (`terminal/view.rs`), which creates and updates entities. GPUI only
   allows creating entities while a frame is being built, and gpui-kit 0.7.3 exposes no
   `compute_view`, so the frame is the only place that call can run. Any new call of that shape
-  must be recorded here before it lands.
+  must be recorded here before it lands. The second recorded shape is `window.use_keyed_state`
+  (the chat panel's `render` in `shell/chat.rs`): it is GPUI's own per-element state, so the
+  panel entity is created on the first frame that draws it and reused after, and the call
+  itself keeps no view state.
 - **Async via cx.spawn()** — never block on GPUI event loop
 - **FocusHandle** for keyboard/input focus management
 - **Config = one global, one writer**: client settings live in the config global (`config/mod.rs`,
@@ -93,7 +98,8 @@ src/
 ## ANTI-PATTERNS
 - ❌ Direct cargo run without the installed herdr or `HERDR_BUILD=1`
 - ❌ unwrap() in production paths
-- ❌ Mutating state in render() anywhere other than the recorded `Regions::views` call site
+- ❌ Mutating state in render() anywhere other than the recorded `Regions::views` and
+  `use_keyed_state` call sites
 - ❌ Deriving the cell advance width outside the canvas prepaint (`cell`) — hit tests and drawn borders then disagree
 - ❌ Platform #[cfg] outside platform.rs
 - ❌ Hardcoded colors bypassing theme provider
