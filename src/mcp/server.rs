@@ -6,7 +6,6 @@
 //! what an agent connects to. It follows the process: the shell holds this
 //! value, and dropping the window drops the listener.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio::sync::oneshot;
@@ -16,13 +15,10 @@ use crate::ai::session::SessionManager;
 use crate::ai::tools::ToolExecutor;
 use crate::ai::workers::WorkerRegistry;
 
-/// A running orchestrator listener.
+/// A running orchestrator listener. Holding the value keeps the listener alive;
+/// dropping it asks the task to stop, and the task unlinks its socket.
 pub struct McpOrchestrationServer {
     shutdown_tx: Option<oneshot::Sender<()>>,
-    join_handle: Option<tokio::task::JoinHandle<()>>,
-    /// The socket the listener is bound to, for logs and for the MCP entry that
-    /// points at it (`super::builtin_orchestrator_server`).
-    pub socket_path: PathBuf,
 }
 
 impl McpOrchestrationServer {
@@ -39,34 +35,22 @@ impl McpOrchestrationServer {
         let socket_path = super::orchestrator_socket_path();
         let listening_on = socket_path.clone();
 
-        let join_handle = tokio_handle().spawn(async move {
+        // Detached on purpose: nothing waits for the task, and the shutdown
+        // signal is what the value's own Drop sends.
+        tokio_handle().spawn(async move {
             super::sse::start_sse_server(handler, listening_on, shutdown_rx).await;
         });
-
         tracing::info!(socket = %socket_path.display(), "MCP orchestration server starting");
         Self {
             shutdown_tx: Some(shutdown_tx),
-            join_handle: Some(join_handle),
-            socket_path,
         }
-    }
-
-    /// Stop the listener and wait for its task.
-    pub async fn shutdown(mut self) {
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(());
-        }
-        if let Some(handle) = self.join_handle.take() {
-            let _ = handle.await;
-        }
-        tracing::info!("MCP orchestration server stopped");
     }
 }
 
 impl Drop for McpOrchestrationServer {
     fn drop(&mut self) {
         // The task removes its socket when its shutdown lands, so a window
-        // closing is enough; `shutdown` is only for callers that need to wait.
+        // closing is enough.
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
         }

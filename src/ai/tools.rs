@@ -274,7 +274,7 @@ impl Tool for SpawnWorker {
                 "spawn_worker",
                 format!(
                     "Worker '{agent}' 的 pane 已创建（pane_id={}），但 Agent 未就绪: {error}",
-                    started.agent.pane_id
+                    started.pane_id
                 ),
             );
         }
@@ -284,7 +284,7 @@ impl Tool for SpawnWorker {
                 "spawn_worker",
                 format!(
                     "Worker '{agent}' 已启动（pane_id={}, name={}），但发送指令失败: {error}",
-                    started.agent.pane_id, name
+                    started.pane_id, name
                 ),
             );
         }
@@ -293,9 +293,9 @@ impl Tool for SpawnWorker {
             let short: String = instruction.chars().take(16).collect();
             format!("{agent}: {short}...")
         });
-        let _ = endpoint.rename_pane(&started.agent.pane_id, &label);
+        let _ = endpoint.rename_pane(&started.pane_id, &label);
 
-        let terminal_id = started.agent.terminal_id.as_deref().unwrap_or("-");
+        let terminal_id = started.terminal_id.as_deref().unwrap_or("-");
         let position = match position {
             Some(_) => {
                 let row = position_value(position, "row");
@@ -308,7 +308,7 @@ impl Tool for SpawnWorker {
             "spawn_worker",
             format!(
                 "Worker '{agent}' 已启动: pane_id={}, terminal_id={terminal_id}{position}",
-                started.agent.pane_id
+                started.pane_id
             ),
         )
     }

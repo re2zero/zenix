@@ -1260,7 +1260,7 @@ pub fn execute_agent_task(
         }
     };
 
-    let pane_id = started.agent.pane_id.clone();
+    let pane_id = started.pane_id.clone();
 
     // Wait for the CLI to settle: `agent.start` returns before the agent takes
     // prompts, and a prompt sent in between is refused.

@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::client;
@@ -39,26 +39,19 @@ const WAIT_SLACK: Duration = Duration::from_secs(5);
 /// agent active on the order of its own settle delay, which is 100 ms.
 const READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-/// Where a pane read takes its text from. The daemon spells these on the wire.
+/// Where a pane read takes its text from. The daemon also spells `visible`,
+/// `recent_unwrapped` and `detection`; only the scrollback read has a caller so
+/// far, and a second variant arrives with its first use.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReadSource {
-    /// Only what the pane shows right now.
-    Visible,
     /// The last `lines` of the pane plus its scrollback.
     Recent,
-    /// Like `Recent`, with wrapped lines joined back together.
-    RecentUnwrapped,
-    /// The detection view the daemon uses to classify the pane's agent.
-    Detection,
 }
 
 impl ReadSource {
     pub fn as_str(self) -> &'static str {
         match self {
-            Self::Visible => "visible",
             Self::Recent => "recent",
-            Self::RecentUnwrapped => "recent_unwrapped",
-            Self::Detection => "detection",
         }
     }
 }
@@ -79,7 +72,7 @@ impl SplitDirection {
     }
 }
 
-/// One running agent, as `agent.list` / `agent.info` report it. Only the fields
+/// One running agent, as `agent.list` / `agent.get` report it. Only the fields
 /// the tools surface are named; the daemon sends more and they are ignored.
 #[derive(Clone, Debug, Deserialize)]
 pub struct AgentInfo {
@@ -87,19 +80,11 @@ pub struct AgentInfo {
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
-    pub agent: Option<String>,
-    #[serde(default)]
     pub agent_status: Option<String>,
     #[serde(default)]
     pub workspace_id: Option<String>,
     #[serde(default)]
-    pub tab_id: Option<String>,
-    #[serde(default)]
     pub terminal_id: Option<String>,
-    #[serde(default)]
-    pub cwd: Option<String>,
-    #[serde(default)]
-    pub focused: bool,
     /// The daemon has finished starting the CLI, so the agent takes prompts.
     #[serde(default)]
     pub interactive_ready: bool,
@@ -117,31 +102,18 @@ impl AgentInfo {
     }
 }
 
-/// The agent a start produced, plus the argv the daemon launched it with.
-#[derive(Clone, Debug, Deserialize)]
-pub struct AgentStarted {
-    pub agent: AgentInfo,
-    #[serde(default)]
-    pub argv: Vec<String>,
-}
-
-/// A pane read result: the text plus whether the daemon truncated it.
+/// A pane read result. The daemon reports more (its revision, the tab it
+/// belongs to, whether it truncated); only the text has a caller so far.
 #[derive(Clone, Debug, Deserialize)]
 pub struct PaneRead {
     #[serde(default)]
     pub text: String,
-    #[serde(default)]
-    pub truncated: bool,
-    #[serde(default)]
-    pub pane_id: Option<String>,
 }
 
 /// The pane a split produced.
 #[derive(Clone, Debug, Deserialize)]
 pub struct PaneInfo {
     pub pane_id: String,
-    #[serde(default)]
-    pub terminal_id: Option<String>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -253,7 +225,7 @@ impl ApiEndpoint {
         pane_id: &str,
         args: Vec<String>,
         timeout_ms: u64,
-    ) -> Result<AgentStarted, EndpointError> {
+    ) -> Result<AgentInfo, EndpointError> {
         let result = self.call(
             "agent.start",
             json!({
@@ -264,7 +236,7 @@ impl ApiEndpoint {
               "timeout_ms": timeout_ms,
             }),
         )?;
-        decode(&result)
+        required_field(&result, "agent")
     }
 
     /// Submit a prompt to an agent, identified by its name or its pane.
@@ -463,20 +435,6 @@ fn decode<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T, EndpointEr
     serde_json::from_value(value.clone()).map_err(|err| EndpointError::Protocol(err.to_string()))
 }
 
-/// A description of a tool call's endpoint, for logs and for the probe.
-#[derive(Clone, Debug, Serialize)]
-pub struct EndpointDescription {
-    pub socket: PathBuf,
-}
-
-impl From<&ApiEndpoint> for EndpointDescription {
-    fn from(endpoint: &ApiEndpoint) -> Self {
-        Self {
-            socket: endpoint.socket_path().to_path_buf(),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -535,9 +493,6 @@ mod tests {
     #[test]
     fn read_sources_and_split_directions_use_the_daemons_spelling() {
         assert_eq!(ReadSource::Recent.as_str(), "recent");
-        assert_eq!(ReadSource::RecentUnwrapped.as_str(), "recent_unwrapped");
-        assert_eq!(ReadSource::Visible.as_str(), "visible");
-        assert_eq!(ReadSource::Detection.as_str(), "detection");
         assert_eq!(SplitDirection::Right.as_str(), "right");
         assert_eq!(SplitDirection::Down.as_str(), "down");
     }
@@ -575,7 +530,7 @@ mod tests {
         assert_eq!(agent.pane_id, "w1:p2");
         assert_eq!(agent.name.as_deref(), Some("oc-check"));
         assert_eq!(agent.agent_status.as_deref(), Some("working"));
-        assert!(agent.focused);
+        assert_eq!(agent.workspace_id.as_deref(), Some("w1"));
     }
 
     #[test]
