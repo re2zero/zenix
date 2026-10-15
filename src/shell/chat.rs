@@ -50,10 +50,7 @@ use crate::api_provider::{self, ApiProviderConfig};
 use crate::i18n::t;
 
 /// The right-hand panel's blocks, top to bottom.
-pub(crate) const ASIDE: &[Contribution] = &[Contribution {
-    id: "chat",
-    render: render,
-}];
+pub(crate) const ASIDE: &[Contribution] = &[Contribution { id: "chat", render }];
 
 /// How many tool rounds one turn may take. The engine has its own ceiling; this
 /// is the tighter one the panel asks for.
@@ -65,7 +62,7 @@ const MAX_TOOL_ROUNDS: u32 = 8;
 /// shell whenever the panel changes.
 fn render(_: &Invocation, window: &mut Window, cx: &mut App) -> AnyElement {
     window
-        .use_keyed_state("chat-panel", cx, |window, cx| ChatPanel::new(window, cx))
+        .use_keyed_state("chat-panel", cx, ChatPanel::new)
         .into_any_element()
 }
 

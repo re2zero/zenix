@@ -21,9 +21,10 @@ use crate::platform;
 // ── Thinking Level ──────────────────────────────────────────────────
 
 /// Discrete reasoning-effort level.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum ThinkingLevel {
     #[serde(rename = "low")]
+    #[default]
     Low,
     #[serde(rename = "medium")]
     Medium,
@@ -31,12 +32,6 @@ pub enum ThinkingLevel {
     High,
     #[serde(rename = "xhigh")]
     XHigh,
-}
-
-impl Default for ThinkingLevel {
-    fn default() -> Self {
-        ThinkingLevel::Low
-    }
 }
 
 impl ThinkingLevel {
@@ -77,7 +72,7 @@ impl ThinkingLevel {
         }
     }
 
-    pub fn from_str(s: &str) -> Option<ThinkingLevel> {
+    pub fn parse_token(s: &str) -> Option<ThinkingLevel> {
         match s {
             "low" => Some(ThinkingLevel::Low),
             "medium" => Some(ThinkingLevel::Medium),

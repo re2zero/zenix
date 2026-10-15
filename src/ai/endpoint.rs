@@ -266,10 +266,10 @@ impl ApiEndpoint {
         loop {
             // An agent the daemon has not registered yet answers with an error;
             // that is a "not yet", not a failure of the wait.
-            if let Ok(agent) = self.agent(name) {
-                if agent.is_ready() {
-                    return Ok(agent);
-                }
+            if let Ok(agent) = self.agent(name)
+                && agent.is_ready()
+            {
+                return Ok(agent);
             }
             if Instant::now() >= deadline {
                 return Err(EndpointError::AgentNotReady {

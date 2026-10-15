@@ -255,8 +255,10 @@ mod tests {
 
     #[test]
     fn a_disconnect_clears_the_state_it_owns() {
-        let mut state = LiveState::default();
-        state.status = ConnectionStatus::Connected;
+        let mut state = LiveState {
+            status: ConnectionStatus::Connected,
+            ..Default::default()
+        };
         state.apply(ClientEvent::Disconnected {
             reason: "closed".into(),
             ssh: None,

@@ -304,21 +304,20 @@ impl TerminalView {
         if let Some(hit) = reporting {
             window.focus(&self.focus, cx);
             cx.stop_propagation();
-            if matches!(hit.target, InputTarget::Pane(_)) {
-                if let Some(button) = mouse_button(event.button) {
-                    if let Some(boot) = self.live.boot_id().map(str::to_owned) {
-                        // Arm the gesture only for a press the application
-                        // actually received; `send_input` already warns when
-                        // the send failed, and a drag or release must never
-                        // answer a press the application never saw.
-                        if self.send_mouse(&hit, ClientMouseKind::Down(button), event.modifiers) {
-                            self.mouse_gesture = Some(MouseGesture {
-                                hit,
-                                button: event.button,
-                                boot,
-                            });
-                        }
-                    }
+            if matches!(hit.target, InputTarget::Pane(_))
+                && let Some(button) = mouse_button(event.button)
+                && let Some(boot) = self.live.boot_id().map(str::to_owned)
+            {
+                // Arm the gesture only for a press the application
+                // actually received; `send_input` already warns when
+                // the send failed, and a drag or release must never
+                // answer a press the application never saw.
+                if self.send_mouse(&hit, ClientMouseKind::Down(button), event.modifiers) {
+                    self.mouse_gesture = Some(MouseGesture {
+                        hit,
+                        button: event.button,
+                        boot,
+                    });
                 }
             }
             return;

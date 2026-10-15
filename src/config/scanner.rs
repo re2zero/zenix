@@ -200,7 +200,7 @@ mod tests {
         let cmd = map.get(&["mcpServers", "new_srv", "command"]).unwrap();
         assert_eq!(cmd.as_str().unwrap(), "echo");
         // Existing field preserved
-        assert_eq!(map.get(&["existing"]).unwrap().as_bool().unwrap(), true);
+        assert!(map.get(&["existing"]).unwrap().as_bool().unwrap());
     }
 
     #[test]

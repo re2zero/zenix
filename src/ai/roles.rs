@@ -147,9 +147,19 @@ tags: [general, development]
 4. 测试
 "#;
 
-/// All built-in templates as (id, display_name, description, tags, cli_suggestion, content).
+/// One built-in template row: (id, display_name, description, tags, cli_suggestion, content).
+type BuiltinTemplate = (
+    &'static str,
+    &'static str,
+    &'static str,
+    &'static [&'static str],
+    &'static [&'static str],
+    &'static str,
+);
+
+/// All built-in templates.
 #[allow(dead_code)]
-const BUILTIN_TEMPLATES: &[(&str, &str, &str, &[&str], &[&str], &str)] = &[
+const BUILTIN_TEMPLATES: &[BuiltinTemplate] = &[
     (
         "frontend-developer",
         "Frontend Developer",

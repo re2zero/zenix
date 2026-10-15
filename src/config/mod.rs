@@ -87,22 +87,12 @@ const LOCALES: &[&str] = &["en", "zh-CN"];
 // ── The schema ───────────────────────────────────────────────────────
 
 /// Everything zenix remembers, as one document.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ConfigFile {
     pub appearance: Appearance,
     pub terminal: TerminalConfig,
     pub layout: Layout,
-}
-
-impl Default for ConfigFile {
-    fn default() -> Self {
-        Self {
-            appearance: Appearance::default(),
-            terminal: TerminalConfig::default(),
-            layout: Layout::default(),
-        }
-    }
 }
 
 /// What the chrome looks like. The mode is the only source of truth for

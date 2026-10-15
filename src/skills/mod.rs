@@ -598,7 +598,7 @@ fn url_encode(s: &str) -> String {
             }
             b' ' => encoded.push_str("%20"),
             _ => {
-                encoded.push_str("%");
+                encoded.push('%');
                 encoded.push_str(&format!("{:02X}", c));
             }
         }

@@ -822,7 +822,7 @@ impl OrchestratorEngine {
             }
 
             // Build the request payload with tools
-            let payload = build_tool_call_payload(&loop_messages, tools, &self.current_model());
+            let payload = build_tool_call_payload(&loop_messages, tools, self.current_model());
 
             // Send the HTTP request and collect tool_calls from SSE stream
             let current_round = tool_round;
@@ -1025,7 +1025,7 @@ impl OrchestratorEngine {
         let mut consecutive_identical: u32 = 0;
 
         loop {
-            let payload = build_tool_call_payload(&loop_messages, tools, &self.current_model());
+            let payload = build_tool_call_payload(&loop_messages, tools, self.current_model());
 
             let http_client = self.http_client.clone();
             let endpoint = self.endpoint_url().to_string();
@@ -1050,35 +1050,34 @@ impl OrchestratorEngine {
                         .map_err(AiError::from)?;
 
                     let mut tc = Vec::new();
-                    if let Some(choice) = parsed.get("choices").and_then(|c| c.get(0)) {
-                        if let Some(msg) = choice.get("message") {
-                            if let Some(tcs) = msg.get("tool_calls").and_then(|v| v.as_array()) {
-                                for t in tcs {
-                                    let name = t
-                                        .get("function")
-                                        .and_then(|f| f.get("name"))
-                                        .and_then(|n| n.as_str())
-                                        .unwrap_or_default()
-                                        .to_string();
-                                    let args_str = t
-                                        .get("function")
-                                        .and_then(|f| f.get("arguments"))
-                                        .and_then(|a| a.as_str())
-                                        .unwrap_or("{}");
-                                    let args = serde_json::from_str(args_str)
-                                        .unwrap_or(serde_json::Value::String(args_str.to_string()));
-                                    let id = t
-                                        .get("id")
-                                        .and_then(|v| v.as_str())
-                                        .unwrap_or_default()
-                                        .to_string();
-                                    tc.push(ToolCall {
-                                        id,
-                                        name,
-                                        arguments: args,
-                                    });
-                                }
-                            }
+                    if let Some(choice) = parsed.get("choices").and_then(|c| c.get(0))
+                        && let Some(msg) = choice.get("message")
+                        && let Some(tcs) = msg.get("tool_calls").and_then(|v| v.as_array())
+                    {
+                        for t in tcs {
+                            let name = t
+                                .get("function")
+                                .and_then(|f| f.get("name"))
+                                .and_then(|n| n.as_str())
+                                .unwrap_or_default()
+                                .to_string();
+                            let args_str = t
+                                .get("function")
+                                .and_then(|f| f.get("arguments"))
+                                .and_then(|a| a.as_str())
+                                .unwrap_or("{}");
+                            let args = serde_json::from_str(args_str)
+                                .unwrap_or(serde_json::Value::String(args_str.to_string()));
+                            let id = t
+                                .get("id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default()
+                                .to_string();
+                            tc.push(ToolCall {
+                                id,
+                                name,
+                                arguments: args,
+                            });
                         }
                     }
 
@@ -1646,7 +1645,7 @@ mod tests {
     fn test_tool_result_error_not_interrupting_loop() {
         // Verify that error results are still included in the loop,
         // not causing early termination.
-        let results = vec![
+        let results = [
             ToolResult::ok("read_file", "file content"),
             ToolResult::error("read_file", "file not found"),
         ];

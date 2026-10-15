@@ -492,15 +492,13 @@ impl SessionManager {
         if safe_query.trim().is_empty() {
             return Ok(Vec::new());
         }
-        let sql = format!(
-            "SELECT m.key, m.value FROM memories_fts fts
+        let sql = "SELECT m.key, m.value FROM memories_fts fts
              JOIN memories m ON fts.rowid = m.id
              WHERE memories_fts MATCH ?1
              ORDER BY rank
-             LIMIT ?2"
-        );
+             LIMIT ?2";
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(&sql).context("prepare search_memory")?;
+        let mut stmt = conn.prepare(sql).context("prepare search_memory")?;
         let rows = stmt
             .query_map(params![safe_query, limit as i64], |row| {
                 Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))

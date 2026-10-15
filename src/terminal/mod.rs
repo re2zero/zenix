@@ -246,7 +246,7 @@ impl WheelAccumulator {
 }
 
 pub struct WheelTarget {
-    pub target: InputTarget,
+    pub(crate) target: InputTarget,
     pub(crate) mouse_reporting: bool,
     pub(crate) bounds: Bounds<Pixels>,
     position: ClientMousePosition,
@@ -414,7 +414,7 @@ pub fn wheel_target(
     })
 }
 
-pub fn color(value: u32, default: u32, theme: &Theme) -> u32 {
+pub(crate) fn color(value: u32, default: u32, theme: &Theme) -> u32 {
     match value >> 24 {
         0 => match value & 255 {
             1..=16 => theme.palette[((value & 255) - 1) as usize],
@@ -434,7 +434,7 @@ fn is_default(value: u32) -> bool {
     }
 }
 
-pub fn cell_colors(cell: &CellData, theme: &Theme) -> (u32, u32) {
+pub(crate) fn cell_colors(cell: &CellData, theme: &Theme) -> (u32, u32) {
     let mut fg = match theme.bold {
         Some(bold) if cell.modifier & BOLD != 0 && is_default(cell.fg) => bold,
         _ => color(cell.fg, theme.foreground, theme),

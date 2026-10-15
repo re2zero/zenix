@@ -15,8 +15,10 @@ pub(crate) use self::area::{Layer, Part, Span, cell_ranges, clip, covers};
 use self::glyphs::GlyphCache;
 use self::graphics::{CellSeparator, Graphic};
 use self::grid::{background_extent, grid_corners, grid_rect, last_row_has_separator};
+#[cfg(test)]
+pub(crate) use self::images::ImageTarget;
+pub(crate) use self::images::PlacedImages;
 use self::images::{ImageCache, ImageGeometry, below_text};
-pub(crate) use self::images::{ImageTarget, PlacedImages};
 use crate::terminal::*;
 use gpui_kit::*;
 use herdr_client::protocol::{CellData, FrameData, PaneSurfacePane, SurfaceRect};

@@ -296,7 +296,7 @@ mod tests {
     fn test_estimate_messages_tokens_multiple() {
         let compactor = Compactor::default_compactor();
         let messages = vec![msg_ref("user", "hello"), msg_ref("assistant", "world")];
-        let single = compactor.estimate_messages_tokens(&vec![msg_ref("user", "hello")]);
+        let single = compactor.estimate_messages_tokens(&[msg_ref("user", "hello")]);
         let multi = compactor.estimate_messages_tokens(&messages);
         // Multi should be more than single
         assert!(multi > single);

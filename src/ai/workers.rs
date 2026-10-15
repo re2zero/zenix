@@ -189,13 +189,13 @@ impl WorkerRegistry {
     /// Mark a worker as cancelled by its pane ID.
     pub fn cancel_by_pane(&self, pane_id: &str) {
         let mut inner = self.inner.lock().unwrap();
-        if let Some(worker) = inner.workers.iter_mut().find(|w| w.pane_id == pane_id) {
-            if matches!(
+        if let Some(worker) = inner.workers.iter_mut().find(|w| w.pane_id == pane_id)
+            && matches!(
                 worker.status,
                 WorkerStatus::Starting | WorkerStatus::Running
-            ) {
-                worker.status = WorkerStatus::Cancelled;
-            }
+            )
+        {
+            worker.status = WorkerStatus::Cancelled;
         }
     }
 

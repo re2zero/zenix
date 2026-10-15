@@ -356,7 +356,7 @@ impl Render for ShellView {
                 // A command the shell runs itself goes through `run` whether it
                 // arrived as a chord or as a click, so the two cannot part ways.
                 ShellRequest::Command(command) if command.is_local() => {
-                    let _ = entity.update(cx, |shell, cx| shell.run(command, window, cx));
+                    entity.update(cx, |shell, cx| shell.run(command, window, cx));
                 }
                 ShellRequest::Command(command) => {
                     if let Some((method, params)) = snapshot

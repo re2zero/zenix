@@ -415,7 +415,6 @@ mod tests {
     #[test]
     fn the_detail_line_prefers_the_focused_pane_cwd() {
         let snapshot = snapshot_with_panes();
-        let workspace = &snapshot.workspaces[0];
         let focused = snapshot
             .panes
             .iter()

@@ -52,10 +52,10 @@ mod unix_impl {
             Ok(l) => l,
             Err(e) => {
                 // Race condition — try one more time to connect
-                if let Ok(mut stream) = UnixStream::connect(&socket_path) {
-                    if stream.write_all(b"focus").is_ok() {
-                        stream.shutdown(Shutdown::Both).ok();
-                    }
+                if let Ok(mut stream) = UnixStream::connect(&socket_path)
+                    && stream.write_all(b"focus").is_ok()
+                {
+                    stream.shutdown(Shutdown::Both).ok();
                 }
                 return Err(format!(
                     "another zenix instance is already running (socket: {}): {}",

@@ -167,14 +167,8 @@ impl SpawnWorker {
             .and_then(|pos| pos.get("col"))
             .and_then(|value| value.as_u64())
             .unwrap_or(0);
-        let row = position
-            .and_then(|pos| pos.get("row"))
-            .and_then(|value| value.as_u64())
-            .unwrap_or(0);
         if col > 0 {
             SplitDirection::Right
-        } else if row > 0 {
-            SplitDirection::Down
         } else {
             SplitDirection::Down
         }
