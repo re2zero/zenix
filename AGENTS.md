@@ -5,9 +5,9 @@
 **Branch:** main
 
 ## OVERVIEW
-zenix is a cross-platform GPUI desktop frontend for herdr terminal workspace manager. It provides workspace/tab/pane management, system monitoring, theme engine, and plugin architecture via Rust + GPUI.
+zenix is a cross-platform GPUI desktop frontend for herdr terminal workspace manager. It provides workspace/tab/pane management, client settings, an AI chat panel, and a plugin architecture via Rust + GPUI.
 
-The UI is being rebuilt on **gpui-kit 0.7.3** as a native client of the daemon's generation-1 endpoint protocol (multi-session plan in `.relay/PLAN.md` — local, gitignored). The old GPUI/PTY UI was deleted in M1, M3 rebuilt native pane rendering, and M4 has landed the workspace shell (`src/shell/`) with split-ratio and sidebar drag, tab reorder commands and the close chain, so the window is usable again. M5 has made the client's own settings real: `src/config/` holds a schema-checked `config.json` (with per-field diagnostics for a hand-edited file) and `src/shell/settings.rs` mounts the `gpui-kit` settings surface from the contribution registry. M6 has made the AI side real again: `src/shell/panels.rs` shows the daemon's agents from snapshot pushes, and `src/shell/chat.rs` is the right-hand panel's chat block — real turns over `src/ai` (streamed, with tool cards) persisted to `ai/zenix-ai.db`, mounted through the registry's aside slot. Remaining residue: pointer-driven tab dragging, sidebar workspace reordering, command palette (deferred to M8a, when plugin actions become the palette's data source).
+The UI is being rebuilt on **gpui-kit 0.7.3** as a native client of the daemon's generation-1 endpoint protocol (multi-session plan in `.relay/PLAN.md` — local, gitignored). The old GPUI/PTY UI was deleted in M1, M3 rebuilt native pane rendering, and M4 has landed the workspace shell (`src/shell/`) with split-ratio and sidebar drag, tab reorder commands and the close chain, so the window is usable again. M5 has made the client's own settings real: `src/config/` holds a schema-checked `config.json` (with per-field diagnostics for a hand-edited file) and `src/shell/settings.rs` mounts the `gpui-kit` settings surface from the contribution registry. M6 has made the AI side real again: `src/shell/panels.rs` shows the daemon's agents from snapshot pushes, and `src/shell/chat.rs` is the right-hand panel's chat block — real turns over `src/ai` (streamed, with tool cards) persisted to `ai/zenix-ai.db`, mounted through the registry's aside slot. M7 has made delivery real: `cargo deb` produces the package, whose asset list ships the release-built herdr as the first-run seed (`build.rs` refreshes `res/herdr` on every release build — a stale seed leaves a fresh install unable to connect), the project and third-party license texts, and the desktop entry and icon. The Lilex faces and the theme JSONs are no longer packaged: the fonts are compiled into the binary and nothing reads the theme files yet. Remaining residue: pointer-driven tab dragging, sidebar workspace reordering, command palette (deferred to M8a, when plugin actions become the palette's data source).
 
 ## STRUCTURE
 ```
@@ -66,7 +66,7 @@ zenix/
 | System monitoring | src/sys.rs | sysinfo crate, real-time stats |
 | Config schema | src/config/mod.rs | JSONC walked against the schema; problems become diagnostics |
 | I18n (CN/EN) | src/i18n.rs, locales/zenix.yml | rust-i18n macro |
-| Build/packaging | Cargo.toml, build.rs | deb packaging, herdr embedding |
+| Build/packaging | Cargo.toml, build.rs | `cargo deb` asset list, license texts, herdr embedding and the `res/herdr` seed |
 | Plan & handoff | .relay/PLAN.md §8, .relay/journal/HANDOFF-*.md | Read the relay protocol first (local, gitignored) |
 
 ## CONVENTIONS
@@ -81,7 +81,8 @@ zenix/
 - **Config is JSONC** (comments allowed), walked against a schema on every load: an unknown key is dropped, a wrong type falls back per field, an out-of-range number is clamped, and each is reported as a diagnostic
 - **Endpoint is the state truth**: workspace/tab/pane/agent state comes from `ClientEvent::Snapshot` pushes — do not add polling
 - **No local PTY**: daemon panes are the only terminal source (the local PTY/alacritty path was removed by decision)
-- **Herdr binary**: auto-seeds to `~/.local/bin/herdr` on first run; herdr self-updates thereafter
+- **Herdr binary**: auto-seeds to `~/.local/bin/herdr` on first run (from `res/herdr`, which every release build refreshes); herdr self-updates thereafter
+- **Packaged assets**: fonts and theme JSONs are *not* shipped — the Lilex faces are compiled in via `include_bytes!` and no code reads `assets/themes/` yet. License texts (project GPL, Lilex OFL, herdr + vendored Apache-2.0 with NOTICEs) are shipped under `/usr/share/doc/zenix/`; the inventory is `THIRD-PARTY.md`
 
 ## ANTI-PATTERNS (THIS PROJECT)
 - ❌ Direct `cargo run` without checking the herdr binary — dev copies the installed herdr, so install it or set `HERDR_BUILD=1`
@@ -121,4 +122,4 @@ cargo clippy                            # Lint
 - **Vendored crates**: `vendor/herdr-protocol` + `vendor/herdr-client` (plus `vendor/test-support/sandbox.rs`) are byte-identical to herdr-gpui upstream, with `NOTICE.md`/`LICENSE-APACHE` kept
 - **I18n**: Chinese/English via `rust-i18n` macro; keys live in `locales/zenix.yml`
 - **Desktop entry** at `res/zenix.desktop`, icon at `res/zenix.png`
-- **License**: GPL-3.0-or-later (zenix), Apache-2.0 (herdr, gpui-kit/gpui-component, vendored endpoint crates)
+- **License**: GPL-3.0-or-later (zenix), Apache-2.0 (herdr, gpui-kit/gpui-component, vendored endpoint crates), SIL OFL-1.1 (Lilex) — see `THIRD-PARTY.md`

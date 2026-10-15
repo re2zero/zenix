@@ -2,65 +2,84 @@
 
 **可扩展的 AI 编程助手终端工作区管理器。**
 
-[herdr](https://github.com/ogulcancelik/herdr) 的 GPUI 桌面前端，提供工作区、标签页、窗格管理，内置系统监控和多主题支持。
+[herdr](https://github.com/ogulcancelik/herdr) 的 [gpui-kit](https://crates.io/crates/gpui-kit) 桌面客户端 —— 提供工作区、标签页与窗格管理、原生终端渲染、客户端设置，以及可直接驱动 daemon 智能体的 AI 对话面板。
+
+英文版见 [README.md](README.md)。
 
 ## 功能
 
-- **终端多路复用** — 通过 herdr 管理多个 PTY 会话
-- **系统监控** — 侧边栏实时显示 CPU、内存、网络、磁盘状态
-- **主题引擎** — 内置 4 套主题（Gruvbox、Solarized、Tokyo Night、Matrix）
-- **输入法支持** — 通过 GPUI 完整支持中日韩输入
-- **插件架构** — `lib.rs` 暴露 SDK 供扩展和子应用使用
-- **herdr 自升级** — 首次运行安装到 `~/.local/bin/herdr`，后续自行升级
+- **工作台外壳** — 侧栏、标签栏、分屏、状态栏；所有面板经贡献点注册表装配，不硬编码在壳里。
+- **原生窗格渲染** — 窗格归 daemon 所有；zenix 绘制其 surface 并发送语义输入（按键、输入法组合串、粘贴、鼠标、回滚），而非字节流。
+- **客户端设置** — 每次加载都把 `config.json`（JSONC）与 schema 逐字段核对：未知键丢弃、类型错误按字段回落、越界数值收敛，问题在设置面板里逐条显示。
+- **AI 对话面板** — 右侧可调宽面板，真实多轮对话、工具卡片、会话落 SQLite；编排器经 daemon 的 JSON API lane 驱动其智能体。
+- **智能体监视器** — 侧栏按 snapshot 推送列出 daemon 的智能体（无轮询）。
+- **MCP 编排** — 窗口开启期间，zenix 经 MCP（SSE）暴露编排工具。
+- **插件 / 子应用 SDK** — `src/lib.rs` 是扩展的公共 API 面。
+- **herdr 自升级** — 首次运行安装到 `~/.local/bin/herdr`，此后 herdr 自行升级该副本。
+
+## 架构
+
+daemon 是状态的唯一真相。zenix 连接 herdr 配置根下的两个 socket，自身不额外保存工作区/标签/窗格/智能体状态：
+
+- `herdr-client.sock` —— generation-1 **端点**协议：surface 进、语义输入出。
+- `herdr.sock` —— daemon 的 **JSON API** lane，`herdr` CLI 自己用的那条；只有它提供编排需要的智能体与窗格读取方法。
+
+本地没有 PTY：daemon 窗格是唯一的终端来源。
 
 ## 项目结构
 
 ```
 src/
-  main.rs                  入口点
-  lib.rs                   插件 SDK（公共 API）
-  app.rs                   ZenixApp 主应用（状态、事件、渲染）
-  config.rs                配置存储 (~/.config/zenix/config.json)
-  sys.rs                   系统信息采集
-  client/mod.rs            herdr 二进制管理（安装、启动、socket）
-  terminal/
-    mod.rs                 终端后端（PTY、类型、进程生成）
-    element.rs             GPUI 终端渲染
-    encoding.rs            键盘/鼠标事件编码
-  ui/
-    mod.rs                 UI 模块
-    sidebar.rs             侧边栏、设置与系统信息面板
+  main.rs                  入口：字体、配置、键位、窗口
+  lib.rs                   插件与子应用 SDK（公共 API）
+  shell/                   工作台外壳：ShellView、命令、键位、贡献点注册表、设置页、对话面板、面板拖宽
+  terminal/                单元格绘制与语义输入
+  herdr/                   端点门面：连接与实时状态（快照进、命令出）
+  config/                  客户端自身配置：schema、诊断、全局存储
+  ai/                      编排器：引擎、工具、会话、提示词、压缩
+  client/mod.rs            herdr 二进制管理（播种、启动、socket）
+  platform.rs              平台路径与平台相关代码
+  provider/, api_provider/ 智能体 CLI 与 REST API 提供商
+  mcp/, agent/, skills/    MCP 服务、智能体探测、技能系统
+  sys.rs, i18n.rs, util.rs 系统信息、i18n、工具函数
 res/
-  zenix.desktop            桌面入口文件
-  zenix.svg                应用图标
+  zenix.desktop            桌面入口
+  zenix.png                应用图标
+  herdr                    发布构建的 herdr（deb 首启种子）
 assets/
-  fonts/                   Lilex 字体族
-  themes/                  主题 JSON 文件
+  fonts/                   Lilex 字体族（经 include_bytes! 编译进二进制）
+  themes/                  主题 JSON（尚未接入客户端）
+  prompts/                 编排器提示词（播种到配置目录）
 herdr/                     Git 子模块（ogulcancelik/herdr, v0.9.3）
-build.rs                   从子模块编译/嵌入 herdr
+vendor/                   内嵌端点 crate（与上游逐字节相同）
+build.rs                   让 herdr 可用：dev 复制已安装件，release 从子模块构建
 ```
 
 ## 依赖与许可证
 
 | 依赖 | 许可证 | 关系 |
 |-----------|---------|-------------|
-| [gpui-kit](https://github.com/longbridge/gpui-kit) | Apache-2.0 | 静态链接 UI 框架 |
-| [gpui-component](https://github.com/longbridge/gpui-component) | Apache-2.0 | 静态链接组件库 |
+| [gpui-kit](https://crates.io/crates/gpui-kit) | Apache-2.0 | 静态链接 UI 框架 |
+| [gpui-component](https://crates.io/crates/gpui-component) | Apache-2.0 | 静态链接组件库 |
 | [herdr](https://github.com/ogulcancelik/herdr) | Apache-2.0 | 独立二进制，socket IPC（mere aggregation） |
 | [herdr-protocol / herdr-client](vendor/) | Apache-2.0 | 内嵌端点协议与客户端（静态链接） |
+| [Lilex](https://github.com/mishamyrt/Lilex) | SIL OFL-1.1 | 终端字体（编译进二进制） |
 
-zenix 本体使用 **GPL-3.0-or-later** 许可证（详见 [LICENSE](LICENSE)）。
+zenix 本体使用 **GPL-3.0-or-later**（详见 [LICENSE](LICENSE)），第三方组件清单见 [THIRD-PARTY.md](THIRD-PARTY.md)。
 
 ## 构建
 
 ### 前置依赖
 
-- Rust 1.85+ (edition 2024)
-- 系统库：`libxkbcommon-dev`、`libwayland-dev`、`libfontconfig-dev`、`cmake`
+- Rust 1.85+（edition 2024）
+- 系统库：`libxcb1-dev`、`libxkbcommon-dev`、`libxkbcommon-x11-dev`、`libfontconfig1-dev`、`libfreetype6-dev`、`libexpat1-dev`、`libwayland-dev`、`libegl1-mesa-dev`、`libgl1-mesa-dev`、`pkg-config`
+- **Zig 0.16.0** —— 仅当从子模块构建 herdr（即任何发布构建）时需要；版本必须精确，herdr 的 `build.zig.zon` 拒绝其它版本。
 
 ```bash
 # 安装系统依赖（Debian/Ubuntu/Deepin）
-sudo apt install libxkbcommon-dev libwayland-dev libfontconfig-dev cmake pkg-config
+sudo apt install libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev \
+  libfontconfig1-dev libfreetype6-dev libexpat1-dev libwayland-dev \
+  libegl1-mesa-dev libgl1-mesa-dev pkg-config
 
 # 克隆（含子模块）
 git clone --recurse-submodules <repo-url>
@@ -73,38 +92,41 @@ cd zenix
 # 使用系统已安装的 herdr（快速）
 cargo run
 
-# 强制从子模块编译 herdr
-HERDR_BUILD=1 cargo run
+# 强制从子模块构建 herdr（需要 Zig）
+HERDR_BUILD=1 ZIG=/path/to/zig-0.16.0/zig cargo run
 ```
 
 ### 发布构建与打包
 
 ```bash
-# 完整发布构建（从子模块源码编译 herdr）
-cargo build --release
+# 完整发布构建：从子模块构建 herdr，并刷新 res/herdr
+ZIG=/path/to/zig-0.16.0/zig cargo build --release
 
-# 构建 .deb 包
+# 构建 .deb（会先跑发布构建）
 cargo deb
 # 输出：target/debian/zenix_0.1.0-1_amd64.deb
 ```
 
-## Herdr 启动流程
+### Herdr 启动流程
 
 ```
 zenix 启动
   ↓
-ensure_herdr() — 确保 herdr 可用
+ensure_herdr() —— 确保 herdr 可用
   ├── ~/.local/bin/herdr 存在？→ 直接使用（herdr 自行升级此副本）
-  ├── 内置二进制存在？→ 使用（开发模式）
+  ├── zenix 旁边的构建副本存在？→ 使用（开发时）
   ├── PATH 查找
   └── /usr/share/zenix/herdr 种子存在？→ 复制到 ~/.local/bin/herdr → 使用
-       （deb 安装后首次运行；后续启动跳过此步）
+       （deb 安装后的首次运行；后续启动跳过）
   ↓
-start_herdr_server() → herdr server --daemon
+start_herdr_server() → herdr server
   ↓
-is_socket_ready() → Unix socket 连接
+等待端点 socket 后连接
 ```
 
-## 终端 PATH 隔离
+## 配置
 
-PTY 会话中 `~/.local/bin` 前置到 `PATH`，确保终端内使用的 herdr CLI 为内置版本，不会被系统安装的旧版覆盖。
+两条配置在这客户端交汇，规则只有一条：**设置跟着执行它的那一侧走。**
+
+- `~/.config/zenix/config.json`（JSONC）—— *客户端*自己执行的设置：明暗模式、界面语言、终端调色板、侧栏与对话面板布局。只经设置面板写入。
+- daemon 自己的 `config.toml` —— *daemon*执行的设置：新窗格的 shell、新工作区目录、回滚、键位、插件。zenix 不读不写，只在设置面板的 Config 页指向它。

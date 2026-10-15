@@ -3,75 +3,103 @@
 **Extensible terminal workspace manager for AI coding agents.**
 *可扩展的 AI 编程助手终端工作区管理器。*
 
-A GPUI-native desktop frontend for [herdr](https://github.com/ogulcancelik/herdr) — workspace, tab, and pane management with built-in system monitoring and theme support.
+A [gpui-kit](https://crates.io/crates/gpui-kit) desktop client for [herdr](https://github.com/ogulcancelik/herdr) — workspace, tab and pane management, a native terminal, system-side client settings, and an AI chat panel that drives the daemon's agents.
 
-zenix 是 [herdr](https://github.com/ogulcancelik/herdr) 的 GPUI 桌面前端，提供工作区、标签页、窗格管理，内置系统监控和多主题支持。
+zenix 是 [herdr](https://github.com/ogulcancelik/herdr) 的 gpui-kit 桌面客户端，提供工作区、标签页与窗格管理、原生终端渲染、客户端设置，以及可直接驱动 daemon 智能体的 AI 对话面板。
 
 ## Features / 功能
 
-- **Terminal multiplexing** — spawn and manage multiple PTY sessions via herdr
-  *终端多路复用 — 通过 herdr 管理多个 PTY 会话*
-- **System monitor** — real-time CPU, memory, network, disk stats in sidebar
-  *系统监控 — 侧边栏实时显示 CPU、内存、网络、磁盘状态*
-- **Theme engine** — 4 built-in themes (Gruvbox, Solarized, Tokyo Night, Matrix)
-  *主题引擎 — 内置 4 套主题*
-- **IME support** — full Chinese/Japanese/Korean input via GPUI InputHandler
-  *输入法支持 — 通过 GPUI 完整支持中日韩输入*
-- **Plugin architecture** — `lib.rs` exposes SDK for extensions and sub-apps
-  *插件架构 — lib.rs 暴露 SDK 供扩展和子应用使用*
-- **Self-updating herdr** — seeds herdr on first run to `~/.local/bin/herdr`, then herdr self-updates
-  *herdr 自升级 — 首次运行安装到 ~/.local/bin/herdr，后续自行升级*
+- **Workspace shell** — sidebar, tab strip, split panes, status bar; every panel mounts through a contribution registry, not hardcoded in the shell.
+  *工作台外壳 — 侧栏、标签栏、分屏、状态栏；所有面板经贡献点注册表装配，不硬编码在壳里。*
+- **Native pane rendering** — the daemon owns the panes; zenix paints their surfaces and sends semantic input (keys, IME composition, paste, mouse, scrollback) rather than a byte stream.
+  *原生窗格渲染 — 窗格归 daemon 所有；zenix 绘制 surface 并发送语义输入（按键、输入法组合串、粘贴、鼠标、回滚），而非字节流。*
+- **Client settings** — `config.json` (JSONC) is walked against a schema on every load: an unknown key is dropped, a wrong type falls back per field, an out-of-range number is clamped, and each problem is reported in the settings panel.
+  *客户端设置 — 每次加载都把 `config.json`（JSONC）与 schema 逐字段核对：未知键丢弃、类型错误按字段回落、越界数值收敛，问题在设置面板里逐条显示。*
+- **AI chat panel** — a resizable right-hand panel with real turns, tool cards and per-session history in SQLite; the orchestrator drives the daemon through its JSON API lane.
+  *AI 对话面板 — 右侧可调宽面板，真实多轮对话、工具卡片、会话落 SQLite；编排器经 daemon 的 JSON API lane 驱动其智能体。*
+- **Agent monitor** — the sidebar lists the daemon's agents from snapshot pushes (no polling).
+  *智能体监视器 — 侧栏按 snapshot 推送列出 daemon 的智能体（无轮询）。*
+- **MCP orchestration** — zenix serves its orchestration tools over MCP (SSE) for the whole time a window is open.
+  *MCP 编排 — 窗口开启期间，zenix 经 MCP（SSE）暴露编排工具。*
+- **Plugin / sub-app SDK** — `src/lib.rs` is the public API surface for extensions.
+  *插件 / 子应用 SDK — `src/lib.rs` 是扩展的公共 API 面。*
+- **Self-updating herdr** — seeds herdr on first run to `~/.local/bin/herdr`, then herdr self-updates that copy.
+  *herdr 自升级 — 首次运行安装到 `~/.local/bin/herdr`，此后 herdr 自行升级该副本。*
+
+## Architecture / 架构
+
+The daemon is the state truth. zenix connects to two sockets under the herdr config root and adds no state of its own for workspace/tab/pane/agent data:
+
+- `herdr-client.sock` — the generation-1 **endpoint** protocol: surfaces in, semantic input out.
+- `herdr.sock` — the daemon's **JSON API** lane, the one the `herdr` CLI itself uses. Only this lane advertises the agent and pane-read methods the orchestrator needs.
+
+There is no local PTY: daemon panes are the only terminal source.
+
+daemon 是状态的唯一真相。zenix 连接 herdr 配置根下的两个 socket，自身不额外保存工作区/标签/窗格/智能体状态：`herdr-client.sock` 走 generation-1 **端点**协议（surface 进、语义输入出），`herdr.sock` 走 daemon 的 **JSON API** lane（`herdr` CLI 自己用的那条，只有它提供编排需要的智能体与窗格读取方法）。本地没有 PTY：daemon 窗格是唯一的终端来源。
 
 ## Project Structure / 项目结构
 
 ```
 src/
-  main.rs                  Entry point / 入口点
-  lib.rs                   Public API for plugins & sub-apps / 插件 SDK
-  app.rs                   ZenixApp — state, events, render / 主应用
-  config.rs                Config store (~/.config/zenix/config.json) / 配置
-  sys.rs                   System info collector / 系统信息采集
-  client/mod.rs            Herdr binary manager (install, start, socket) / herdr 管理
-  terminal/
-    mod.rs                 PTY backend, types, spawn / 终端后端
-    element.rs             GPUI terminal rendering / 终端渲染
-    encoding.rs            Key/mouse event encoding / 键鼠编码
-  ui/
-    mod.rs                 UI module / UI 模块
-    sidebar.rs             Sidebar, settings & system info panels / 侧边栏
+  main.rs                  Entry point: fonts, config, keymap, window / 入口：字体、配置、键位、窗口
+  lib.rs                   Public SDK for plugins & sub-apps / 插件与子应用 SDK
+  shell/                   Workspace shell: ShellView, commands, keymap, contribution
+                           registry, settings pages, chat panel, panel resize
+                           / 工作台外壳：ShellView、命令、键位、贡献点注册表、设置页、对话面板、面板拖宽
+  terminal/                Cell painting and semantic input / 单元格绘制与语义输入
+  herdr/                   Endpoint facade: connection + live state (snapshots in,
+                           commands out) / 端点门面：连接与实时状态（快照进、命令出）
+  config/                  The client's own config: schema, diagnostics, global store
+                           / 客户端自身配置：schema、诊断、全局存储
+  ai/                      Orchestrator: engine, tools, sessions, prompts, compactor
+                           / 编排器：引擎、工具、会话、提示词、压缩
+  client/mod.rs            Herdr binary manager (seed, start, sockets) / herdr 二进制管理
+  platform.rs              Platform paths and gated code / 平台路径与平台相关代码
+  provider/, api_provider/ Agent-CLI and REST API providers / 智能体 CLI 与 REST API 提供商
+  mcp/, agent/, skills/    MCP server, agent detection, skill system / MCP 服务、智能体探测、技能系统
+  sys.rs, i18n.rs, util.rs System info, rust-i18n wiring, helpers / 系统信息、i18n、工具函数
 res/
   zenix.desktop            Desktop entry / 桌面入口
-  zenix.svg                Application icon / 应用图标
+  zenix.png                Application icon / 应用图标
+  herdr                    Release-built herdr, the deb's first-run seed / 发布构建的 herdr（deb 首启种子）
 assets/
-  fonts/                   Lilex font family / 字体
-  themes/                  Theme JSON files / 主题文件
+  fonts/                   Lilex font family, compiled in via include_bytes! / Lilex 字体族（编译进二进制）
+  themes/                  Theme JSON, not wired into the client yet / 主题 JSON（尚未接入）
+  prompts/                 Orchestrator prompt, seeded to the config dir / 编排器提示词（播种到配置目录）
 herdr/                     Git submodule (ogulcancelik/herdr, v0.9.3) / 子模块
-build.rs                   Compiles/embeds herdr from submodule / 构建脚本
+vendor/                    Vendored endpoint crates, byte-identical to upstream / 端点 crate（与上游逐字节相同）
+build.rs                   Makes herdr available: dev copies the installed one, release
+                           builds it from the submodule / 让 herdr 可用：dev 复制已安装件，release 从子模块构建
 ```
 
 ## Dependencies & Licenses / 依赖与许可证
 
 | Dependency | License | Relationship / 关系 |
 |-----------|---------|-------------|
-| [gpui-kit](https://github.com/longbridge/gpui-kit) | Apache-2.0 | Statically linked UI framework / 静态链接 |
-| [gpui-component](https://github.com/longbridge/gpui-component) | Apache-2.0 | Widget components (statically linked) / 静态链接 |
-| [herdr](https://github.com/ogulcancelik/herdr) | Apache-2.0 | Bundled binary, socket IPC (mere aggregation) / 独立二进制 |
-| [herdr-protocol / herdr-client](vendor/) | Apache-2.0 | Vendored endpoint protocol and client (statically linked) / 端点协议与客户端 |
+| [gpui-kit](https://crates.io/crates/gpui-kit) | Apache-2.0 | Statically linked UI framework / 静态链接 UI 框架 |
+| [gpui-component](https://crates.io/crates/gpui-component) | Apache-2.0 | Widget components (statically linked) / 静态链接组件库 |
+| [herdr](https://github.com/ogulcancelik/herdr) | Apache-2.0 | Bundled binary, socket IPC (mere aggregation) / 独立二进制，socket IPC |
+| [herdr-protocol / herdr-client](vendor/) | Apache-2.0 | Vendored endpoint protocol and client (statically linked) / 内嵌端点协议与客户端 |
+| [Lilex](https://github.com/mishamyrt/Lilex) | SIL OFL-1.1 | Terminal font, compiled into the binary / 终端字体（编译进二进制） |
 
-zenix itself is licensed under **GPL-3.0-or-later** (see [LICENSE](LICENSE)).
+zenix itself is licensed under **GPL-3.0-or-later** (see [LICENSE](LICENSE)); the full
+third-party inventory is in [THIRD-PARTY.md](THIRD-PARTY.md).
 
-zenix 本体使用 **GPL-3.0-or-later** 许可证（详见 [LICENSE](LICENSE)）。
+zenix 本体使用 **GPL-3.0-or-later**（详见 [LICENSE](LICENSE)），第三方组件清单见 [THIRD-PARTY.md](THIRD-PARTY.md)。
 
 ## Build / 构建
 
 ### Prerequisites / 前置依赖
 
 - Rust 1.85+ (edition 2024)
-- System libraries: `libxkbcommon-dev`, `libwayland-dev`, `libfontconfig-dev`, `cmake`
+- System libraries: `libxcb1-dev`, `libxkbcommon-dev`, `libxkbcommon-x11-dev`, `libfontconfig1-dev`, `libfreetype6-dev`, `libexpat1-dev`, `libwayland-dev`, `libegl1-mesa-dev`, `libgl1-mesa-dev`, `pkg-config`
+- **Zig 0.16.0** — only needed when building herdr from the submodule (i.e. any release build). The version is exact: herdr's `build.zig.zon` rejects anything else.
 
 ```bash
 # Install system deps (Debian/Ubuntu/Deepin)
-sudo apt install libxkbcommon-dev libwayland-dev libfontconfig-dev cmake pkg-config
+sudo apt install libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev \
+  libfontconfig1-dev libfreetype6-dev libexpat1-dev libwayland-dev \
+  libegl1-mesa-dev libgl1-mesa-dev pkg-config
 
 # Clone with submodule / 克隆含子模块
 git clone --recurse-submodules <repo-url>
@@ -81,21 +109,21 @@ cd zenix
 ### Development / 开发运行
 
 ```bash
-# Uses system-installed herdr (fast) / 使用系统安装的 herdr（快速）
+# Uses the system-installed herdr (fast) / 使用系统已安装的 herdr（快速）
 cargo run
 
-# Force build herdr from submodule / 强制从子模块编译 herdr
-HERDR_BUILD=1 cargo run
+# Force building herdr from the submodule (needs Zig) / 强制从子模块构建 herdr（需要 Zig）
+HERDR_BUILD=1 ZIG=/path/to/zig-0.16.0/zig cargo run
 ```
 
 ### Release & Packaging / 发布构建与打包
 
 ```bash
-# Full release build (compiles herdr from submodule source)
-# 完整发布构建（从子模块源码编译 herdr）
-cargo build --release
+# Full release build: builds herdr from the submodule and refreshes res/herdr
+# 完整发布构建：从子模块构建 herdr，并刷新 res/herdr
+ZIG=/path/to/zig-0.16.0/zig cargo build --release
 
-# Build .deb package / 构建 deb 包
+# Build the .deb (runs the release build first) / 构建 .deb（会先跑发布构建）
 cargo deb
 # Output: target/debian/zenix_0.1.0-1_amd64.deb
 ```
@@ -108,19 +136,22 @@ zenix starts
 ensure_herdr() / 确保 herdr 可用
   ├── ~/.local/bin/herdr exists? → use it (herdr self-updates this copy)
   │                                → 直接使用（herdr 自行升级此副本）
-  ├── Bundled binary exists? → use it (dev mode) / 开发模式
-  ├── PATH lookup
+  ├── Binary built next to zenix? → use it (development) / 构建树里的副本（开发时）
+  ├── PATH lookup / PATH 查找
   └── Seed at /usr/share/zenix/herdr? → copy to ~/.local/bin/herdr → use it
-       (first run after deb install; subsequent runs skip this step)
-       首次 deb 安装后复制；后续启动跳过此步
+       (first run after a deb install; later runs skip this step)
+       deb 安装后的首次运行；后续启动跳过
   ↓
-start_herdr_server() → herdr server --daemon
+start_herdr_server() → herdr server
   ↓
-is_socket_ready() → connect via Unix socket / Unix socket 连接
+wait for the endpoint socket, then connect / 等待端点 socket 后连接
 ```
 
-### Terminal PATH Isolation / 终端 PATH 隔离
+## Configuration / 配置
 
-Spawned PTY sessions prepend `~/.local/bin` to `PATH`, ensuring the bootstrapped herdr CLI is used inside zenix terminals, not a system-installed version.
+Two configurations meet in this client, and one rule separates them: **a setting lives with whatever acts on it.**
 
-PTY 会话中 `~/.local/bin` 前置到 `PATH`，确保终端内使用的 herdr CLI 为内置版本，而非系统安装的旧版。
+- `~/.config/zenix/config.json` (JSONC) — what the *client* acts on: light/dark mode, UI language, terminal palettes, sidebar and chat-panel layout. Written only through the settings panel.
+- the daemon's own `config.toml` — what the *daemon* acts on: the shell a new pane starts, the cwd a new workspace starts in, scrollback, keybindings, plugins. zenix neither reads nor writes it; the settings panel's Config page points at it.
+
+两条配置在这客户端交汇，规则只有一条：**设置跟着执行它的那一侧走。** `~/.config/zenix/config.json`（JSONC）是*客户端*自己执行的设置（明暗模式、界面语言、终端调色板、侧栏与对话面板布局），只经设置面板写入；daemon 自己的 `config.toml` 是*daemon*执行的设置（新窗格的 shell、新工作区目录、回滚、键位、插件），zenix 不读不写，只在设置面板的 Config 页指向它。
