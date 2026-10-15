@@ -52,19 +52,41 @@ strip = true
 maintainer = "re2zero <yangwu@uniontech.com>"
 section = "utils"
 priority = "optional"
+# `$auto` is cargo-deb's ldd-derived list; the two named libraries are loaded
+# with dlopen (EGL and the Wayland client), so ldd cannot see them.
+depends = "$auto, libegl1, libwayland-client0"
 assets = [
     ["target/release/zenix", "usr/bin/", "755"],
     ["res/herdr", "usr/share/zenix/", "755"],
     ["res/zenix.desktop", "usr/share/applications/", "644"],
     ["res/zenix.png", "usr/share/icons/hicolor/512x512/apps/", "644"],
-    ["assets/fonts/Lilex-Regular.ttf", "usr/share/zenix/fonts/", "644"],
-    ["assets/fonts/Lilex-Bold.ttf", "usr/share/zenix/fonts/", "644"],
-    ["assets/fonts/Lilex-Italic.ttf", "usr/share/zenix/fonts/", "644"],
-    ["assets/fonts/Lilex-BoldItalic.ttf", "usr/share/zenix/fonts/", "644"],
-    ["assets/themes/gruvbox.json", "usr/share/zenix/themes/", "644"],
-    ["assets/themes/solarized.json", "usr/share/zenix/themes/", "644"],
-    ["assets/themes/tokyonight.json", "usr/share/zenix/themes/", "644"],
-    ["assets/themes/matrix.json", "usr/share/zenix/themes/", "644"],
+    # License texts. The Lilex faces are compiled into the binary
+    # (`include_bytes!` in src/main.rs), so they are not shipped as files, but
+    # OFL-1.1 still requires the license text to travel with the font.
+    ["LICENSE", "usr/share/doc/zenix/copyright", "644"],
+    ["THIRD-PARTY.md", "usr/share/doc/zenix/", "644"],
+    ["assets/fonts/OFL.txt", "usr/share/doc/zenix/Lilex-OFL.txt", "644"],
+    ["herdr/LICENSE", "usr/share/doc/zenix/herdr/LICENSE", "644"],
+    [
+        "vendor/herdr-client/LICENSE-APACHE",
+        "usr/share/doc/zenix/herdr-client/LICENSE-APACHE",
+        "644",
+    ],
+    [
+        "vendor/herdr-client/NOTICE.md",
+        "usr/share/doc/zenix/herdr-client/NOTICE.md",
+        "644",
+    ],
+    [
+        "vendor/herdr-protocol/LICENSE-APACHE",
+        "usr/share/doc/zenix/herdr-protocol/LICENSE-APACHE",
+        "644",
+    ],
+    [
+        "vendor/herdr-protocol/NOTICE.md",
+        "usr/share/doc/zenix/herdr-protocol/NOTICE.md",
+        "644",
+    ],
 ]
 extended-description = """\
 zenix is an extensible terminal workspace manager designed for AI coding agents.

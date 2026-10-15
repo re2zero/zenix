@@ -154,9 +154,9 @@ jobs:
               curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
               source "$HOME/.cargo/env"
 
-              curl -L https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz \
+              curl -L https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz \
                 | tar -xJ -C /usr/local
-              ln -s /usr/local/zig-x86_64-linux-0.15.2/zig /usr/local/bin/zig
+              ln -s /usr/local/zig-x86_64-linux-0.16.0/zig /usr/local/bin/zig
 
               cargo build --release
               cd herdr && cargo build --release && cd ..
@@ -342,10 +342,10 @@ jobs:
                 fontconfig \
                 freetype2 expat wayland libglvnd
 
-              # pacman zig may lag behind the required 0.15.2
-              curl -L https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz \
+              # pacman zig may lag behind the required 0.16.0
+              curl -L https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz \
                 | tar -xJ -C /usr/local
-              ln -s /usr/local/zig-x86_64-linux-0.15.2/zig /usr/local/bin/zig
+              ln -s /usr/local/zig-x86_64-linux-0.16.0/zig /usr/local/bin/zig
 
               rustup default stable
               cargo build --release

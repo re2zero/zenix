@@ -35,12 +35,15 @@ fn main() {
     #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
     if env::var("HERDR_BUILD").is_ok() {
         build_herdr(&herdr_dir, name, &dest);
+        seed_package(&dest, name, &profile);
         emit(&dest);
         return;
     }
 
     // Cached from prior build
     if dest.exists() {
+        #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
+        seed_package(&dest, name, &profile);
         emit(&dest);
         return;
     }
@@ -49,12 +52,7 @@ fn main() {
         #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
         {
             build_herdr(&herdr_dir, name, &dest);
-            let seed = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
-                .join("res")
-                .join(name);
-            let _ = fs::create_dir_all(seed.parent().unwrap());
-            fs::copy(&dest, &seed).expect("failed to copy herdr seed to res/");
-            eprintln!("herdr seed → {}", seed.display());
+            seed_package(&dest, name, &profile);
         }
         #[cfg(windows)]
         {
@@ -83,6 +81,22 @@ fn main() {
     }
 
     emit(&dest);
+}
+
+/// Refresh `res/<name>` — the herdr copy the Linux/macOS packages ship as their
+/// seed. A release build always rewrites it: the seed is a package input, and a
+/// stale one would install an old daemon on a fresh machine.
+#[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
+fn seed_package(dest: &std::path::Path, name: &str, profile: &str) {
+    if profile != "release" {
+        return;
+    }
+    let seed = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
+        .join("res")
+        .join(name);
+    let _ = fs::create_dir_all(seed.parent().unwrap());
+    fs::copy(dest, &seed).expect("failed to copy herdr seed to res/");
+    eprintln!("herdr seed → {}", seed.display());
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]
@@ -117,6 +131,10 @@ fn emit(dest: &std::path::Path) {
     println!("cargo:rustc-env=HERDR_BINARY={}", dest.display());
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=herdr/Cargo.lock");
+    // rust-i18n's macro reads `locales/` while it expands, so cargo cannot see
+    // the dependency on its own: without this line an edited translation
+    // rebuilds nothing and the stale strings ship.
+    println!("cargo:rerun-if-changed=locales");
 }
 
 fn find_system_herdr() -> Option<PathBuf> {
