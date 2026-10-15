@@ -103,7 +103,7 @@ settings:
       zh-CN: "MCP"
     skills:
       en: "Skills"
-      zh-CN: "Skills"
+      zh-CN: "技能"
     api:
       en: "API"
       zh-CN: "API"
@@ -325,8 +325,6 @@ settings:
       agent_url:
         en: "URL"
         zh-CN: "URL"
-    en: "No API provider bound"
-    zh-CN: "未绑定 API 提供商"
   api:
     title:
       en: "API Providers"
@@ -588,7 +586,7 @@ skills:
     zh-CN: "搜索技能..."
   dialog_git_url:
     en: "Git URL"
-    zh-CN: "Git URL"
+    zh-CN: "Git 地址"
   dialog_local_path:
     en: "Local Path"
     zh-CN: "本地路径"
@@ -610,8 +608,8 @@ ai:
     en: "Please configure an API Provider first."
     zh-CN: "请先配置一个 API 提供商。"
   config_empty_hint:
-    en: "Go to Settings → Extensions → API Providers to add one."
-    zh-CN: "前往「设置 → 扩展 → API 提供商」添加一个。"
+    en: "Add one to ~/.config/zenix/api-providers.json."
+    zh-CN: "请在 ~/.config/zenix/api-providers.json 中添加一个。"
   chat:
     title:
       en: "Chat"
