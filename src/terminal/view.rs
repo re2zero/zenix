@@ -16,7 +16,9 @@ use gpui_kit::*;
 use gpui_kit::prelude::FluentBuilder as _;
 use herdr_client::ConnectOptions;
 use herdr_client::ConnectTarget;
-use herdr_client::protocol::{ClientMouseButton, ClientMouseKind, ClientPaneInputEvent};
+use herdr_client::protocol::{
+    ClientMouseButton, ClientMouseKind, ClientPaneInputEvent, PaneSurfaceFrame,
+};
 
 use crate::herdr::{Connection, LiveState, decode};
 use crate::terminal::painter::TerminalPainter;
@@ -50,6 +52,17 @@ fn mouse_button(button: MouseButton) -> Option<ClientMouseButton> {
         MouseButton::Middle => Some(ClientMouseButton::Middle),
         _ => None,
     }
+}
+
+/// The terminal id of the popup a surface reports, if one is open.
+///
+/// A popup is the daemon's modal layer rather than a pane of the composite
+/// grid: it never appears in the snapshot's pane list, and it is named by
+/// terminal id rather than pane id. Every input path that resolves its own
+/// target — the keys and paste through `send`, the mouse and the wheel through
+/// their hit — therefore asks this one question instead of repeating the test.
+fn popup_target(surface: Option<&PaneSurfaceFrame>) -> Option<&str> {
+    Some(surface?.popup.as_deref()?.terminal_id.as_str())
 }
 
 pub(crate) struct TerminalView {
@@ -199,15 +212,36 @@ impl TerminalView {
             .and_then(|snapshot| snapshot.focused_pane_id.clone())
     }
 
+    /// The one funnel keys, paste and the IME commits all reach a pane through.
+    /// While a popup is open it is the popup that takes them: the daemon made
+    /// the popup the modal layer, and the focused pane sits behind it, so a
+    /// keystroke meant for the popup must not land in the pane under it.
     fn send(&self, events: Vec<ClientPaneInputEvent>) {
+        if let Some(terminal_id) = popup_target(self.live.surface.as_deref()) {
+            self.connection.send_popup_input(terminal_id, events);
+            return;
+        }
         let Some(pane) = self.focused_pane() else {
             return;
         };
         self.connection.send_input(&pane, events);
     }
 
+    /// Send one event to the target a hit names. The mouse and the wheel resolve
+    /// their own target from the pointer rather than from focus, so a popup is
+    /// named here by a hit instead of by `send`'s question.
+    fn send_to(&self, target: &InputTarget, events: Vec<ClientPaneInputEvent>) -> bool {
+        match target {
+            InputTarget::Pane(pane) => self.connection.send_input(pane, events),
+            InputTarget::Popup(terminal_id) => {
+                self.connection.send_popup_input(terminal_id, events)
+            }
+        }
+    }
+
     /// Super-V, Ctrl-Shift-V and Shift-Insert paste the system clipboard into
-    /// the focused pane as one bracketed paste, so a multi-line paste is not
+    /// the focused pane — the open popup instead, where one takes the input —
+    /// as one bracketed paste, so a multi-line paste is not
     /// executed line by line. An empty clipboard sends nothing: a `Paste("")`
     /// would still be a bracketed-paste sequence wrapping nothing.
     /// `EntityInputHandler::paste` is deliberately not overridden: GPUI's
@@ -252,8 +286,9 @@ impl TerminalView {
         }
     }
 
-    /// Wheel motion belongs to the pane under the pointer, not the focused one:
-    /// the target the hit names is the pane the input is sent to.
+    /// Wheel motion belongs to the target under the pointer, not the focused
+    /// one: the target the hit names is the target the input is sent to, and an
+    /// open popup is that target anywhere over its own grid.
     fn scroll_wheel(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
         let Some(surface) = self.live.surface.clone() else {
             return;
@@ -266,15 +301,10 @@ impl TerminalView {
             self.wheel = WheelAccumulator::default();
             return;
         };
-        // Known gap: `Connection` has no popup input path, so popup wheel
-        // motion is dropped instead of forwarded.
-        let InputTarget::Pane(pane) = &target.target else {
-            return;
-        };
         let steps = self.wheel.steps(&target, event, cell_width, CELL_HEIGHT);
         cx.stop_propagation();
         for input in target.wheel_events(steps, event.modifiers) {
-            self.connection.send_input(pane, vec![input]);
+            self.send_to(&target.target, vec![input]);
         }
     }
 
@@ -304,14 +334,13 @@ impl TerminalView {
         if let Some(hit) = reporting {
             window.focus(&self.focus, cx);
             cx.stop_propagation();
-            if matches!(hit.target, InputTarget::Pane(_))
-                && let Some(button) = mouse_button(event.button)
+            if let Some(button) = mouse_button(event.button)
                 && let Some(boot) = self.live.boot_id().map(str::to_owned)
             {
-                // Arm the gesture only for a press the application
-                // actually received; `send_input` already warns when
-                // the send failed, and a drag or release must never
-                // answer a press the application never saw.
+                // Arm the gesture only for a press the application actually
+                // received, popup or pane: `send_to` already warns when the
+                // send failed, and a drag or release must never answer a
+                // press the application never saw.
                 if self.send_mouse(&hit, ClientMouseKind::Down(button), event.modifiers) {
                     self.mouse_gesture = Some(MouseGesture {
                         hit,
@@ -453,15 +482,10 @@ impl TerminalView {
             .then_some(hit)
     }
 
-    /// Send one mouse event to the pane its hit names. Popup input has no
-    /// `Connection` path yet, so it is dropped here. `false` when nothing
-    /// reached the application.
+    /// Send one mouse event to the target its hit names, popup or pane.
+    /// `false` when nothing reached the application.
     fn send_mouse(&self, hit: &WheelTarget, kind: ClientMouseKind, modifiers: Modifiers) -> bool {
-        let InputTarget::Pane(pane) = &hit.target else {
-            return false;
-        };
-        self.connection
-            .send_input(pane, vec![hit.mouse_event(kind, modifiers)])
+        self.send_to(&hit.target, vec![hit.mouse_event(kind, modifiers)])
     }
 
     /// Retire a forwarded press whose release was never observed, so the
@@ -755,6 +779,53 @@ impl Render for TerminalView {
                                                 cx,
                                             );
                                         }
+                                        // The daemon's popup carries its own grid and is
+                                        // not a pane of the composite one, so it paints
+                                        // as a floating layer over the cells, below the
+                                        // IME composition that closes this closure.
+                                        // `input_area` is its rectangle — input lands and
+                                        // the IME clips there — so the paint reuses that
+                                        // geometry rather than centring the popup a second
+                                        // time. The daemon's `width`/`height` only describe
+                                        // the size it asked for; the grid painted is the
+                                        // one the popup reports.
+                                        if let Some(popup) =
+                                            surface.popup.as_deref().filter(|popup| {
+                                                popup.frame.width > 0 && popup.frame.height > 0
+                                            })
+                                        {
+                                            let rect = input_area(
+                                                Some(&surface),
+                                                bounds,
+                                                cell_width,
+                                                CELL_HEIGHT,
+                                            );
+                                            // In paint order: an opaque backdrop, so no
+                                            // pane cell reads through; the popup's own
+                                            // cells; then a one-pixel border the cells
+                                            // would otherwise cover. Each quad and layer
+                                            // takes an order above what it overlaps, so
+                                            // this sequence is what stacks them.
+                                            window.paint_quad(fill(rect, rgb(theme.background)));
+                                            painter.paint_frame(
+                                                &popup.frame,
+                                                rect.origin,
+                                                Some(rect.size),
+                                                cell_width,
+                                                &paint_font,
+                                                &[],
+                                                &[],
+                                                None,
+                                                None,
+                                                window,
+                                                cx,
+                                            );
+                                            window.paint_quad(outline(
+                                                rect,
+                                                rgb(theme.muted),
+                                                BorderStyle::Solid,
+                                            ));
+                                        }
                                         // Painted after the frame so the composition
                                         // sits above the cells and the cursor.
                                         if !marked.is_empty() {
@@ -887,9 +958,55 @@ impl EntityInputHandler for TerminalView {
 mod tests {
     // Named imports only: the glob above drags gpui's own `test` attribute
     // macro in, which shadows the builtin one and cannot expand.
-    use super::mouse_button;
+    use super::{mouse_button, popup_target};
     use gpui_kit::{MouseButton, NavigationDirection};
-    use herdr_client::protocol::ClientMouseButton;
+    use herdr_client::protocol::{
+        ClientMouseButton, ClientShellPopupSurface, FrameData, PaneSurfaceFrame,
+    };
+
+    /// A surface with one empty grid, optionally carrying a popup of the same
+    /// shape. Nothing here reads the cells: the decision under test is which
+    /// name input goes to.
+    fn surface(popup: Option<&str>) -> PaneSurfaceFrame {
+        let frame = FrameData {
+            width: 80,
+            height: 24,
+            cells: vec![],
+            cursor: None,
+            hyperlinks: vec![],
+            graphics: vec![],
+        };
+        PaneSurfaceFrame {
+            boot_id: "boot".into(),
+            projection_revision: 1,
+            surface_revision: 1,
+            frame: frame.clone(),
+            panes: vec![],
+            splits: vec![],
+            popup: popup.map(|terminal_id| {
+                Box::new(ClientShellPopupSurface {
+                    terminal_id: terminal_id.into(),
+                    title: "Probe Popup".into(),
+                    width: None,
+                    height: None,
+                    frame: frame.clone(),
+                    mouse_reporting: true,
+                    sgr_pixel_mouse: false,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                })
+            }),
+            graphics: Default::default(),
+        }
+    }
+
+    #[test]
+    fn input_belongs_to_the_popup_exactly_while_one_is_open() {
+        assert_eq!(popup_target(None), None);
+        assert_eq!(popup_target(Some(&surface(None))), None);
+        let open = surface(Some("popup-1"));
+        assert_eq!(popup_target(Some(&open)), Some("popup-1"));
+    }
 
     #[test]
     fn mouse_button_maps_the_wire_buttons_and_drops_the_rest() {

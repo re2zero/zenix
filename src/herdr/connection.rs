@@ -120,6 +120,31 @@ impl Connection {
         }
     }
 
+    /// Queue one popup's semantic input. A popup is not a pane — it never
+    /// appears in the snapshot's pane list and the daemon names it by terminal
+    /// id — so it has its own lane; everything else mirrors `send_input`,
+    /// `boot_id` included, because a caller that cannot tell a delivered
+    /// keystroke from a lost one would double-send it.
+    pub(crate) fn send_popup_input(
+        &self,
+        terminal_id: &str,
+        events: Vec<ClientPaneInputEvent>,
+    ) -> bool {
+        let Some(handle) = self.handle() else {
+            return false;
+        };
+        let Some(boot_id) = self.boot_id() else {
+            return false;
+        };
+        match handle.send_popup_input(&boot_id, terminal_id, events) {
+            Ok(()) => true,
+            Err(err) => {
+                tracing::warn!(%err, terminal_id, "popup input was not sent");
+                false
+            }
+        }
+    }
+
     /// Report the surface geometry the daemon should lay out for. `false` when
     /// the connection is not ready yet, so the caller can retry on the next
     /// paint rather than believing the daemon was told.
