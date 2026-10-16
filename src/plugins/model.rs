@@ -17,6 +17,10 @@ pub(crate) struct InstalledPlugin {
     pub(crate) plugin_id: String,
     pub(crate) name: String,
     pub(crate) version: String,
+    /// Where the plugin lives on this machine. The daemon reports it because the
+    /// host needs it: `<plugin_root>/zenix-ui.toml` is the UI the plugin
+    /// declares for this client, which the daemon neither reads nor validates.
+    pub(crate) plugin_root: String,
     #[serde(default)]
     pub(crate) description: Option<String>,
     pub(crate) enabled: bool,
@@ -95,10 +99,9 @@ impl PluginAction {
     /// action with no contexts, or with the global one, is always offered; a
     /// selection-scoped action is not, because zenix has no selection yet.
     pub(crate) fn is_available(&self, availability: Availability) -> bool {
-        let Some(contexts) = &self.contexts else {
-            return true;
-        };
-        contexts.is_empty() || contexts.iter().any(|context| availability.has(*context))
+        self.contexts
+            .as_ref()
+            .is_none_or(|contexts| availability.satisfies(contexts))
     }
 }
 
@@ -142,6 +145,13 @@ pub(crate) struct Availability {
 }
 
 impl Availability {
+    /// Whether the focus satisfies any of these contexts. An empty list is
+    /// satisfied by everything, which is what a declaration that names no
+    /// context means.
+    pub(crate) fn satisfies(self, contexts: &[Context]) -> bool {
+        contexts.is_empty() || contexts.iter().any(|context| self.has(*context))
+    }
+
     fn has(self, context: Context) -> bool {
         match context {
             Context::Global => true,
@@ -392,6 +402,7 @@ mod tests {
         assert!(plugin.panes.is_empty());
         assert!(plugin.warnings.is_empty());
         assert!(plugin.enabled);
+        assert_eq!(plugin.plugin_root, "/tmp/plugin");
     }
 
     #[test]

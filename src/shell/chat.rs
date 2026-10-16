@@ -37,7 +37,7 @@ use gpui_kit::component::{ActiveTheme, Theme, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::registry::{Contribution, Invocation};
+use super::registry::{Builtin, Invocation};
 use crate::ai::compactor::Compactor;
 use crate::ai::endpoint::ApiEndpoint;
 use crate::ai::engine::{
@@ -50,7 +50,7 @@ use crate::api_provider::{self, ApiProviderConfig};
 use crate::i18n::t;
 
 /// The right-hand panel's blocks, top to bottom.
-pub(crate) const ASIDE: &[Contribution] = &[Contribution { id: "chat", render }];
+pub(crate) const ASIDE: &[Builtin] = &[Builtin { id: "chat", render }];
 
 /// How many tool rounds one turn may take. The engine has its own ceiling; this
 /// is the tighter one the panel asks for.

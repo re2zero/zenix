@@ -15,15 +15,15 @@ use super::model::{
     Availability, Context, InstalledPlugin, LogStatus, ManifestPane, OwnedPane, PluginAction,
     PluginCommandLog,
 };
-use crate::shell::registry::{Contribution, Invocation, ShellRequest};
+use crate::shell::registry::{Builtin, Invocation, ShellRequest};
 
 /// The sidebar's plugin blocks, mounted below the shell's own.
-pub(crate) const PANELS: &[Contribution] = &[
-    Contribution {
+pub(crate) const PANELS: &[Builtin] = &[
+    Builtin {
         id: "plugins",
         render: render_plugins,
     },
-    Contribution {
+    Builtin {
         id: "plugin-logs",
         render: render_logs,
     },
@@ -364,16 +364,18 @@ fn context_label(action: &PluginAction) -> String {
 
 /// A block's title line, with an affordance on the right that asks for the
 /// data to be read again. Nothing pushes a plugin change, so every block that
-/// shows plugin state needs one.
-fn header(
-    id: &'static str,
-    title: &'static str,
-    action: &'static str,
+/// shows plugin state needs one. The identity is the caller's: a built-in block
+/// and a declared panel both come through here.
+pub(crate) fn header(
+    id: impl Into<ElementId>,
+    title: &str,
+    action: &str,
     request: ShellRequest,
     invocation: &Invocation,
 ) -> AnyElement {
     let theme = invocation.theme;
     let dispatch = invocation.dispatch.clone();
+    let id = id.into();
     h_flex()
         .w_full()
         .px_1()
@@ -384,7 +386,7 @@ fn header(
             div()
                 .text_xs()
                 .text_color(theme.muted_foreground)
-                .child(title),
+                .child(title.to_owned()),
         )
         .child(
             div()
@@ -393,13 +395,13 @@ fn header(
                 .text_color(theme.muted_foreground)
                 .cursor_pointer()
                 .on_click(move |_, window, cx| dispatch(request.clone(), window, cx))
-                .child(action),
+                .child(action.to_owned()),
         )
         .into_any_element()
 }
 
 /// One dim line of text inside a block.
-fn line(text: &str, color: Hsla) -> AnyElement {
+pub(crate) fn line(text: &str, color: Hsla) -> AnyElement {
     div()
         .w_full()
         .min_w_0()
@@ -421,6 +423,7 @@ mod tests {
             plugin_id: id.into(),
             name: id.into(),
             version: "0.1.0".into(),
+            plugin_root: "/tmp/plugin".into(),
             description: None,
             enabled: true,
             panes: vec![ManifestPane {

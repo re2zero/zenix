@@ -16,9 +16,15 @@
 //! * [`model`] — the daemon's plugin vocabulary.
 //! * [`api`] — the `plugin.*` methods, one call each.
 //! * [`host`] — the cache, its worker thread, and the requests the shell makes.
+//! * [`ui_manifest`] — `zenix-ui.toml`, the UI a plugin declares for this host.
+//! * [`ui_data`] — the JSON the declarations' commands print, read off-thread.
+//! * [`views`] — how a declaration is drawn: panel, sidebar line, status item.
 //! * [`panels`] — the sidebar blocks the registry mounts.
 
 pub(crate) mod api;
 pub(crate) mod host;
 pub(crate) mod model;
 pub(crate) mod panels;
+pub(crate) mod ui_data;
+pub(crate) mod ui_manifest;
+pub(crate) mod views;

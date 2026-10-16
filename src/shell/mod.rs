@@ -21,6 +21,7 @@ pub(crate) mod registry;
 pub(crate) mod settings;
 
 use std::rc::Rc;
+use std::sync::Arc;
 
 use gpui_kit::component::{ActiveTheme, ThemeMode, h_flex, v_flex};
 use gpui_kit::*;
@@ -30,6 +31,8 @@ use crate::config::{self, ASIDE_WIDTH_DEFAULT, ConfigStore, SIDEBAR_WIDTH_DEFAUL
 use crate::herdr::Connection;
 use crate::plugins::host::PluginHost;
 use crate::plugins::model::Availability;
+use crate::plugins::ui_data::{self, UiData, UiDataHost};
+use crate::plugins::ui_manifest::UiContributions;
 use crate::terminal::Theme as TerminalTheme;
 use crate::terminal::view::TerminalView;
 use commands::{COMMANDS, Command};
@@ -70,6 +73,12 @@ pub(crate) struct ShellView {
     /// pushes a plugin change, so this is read rather than painted from a
     /// stream, and refreshed on demand — see `crate::plugins::host`.
     plugins: PluginHost,
+    /// The reader behind the data a plugin's declared panels and status items
+    /// show: one command per declaration, run off the UI thread.
+    ui_data_host: UiDataHost,
+    /// What those commands last printed, as of the last answer. A field rather
+    /// than a per-frame read, so a paint clones nothing.
+    ui_data: UiData,
     /// The prefix has been typed and the next keystroke is its chord.
     prefix_armed: bool,
     /// The terminal's last drawn revision, so a paint that changed nothing
@@ -81,6 +90,8 @@ pub(crate) struct ShellView {
     /// Wakes the shell when the plugin registry moved. Held (not read) so the
     /// drain lives exactly as long as the window.
     _plugin_pulses: Task<()>,
+    /// The same, for the data a declaration's command printed.
+    _ui_data_pulses: Task<()>,
     /// The in-process MCP orchestrator agents connect to. Held (not read) so it
     /// lives exactly as long as the window: dropping the shell stops it.
     _orchestrator: Option<crate::mcp::server::McpOrchestrationServer>,
@@ -103,6 +114,8 @@ impl ShellView {
         // daemon pushes nothing when a plugin is linked, enabled or run.
         let (plugins, plugin_pulses) = PluginHost::start();
         let plugin_pulses = Self::follow_plugins(cx, plugin_pulses);
+        let (ui_data_host, ui_data_pulses) = UiDataHost::start();
+        let ui_data_pulses = Self::follow_ui_data(cx, ui_data_pulses);
         let mut sidebar = SIDEBAR;
         sidebar.restore(config::get(cx).layout.sidebar_width);
         let mut aside = ASIDE;
@@ -113,7 +126,7 @@ impl ShellView {
         let mut shell = Self {
             terminal,
             connection,
-            registry: Registry::builtin(),
+            registry: Registry::new(&plugins.state().ui),
             keymap: Keymap::default(),
             sidebar,
             sidebar_dragging: false,
@@ -124,12 +137,15 @@ impl ShellView {
             palette: Palette::default(),
             palette_focus: cx.focus_handle(),
             plugins,
+            ui_data_host,
+            ui_data: UiData::default(),
             prefix_armed: false,
             drawn: 0,
             _observe: observe,
             _prefix: prefix,
             _config: config,
             _plugin_pulses: plugin_pulses,
+            _ui_data_pulses: ui_data_pulses,
             _orchestrator: orchestrator,
         };
         shell.sync_terminal_theme(cx);
@@ -152,8 +168,10 @@ impl ShellView {
         })
     }
 
-    /// Repaint when the plugin registry moved. The worker thread already read
-    /// it; this only wakes the shell, which reads the cache itself.
+    /// Repaint when the plugin registry moved, and remount what it declares:
+    /// the shell's contributions include a plugin's, so the registry is rebuilt
+    /// in this event, never during a paint. The worker thread already read the
+    /// registry; this only wakes the shell, which reads the cache itself.
     fn follow_plugins(cx: &mut Context<Self>, pulses: crossbeam_channel::Receiver<()>) -> Task<()> {
         cx.spawn(async move |shell, cx| {
             loop {
@@ -165,11 +183,59 @@ impl ShellView {
                 if !alive {
                     break;
                 }
-                if shell.update(cx, |_, cx| cx.notify()).is_err() {
+                if shell
+                    .update(cx, |shell, cx| shell.read_plugins(cx))
+                    .is_err()
+                {
                     break;
                 }
             }
         })
+    }
+
+    /// Take the plugin registry the worker read, mount the UI it declares, and
+    /// ask for the data those declarations name — a declaration that has just
+    /// appeared has no answer yet.
+    fn read_plugins(&mut self, cx: &mut Context<Self>) {
+        let state = self.plugins.state();
+        self.registry = Registry::new(&state.ui);
+        self.request_ui_data(&state.ui, false, cx);
+        cx.notify();
+    }
+
+    /// Repaint when a declaration's command answered. The answer itself is read
+    /// from the reader's cache, which is the only copy of it there is.
+    fn follow_ui_data(cx: &mut Context<Self>, pulses: crossbeam_channel::Receiver<()>) -> Task<()> {
+        cx.spawn(async move |shell, cx| {
+            loop {
+                let pulses = pulses.clone();
+                let alive = cx
+                    .background_executor()
+                    .spawn(async move { pulses.recv().is_ok() })
+                    .await;
+                if !alive {
+                    break;
+                }
+                let alive = shell
+                    .update(cx, |shell, cx| {
+                        shell.ui_data = shell.ui_data_host.state();
+                        cx.notify();
+                    })
+                    .is_ok();
+                if !alive {
+                    break;
+                }
+            }
+        })
+    }
+
+    /// Ask the reader for the data these declarations name. `force` re-reads
+    /// every one of them, which is what asking for a refresh means; otherwise
+    /// only what has no answer yet is read.
+    fn request_ui_data(&self, ui: &UiContributions, force: bool, cx: &App) {
+        let live = self.terminal.read(cx).live().clone();
+        let context = Arc::new(ui_data::context(live.snapshot.as_deref()));
+        self.ui_data_host.sync(ui_data::loads(ui), context, force);
     }
 
     /// The terminal keeps the keyboard: the shell has no focus of its own.
@@ -319,6 +385,9 @@ impl ShellView {
     fn refresh_plugins(&self, cx: &mut Context<Self>) {
         self.plugins.refresh();
         self.plugins.refresh_logs();
+        // A refresh is "read it again": a declaration's data is read again too,
+        // which is the only way the numbers in a panel move.
+        self.request_ui_data(&self.plugins.state().ui, true, cx);
         cx.notify();
     }
 
@@ -326,20 +395,35 @@ impl ShellView {
     /// plugin action the current focus can run. The directory is the same table
     /// the keymap and the sidebar read, so the palette cannot offer a command
     /// the shell has no way to run.
+    ///
+    /// A plugin's rows come from the daemon's action list, because that is what
+    /// can actually run; a declaration adds only what it knows and the daemon
+    /// does not — the chord to show beside the row, and a narrower `when` scope.
     fn palette_entries(&self, cx: &App) -> Vec<Entry> {
         let availability = Availability::of(self.terminal.read(cx).live().snapshot.as_deref());
         let mut entries: Vec<Entry> = COMMANDS
             .iter()
             .map(|info| Entry::Command(info.command))
             .collect();
-        entries.extend(
-            self.plugins
-                .state()
-                .actions
-                .into_iter()
-                .filter(|action| action.is_available(availability))
-                .map(Entry::Plugin),
-        );
+        let plugins = self.plugins.state();
+        for action in plugins
+            .actions
+            .iter()
+            .filter(|action| action.is_available(availability))
+        {
+            let declared = plugins.ui.commands.iter().find(|command| {
+                command.plugin_id == action.plugin_id && command.action_id == action.action_id
+            });
+            if let Some(declared) = declared
+                && !availability.satisfies(&declared.when)
+            {
+                continue;
+            }
+            entries.push(Entry::Plugin {
+                action: action.clone(),
+                declared: declared.cloned(),
+            });
+        }
         entries
     }
 
@@ -399,6 +483,13 @@ impl ShellView {
                 .plugins
                 .open_pane(plugin_id, entrypoint, title, placement),
             ShellRequest::ClosePluginPane(pane_id) => self.plugins.close_pane(pane_id),
+            // A declared sidebar line opens the panel its plugin declared, which
+            // mounts in the right-hand panel: showing that panel is the whole
+            // request.
+            ShellRequest::ShowPluginPanels => {
+                config::update(cx, |config| config.layout.aside_visible = true);
+                cx.notify();
+            }
             ShellRequest::RefreshPlugins => self.refresh_plugins(cx),
         }
     }
@@ -523,6 +614,7 @@ impl Render for ShellView {
                 request @ (ShellRequest::PluginAction { .. }
                 | ShellRequest::OpenPluginPane { .. }
                 | ShellRequest::ClosePluginPane(_)
+                | ShellRequest::ShowPluginPanels
                 | ShellRequest::RefreshPlugins) => {
                     entity.update(cx, |shell, cx| {
                         shell.dispatch(request, window, cx);
@@ -540,6 +632,7 @@ impl Render for ShellView {
             rejection: live.rejected.as_deref(),
             prefix: prefix.as_deref(),
             plugins: &plugins,
+            ui_data: &self.ui_data,
             theme: &theme,
             dispatch: &dispatch,
         };
@@ -578,7 +671,7 @@ impl Render for ShellView {
                         self.registry
                             .panels()
                             .iter()
-                            .map(|panel| (panel.render)(&invocation, window, cx)),
+                            .map(|panel| panel.render(&invocation, window, cx)),
                     ),
             );
         }
@@ -624,7 +717,7 @@ impl Render for ShellView {
                         self.registry
                             .aside_panels()
                             .iter()
-                            .map(|panel| (panel.render)(&invocation, window, cx)),
+                            .map(|panel| panel.render(&invocation, window, cx)),
                     ),
             );
         }
@@ -655,7 +748,7 @@ impl Render for ShellView {
                         self.registry
                             .status_segments()
                             .iter()
-                            .map(|segment| (segment.render)(&invocation, window, cx)),
+                            .map(|segment| segment.render(&invocation, window, cx)),
                     ),
             );
         if self.palette.is_open() {

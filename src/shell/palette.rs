@@ -13,10 +13,13 @@
 use gpui_kit::component::{ActiveTheme, Theme, h_flex, v_flex};
 use gpui_kit::*;
 
+use std::sync::Arc;
+
 use super::commands::{COMMANDS, Command};
 use super::keymap::Keymap;
 use super::registry::{Dispatch, ShellRequest};
 use crate::plugins::model::PluginAction;
+use crate::plugins::ui_manifest::CommandSpec;
 
 /// How many rows the palette shows at once. The rest are reached by typing.
 const ROWS_SHOWN: usize = 8;
@@ -25,7 +28,15 @@ const ROWS_SHOWN: usize = 8;
 #[derive(Clone)]
 pub(crate) enum Entry {
     Command(Command),
-    Plugin(PluginAction),
+    Plugin {
+        /// The action the daemon offers, which is what can actually run.
+        action: PluginAction,
+        /// The declaration behind it, when the plugin made one: that is where
+        /// the row's own title and chord come from. The daemon knows the action
+        /// and not the declaration, so a row without one falls back to what the
+        /// daemon knows.
+        declared: Option<Arc<CommandSpec>>,
+    },
 }
 
 impl Entry {
@@ -37,7 +48,10 @@ impl Entry {
                 .find(|info| info.command == *command)
                 .map(|info| info.label.to_owned())
                 .unwrap_or_else(|| format!("{command:?}")),
-            Self::Plugin(action) => action.title.clone(),
+            Self::Plugin { action, declared } => declared
+                .as_ref()
+                .map(|declared| declared.title.clone())
+                .unwrap_or_else(|| action.title.clone()),
         }
     }
 
@@ -50,17 +64,20 @@ impl Entry {
                 .find(|info| info.command == *command)
                 .map(|info| info.id.to_owned())
                 .unwrap_or_default(),
-            Self::Plugin(action) => action.qualified_id(),
+            Self::Plugin { action, .. } => action.qualified_id(),
         }
     }
 
-    /// The keystroke that reaches this row without the palette. A plugin action
-    /// has none of its own: the plugin manifest declares no key, and where the
-    /// host's own keys for actions will come from is the UI-contribution file
-    /// of M8b.
+    /// The keystroke that reaches this row without the palette: a command's own
+    /// binding, or the chord a plugin declared for its action. Binding that chord
+    /// is not part of schema v1 — the keymap is built before any plugin is read —
+    /// but showing it is the whole point of declaring one.
     fn hint(&self, keymap: &Keymap) -> Option<String> {
-        let Self::Command(command) = self else {
-            return None;
+        let command = match self {
+            Self::Command(command) => command,
+            Self::Plugin { declared, .. } => {
+                return declared.as_ref().and_then(|declared| declared.key.clone());
+            }
         };
         let info = COMMANDS.iter().find(|info| info.command == *command)?;
         if let Some(direct) = info.direct.first() {
@@ -77,7 +94,7 @@ impl Entry {
             Self::Command(command) => ShellRequest::Command(*command),
             // The palette is a click like any other: the daemon still assembles
             // the invocation context, and only the source is ours to name.
-            Self::Plugin(action) => ShellRequest::PluginAction {
+            Self::Plugin { action, .. } => ShellRequest::PluginAction {
                 action: action.clone(),
                 source: "palette",
             },
@@ -340,6 +357,17 @@ mod tests {
 
     use crate::plugins::model::{Context, PluginAction};
 
+    fn declared(title: &str, key: Option<&str>) -> CommandSpec {
+        CommandSpec {
+            plugin_id: "a.b".into(),
+            local_id: "x".into(),
+            title: title.into(),
+            action_id: "x".into(),
+            when: Vec::new(),
+            key: key.map(str::to_owned),
+        }
+    }
+
     fn action(plugin_id: &str, action_id: &str, title: &str) -> PluginAction {
         PluginAction {
             plugin_id: plugin_id.into(),
@@ -353,7 +381,13 @@ mod tests {
     fn entries() -> Vec<Entry> {
         vec![
             Entry::Command(Command::ToggleSettings),
-            Entry::Plugin(action("example.board", "apply", "Apply project layout")),
+            Entry::Plugin {
+                action: action("example.board", "apply", "Apply project layout"),
+                declared: Some(Arc::new(declared(
+                    "Apply project layout",
+                    Some("ctrl-shift-l"),
+                ))),
+            },
         ]
     }
 
@@ -455,7 +489,12 @@ mod tests {
             ShellRequest::Command(command) => assert_eq!(command, Command::ToggleSettings),
             _ => panic!("a command row runs a command"),
         }
-        match Entry::Plugin(action("example.board", "apply", "Apply")).request() {
+        match (Entry::Plugin {
+            action: action("example.board", "apply", "Apply"),
+            declared: None,
+        })
+        .request()
+        {
             ShellRequest::PluginAction { action, source } => {
                 assert_eq!(action.action_id, "apply");
                 assert_eq!(source, "palette");
@@ -465,7 +504,7 @@ mod tests {
     }
 
     #[test]
-    fn a_command_row_shows_the_key_that_reaches_it_and_a_plugin_row_shows_none() {
+    fn a_command_row_shows_the_key_that_reaches_it_and_a_declared_plugin_row_its_own() {
         let keymap = Keymap::default();
         let settings = Entry::Command(Command::ToggleSettings).hint(&keymap);
         assert_eq!(settings.as_deref(), Some("cmd-,"));
@@ -475,10 +514,47 @@ mod tests {
         let move_tab = Entry::Command(Command::MoveTabNext).hint(&keymap);
         assert_eq!(move_tab.as_deref(), Some("ctrl-b ."));
         assert!(
-            Entry::Plugin(action("a.b", "x", "X"))
-                .hint(&keymap)
-                .is_none(),
-            "the plugin manifest declares no key"
+            Entry::Plugin {
+                action: action("a.b", "x", "X"),
+                declared: None,
+            }
+            .hint(&keymap)
+            .is_none(),
+            "an action nothing declared a chord for shows none"
+        );
+        // A declared chord is shown beside the row.
+        assert_eq!(
+            Entry::Plugin {
+                action: action("a.b", "x", "X"),
+                declared: Some(Arc::new(declared("X", Some("ctrl-shift-l")))),
+            }
+            .hint(&keymap)
+            .as_deref(),
+            Some("ctrl-shift-l")
+        );
+    }
+
+    /// A declaration names the row: the daemon's action title is a description
+    /// of the action, while the declaration is what the plugin wants its own
+    /// command to be called here.
+    #[test]
+    fn a_declared_title_names_the_row_and_the_daemons_names_it_alone() {
+        let action = action("a.b", "x", "Action title");
+        assert_eq!(
+            Entry::Plugin {
+                action: action.clone(),
+                declared: None
+            }
+            .label(),
+            "Action title"
+        );
+        assert_eq!(
+            Entry::Plugin {
+                action,
+                declared: Some(Arc::new(declared("Declared title", None))),
+            }
+            .label(),
+            "Declared title"
         );
     }
 }

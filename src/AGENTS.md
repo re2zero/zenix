@@ -3,7 +3,7 @@
 ## OVERVIEW
 Core GPUI application for zenix desktop frontend. All UI, state, IPC, and system integration.
 
-The UI is being rebuilt on **gpui-kit 0.7.3**: M1 deleted the old GPUI/PTY UI, M3 rebuilt native pane rendering, M4 built the workspace shell (`src/shell/`) on top of it, M5 made the client's settings real (`src/config/` + `src/shell/settings.rs`), and M6 added the right-hand AI chat panel (`src/shell/chat.rs`, mounted through the registry's aside slot). See `../.relay/PLAN.md` (local, gitignored) for the milestone plan.
+The UI is being rebuilt on **gpui-kit 0.7.3**: M1 deleted the old GPUI/PTY UI, M3 rebuilt native pane rendering, M4 built the workspace shell (`src/shell/`) on top of it, M5 made the client's settings real (`src/config/` + `src/shell/settings.rs`), M6 added the right-hand AI chat panel (`src/shell/chat.rs`, mounted through the registry's aside slot), M8a hosted the daemon's plugins (`src/plugins/`, the command palette), and M8b mounts the UI a plugin declares for this client (`src/plugins/ui_manifest.rs` → registry contributions, data in `src/plugins/ui_data.rs`, drawn by `src/plugins/views.rs`). See `../.relay/PLAN.md` (local, gitignored) for the milestone plan.
 
 ## STRUCTURE
 ```
@@ -21,6 +21,14 @@ src/
 │   ├── settings.rs    # Built-in settings pages, mounted from the registry
 │   ├── chat.rs        # The right-hand panel's block: turns, tool cards, session store (M6)
 │   └── panel_resize.rs# A panel's edge: drag, reset, and what to save
+├── plugins/           # herdr plugin host (M8)
+│   ├── model.rs       # The daemon's plugin vocabulary, as plugin.* reports it
+│   ├── api.rs         # The plugin.* methods, one call each, over the JSON API lane
+│   ├── host.rs        # The registry cache, its worker thread, and the shell's requests
+│   ├── panels.rs      # The host's own sidebar blocks (installed plugins, log ring)
+│   ├── ui_manifest.rs # zenix-ui.toml: what a plugin declares for this host to draw
+│   ├── ui_data.rs     # The JSON those declarations' commands print, read off-thread
+│   └── views.rs       # Drawing a declaration: panel, sidebar row, status segment
 ├── terminal/          # Cell painting + semantic input (M3)
 │   ├── mod.rs         # Grid geometry, hit testing, key/mouse mapping
 │   ├── painter/       # Cell-grid painter (glyphs, images, graphics, regions parts)
@@ -51,6 +59,8 @@ src/
 | UI contributions | shell/registry.rs, shell/panels.rs, shell/settings.rs | Panels, status segments and settings pages mount through the registry |
 | Client settings | config/mod.rs | Schema, schema diagnostics, and the config global |
 | AI chat panel | shell/chat.rs | Turns over `crate::ai`, tool cards, sessions in `ai/zenix-ai.db` |
+| Plugin host | plugins/{host,api,model}.rs | `plugin.*` over the JSON API lane; reads are on demand, nothing is pushed |
+| Plugin-declared UI | plugins/{ui_manifest,ui_data,views}.rs | `zenix-ui.toml` → registry contributions, fed by a command's stdout JSON |
 | Plugin API surface | lib.rs | Public exports only |
 | Daemon smoke gate | bin/zenix-probe.rs | `cargo run --bin zenix-probe` |
 | Endpoint facade | herdr/connection.rs, herdr/state.rs | Commands out, snapshots in |
@@ -87,7 +97,19 @@ src/
   out of range, and reports each as a `Diagnostic` the settings panel and status bar show.
 - **Endpoint is the state truth**: workspace/tab/pane/agent state comes from `ClientEvent::Snapshot` pushes — no polling
 - **Shell surface mounts through the registry** (`shell/registry.rs`): sidebar panels, status
-  segments and settings pages are contributions, and the shell does not name its own parts directly
+  segments and settings pages are contributions, and the shell does not name its own parts directly.
+  A contribution's `body` is either a built-in builder function or a plugin's parsed declaration
+  (`plugins/ui_manifest.rs`), and both are mounted, dispatched and named the same way — so a plugin
+  panel and the shell's own cannot drift apart.
+- **A declaration is data, never code**: `zenix-ui.toml` names a herdr action to invoke, a command
+  whose stdout is read as JSON, and one of the built-in views. The host adds no plugin format, no
+  installer and no permission system of its own; reading it can only downgrade (unknown `view` →
+  `kv`, unknown `placement` → drawer, unknown field → ignored, a newer schema version → skipped
+  whole), and every downgrade leaves a warning.
+- **A declared command runs off the UI thread, in the plugin's own root** (`plugins/ui_data.rs`):
+  the daemon runs a plugin's commands from `<plugin_root>`, so this host does too, and it sets
+  `HERDR_PLUGIN_CONTEXT_JSON` to the same JSON shape the daemon uses. One read per declaration until
+  someone asks for a refresh — a repaint must not run a plugin's side effects again.
 - **One cell metric**: the advance width the painter lays cells out with is the one every hit
   test, region view and IME cursor must use. `TerminalView` keeps the measured value (`cell`)
   and it is refreshed inside the canvas prepaint, because the painter's metrics are only
@@ -104,5 +126,7 @@ src/
 - ❌ Platform #[cfg] outside platform.rs
 - ❌ Hardcoded colors bypassing theme provider
 - ❌ Hardcoding a shell panel, status segment, settings page or command list outside the contribution registry
+- ❌ Running a declared source command from `render` (or on the UI thread at all) — the reader owns it
+- ❌ Letting a declaration carry an executable action of its own instead of a herdr action id
 - ❌ A setting kept in a view struct beside the config (the two drift; write it through `config::update`)
 - ❌ Editing vendored `../vendor/herdr-{protocol,client}/**` instead of re-syncing it

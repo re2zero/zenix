@@ -12,40 +12,40 @@ use herdr_client::protocol::{
     AgentStatus, ClientShellAgent, ClientShellSnapshot, ClientShellWorkspace,
 };
 
-use super::registry::{Contribution, Invocation, ShellRequest};
+use super::registry::{Builtin, Invocation, ShellRequest};
 use crate::herdr::ConnectionStatus;
 
 /// The sidebar's blocks, top to bottom.
-pub(crate) const PANELS: &[Contribution] = &[
-    Contribution {
+pub(crate) const PANELS: &[Builtin] = &[
+    Builtin {
         id: "workspaces",
         render: render_workspaces,
     },
-    Contribution {
+    Builtin {
         id: "agents",
         render: render_agents,
     },
 ];
 
 /// The status bar's segments, left to right.
-pub(crate) const STATUS_SEGMENTS: &[Contribution] = &[
-    Contribution {
+pub(crate) const STATUS_SEGMENTS: &[Builtin] = &[
+    Builtin {
         id: "connection",
         render: render_connection,
     },
-    Contribution {
+    Builtin {
         id: "config",
         render: render_config,
     },
-    Contribution {
+    Builtin {
         id: "grid",
         render: render_grid,
     },
-    Contribution {
+    Builtin {
         id: "prefix",
         render: render_prefix,
     },
-    Contribution {
+    Builtin {
         id: "rejection",
         render: render_rejection,
     },

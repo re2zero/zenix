@@ -25,6 +25,7 @@ use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 
 use super::api;
 use super::model::{InstalledPlugin, OwnedPane, Placement, PluginAction, PluginCommandLog};
+use super::ui_manifest::{self, UiContributions};
 use crate::herdr::api::ApiClient;
 
 /// How long the worker waits for work before re-reading the registry anyway.
@@ -47,6 +48,10 @@ pub(crate) struct PluginState {
     pub(crate) logs: Vec<PluginCommandLog>,
     /// Plugin panes this client opened, newest first.
     pub(crate) panes: Vec<OwnedPane>,
+    /// What the installed plugins declare for this client to draw, read from
+    /// each plugin's own `zenix-ui.toml` and mounted in the shell. The daemon
+    /// knows nothing about it: it is the host's own contract with the plugin.
+    pub(crate) ui: UiContributions,
     /// Why the last refresh failed, until one succeeds. The registry below may
     /// still be the previous, working answer.
     pub(crate) error: Option<String>,
@@ -232,9 +237,13 @@ fn handle(client: &ApiClient, cache: &Mutex<PluginState>, request: Request) {
 fn refresh(client: &ApiClient, cache: &Mutex<PluginState>) {
     match (api::list_plugins(client), api::list_actions(client)) {
         (Ok(plugins), Ok(actions)) => {
+            // The declared UI is read here rather than at paint time: it is a
+            // file per plugin, and this is the thread that may block on one.
+            let ui = ui_manifest::mounted_ui(&plugins);
             let mut state = lock(cache);
             state.plugins = plugins;
             state.actions = actions;
+            state.ui = ui;
             state.error = None;
         }
         // The registry could not be read at all: keep the last working answer
