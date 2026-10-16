@@ -15,9 +15,12 @@ use herdr_client::protocol::{ClientShellSnapshot, PaneSurfaceFrame};
 
 use super::commands::Command;
 use crate::herdr::ConnectionStatus;
+use crate::plugins::host::PluginState;
+use crate::plugins::model::{Placement, PluginAction};
 
 /// One thing the shell mounts in a slot: a sidebar block, a block of the
 /// right-hand panel, a status-bar segment, and later an MCP tool.
+#[derive(Clone, Copy)]
 pub(crate) struct Contribution {
     /// Stable id, unique within its slot.
     pub(crate) id: &'static str,
@@ -37,7 +40,9 @@ pub(crate) struct SettingsSection {
 }
 
 /// What the shell can be asked to do, by a chord or by a click on a
-/// contribution's element.
+/// contribution's element. Cloning one is the normal case: an element that
+/// dispatches a request has to own it for as long as the frame's tree lives.
+#[derive(Clone)]
 pub(crate) enum ShellRequest {
     /// A command from the directory.
     Command(Command),
@@ -47,6 +52,23 @@ pub(crate) enum ShellRequest {
     FocusTab(String),
     /// Focus a pane, which also brings its workspace and tab forward.
     FocusPane(String),
+    /// Run one plugin action. `source` names where the click came from, which
+    /// is the one part of the invocation context the daemon cannot know.
+    PluginAction {
+        action: PluginAction,
+        source: &'static str,
+    },
+    /// Open a pane a plugin declared, at the placement the manifest asks for.
+    OpenPluginPane {
+        plugin_id: String,
+        entrypoint: String,
+        title: String,
+        placement: Placement,
+    },
+    /// Close a plugin pane this client opened.
+    ClosePluginPane(String),
+    /// Re-read the plugin registry, which nothing pushes.
+    RefreshPlugins,
 }
 
 /// A request's way back into the shell. Shared rather than borrowed because
@@ -67,13 +89,16 @@ pub(crate) struct Invocation<'a> {
     pub(crate) rejection: Option<&'a str>,
     /// The prefix's label while it is armed.
     pub(crate) prefix: Option<&'a str>,
+    /// The plugin registry as of the last refresh. Nothing pushes a plugin
+    /// change, so unlike the snapshot this is read, not painted from a stream.
+    pub(crate) plugins: &'a PluginState,
     pub(crate) theme: &'a Theme,
     pub(crate) dispatch: &'a Dispatch,
 }
 
 /// Where the shell mounts its contributions.
 pub(crate) struct Registry {
-    panels: &'static [Contribution],
+    panels: Vec<Contribution>,
     aside: &'static [Contribution],
     status: &'static [Contribution],
     settings: &'static [SettingsSection],
@@ -83,8 +108,13 @@ impl Registry {
     /// The shell's own capabilities, registered exactly as a plugin's would
     /// be. Nothing here is reached by name from the shell's render.
     pub(crate) fn builtin() -> Self {
+        // The plugin host's blocks are contributions like the shell's own, and
+        // are appended rather than named anywhere: a plugin-declared panel
+        // mounts the same way, in the same order rule (built-ins first).
+        let mut panels = super::panels::PANELS.to_vec();
+        panels.extend_from_slice(crate::plugins::panels::PANELS);
         Self {
-            panels: super::panels::PANELS,
+            panels,
             aside: super::chat::ASIDE,
             status: super::panels::STATUS_SEGMENTS,
             settings: super::settings::SETTINGS_SECTIONS,
@@ -92,8 +122,8 @@ impl Registry {
     }
 
     /// The sidebar's blocks, top to bottom.
-    pub(crate) fn panels(&self) -> &'static [Contribution] {
-        self.panels
+    pub(crate) fn panels(&self) -> &[Contribution] {
+        &self.panels
     }
 
     /// The right-hand panel's blocks, top to bottom. Unlike the sidebar's,

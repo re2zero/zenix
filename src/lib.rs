@@ -25,6 +25,7 @@ pub mod herdr;
 pub mod i18n;
 pub mod mcp;
 pub mod platform;
+pub mod plugins;
 pub mod provider;
 pub mod shell;
 pub mod single_instance;

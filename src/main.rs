@@ -18,6 +18,7 @@ mod herdr;
 mod i18n;
 mod mcp;
 mod platform;
+mod plugins;
 mod provider;
 mod shell;
 mod single_instance;

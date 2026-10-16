@@ -14,6 +14,7 @@
 pub(crate) mod chat;
 pub(crate) mod commands;
 pub(crate) mod keymap;
+pub(crate) mod palette;
 pub(crate) mod panel_resize;
 pub(crate) mod panels;
 pub(crate) mod registry;
@@ -27,10 +28,13 @@ use herdr_client::protocol::ClientShellTab;
 
 use crate::config::{self, ASIDE_WIDTH_DEFAULT, ConfigStore, SIDEBAR_WIDTH_DEFAULT};
 use crate::herdr::Connection;
+use crate::plugins::host::PluginHost;
+use crate::plugins::model::Availability;
 use crate::terminal::Theme as TerminalTheme;
 use crate::terminal::view::TerminalView;
-use commands::Command;
+use commands::{COMMANDS, Command};
 use keymap::{Keymap, RunCommand};
+use palette::{Entry, Key as PaletteKey, Palette};
 use panel_resize::{ASIDE, AsideDrag, Edge, PanelWidth, SIDEBAR, SidebarDrag};
 use registry::{Dispatch, Invocation, Registry, ShellRequest};
 
@@ -57,6 +61,15 @@ pub(crate) struct ShellView {
     /// The keyboard while the settings surface is open, so the pane beside it
     /// stops receiving keystrokes.
     settings_focus: FocusHandle,
+    /// The command palette: the shell's own directory plus the daemon's plugin
+    /// actions, over the shell while it is open.
+    palette: Palette,
+    /// The keyboard while the palette is open.
+    palette_focus: FocusHandle,
+    /// The installed plugins, and where an action's outcome appears. Nothing
+    /// pushes a plugin change, so this is read rather than painted from a
+    /// stream, and refreshed on demand — see `crate::plugins::host`.
+    plugins: PluginHost,
     /// The prefix has been typed and the next keystroke is its chord.
     prefix_armed: bool,
     /// The terminal's last drawn revision, so a paint that changed nothing
@@ -65,6 +78,9 @@ pub(crate) struct ShellView {
     _observe: Subscription,
     _prefix: Subscription,
     _config: Subscription,
+    /// Wakes the shell when the plugin registry moved. Held (not read) so the
+    /// drain lives exactly as long as the window.
+    _plugin_pulses: Task<()>,
     /// The in-process MCP orchestrator agents connect to. Held (not read) so it
     /// lives exactly as long as the window: dropping the shell stops it.
     _orchestrator: Option<crate::mcp::server::McpOrchestrationServer>,
@@ -83,6 +99,10 @@ impl ShellView {
         });
         let prefix = Self::intercept_prefix(cx);
         let config = Self::follow_config(cx);
+        // The plugin registry, read once at start and then on demand: the
+        // daemon pushes nothing when a plugin is linked, enabled or run.
+        let (plugins, plugin_pulses) = PluginHost::start();
+        let plugin_pulses = Self::follow_plugins(cx, plugin_pulses);
         let mut sidebar = SIDEBAR;
         sidebar.restore(config::get(cx).layout.sidebar_width);
         let mut aside = ASIDE;
@@ -101,11 +121,15 @@ impl ShellView {
             aside_dragging: false,
             settings_open: false,
             settings_focus: cx.focus_handle(),
+            palette: Palette::default(),
+            palette_focus: cx.focus_handle(),
+            plugins,
             prefix_armed: false,
             drawn: 0,
             _observe: observe,
             _prefix: prefix,
             _config: config,
+            _plugin_pulses: plugin_pulses,
             _orchestrator: orchestrator,
         };
         shell.sync_terminal_theme(cx);
@@ -125,6 +149,26 @@ impl ShellView {
             }
             shell.sync_terminal_theme(cx);
             cx.notify();
+        })
+    }
+
+    /// Repaint when the plugin registry moved. The worker thread already read
+    /// it; this only wakes the shell, which reads the cache itself.
+    fn follow_plugins(cx: &mut Context<Self>, pulses: crossbeam_channel::Receiver<()>) -> Task<()> {
+        cx.spawn(async move |shell, cx| {
+            loop {
+                let pulses = pulses.clone();
+                let alive = cx
+                    .background_executor()
+                    .spawn(async move { pulses.recv().is_ok() })
+                    .await;
+                if !alive {
+                    break;
+                }
+                if shell.update(cx, |_, cx| cx.notify()).is_err() {
+                    break;
+                }
+            }
         })
     }
 
@@ -152,9 +196,9 @@ impl ShellView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // The settings surface owns the keyboard while it is open: its inputs
-        // must see every key, including the prefix.
-        if self.settings_open {
+        // The settings surface and the palette own the keyboard while they are
+        // open: their inputs must see every key, including the prefix.
+        if self.settings_open || self.palette.is_open() {
             return;
         }
         let is_prefix = self.keymap.is_prefix(keystroke);
@@ -207,7 +251,33 @@ impl ShellView {
                 config::update(cx, |config| config.appearance.theme_mode = mode);
             }
             Command::ToggleSettings => self.toggle_settings(window, cx),
-            command => self.dispatch(ShellRequest::Command(command), cx),
+            Command::TogglePalette => self.toggle_palette(window, cx),
+            // The plugin surface is read, not pushed: both blocks a user can
+            // see ask for the same refresh, and it is the registry and the log
+            // ring together, because the reason to look is the same.
+            Command::RefreshPlugins => self.refresh_plugins(cx),
+            Command::ClosePopup => self.plugins.close_popup(),
+            // Every other command is the daemon's. A command marked local with
+            // no arm above would silently do nothing, so say so in tests.
+            command => {
+                debug_assert!(
+                    !command.is_local(),
+                    "{command:?} is local but has no arm in `run`"
+                );
+                self.send_command(command, cx);
+            }
+        }
+    }
+
+    /// Ask the daemon for one directory command: the method and its params come
+    /// from the snapshot, so a closed tab or workspace cannot be addressed twice.
+    fn send_command(&mut self, command: Command, cx: &mut Context<Self>) {
+        let snapshot = self.terminal.read(cx).live().snapshot.clone();
+        if let Some((method, params)) = snapshot
+            .as_ref()
+            .and_then(|snapshot| commands::request(command, snapshot))
+        {
+            self.connection.request(method, params);
         }
     }
 
@@ -226,6 +296,76 @@ impl ShellView {
         cx.notify();
     }
 
+    /// Show the palette, or hide it and give the keyboard back to the pane. The
+    /// settings surface keeps the keyboard while it is open, so the palette
+    /// does not open over it.
+    fn toggle_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.settings_open {
+            return;
+        }
+        if self.palette.is_open() {
+            self.palette.close();
+            let focus = self.terminal.read(cx).focus_handle().clone();
+            window.focus(&focus, cx);
+        } else {
+            self.palette.open();
+            let focus = self.palette_focus.clone();
+            window.focus(&focus, cx);
+        }
+        cx.notify();
+    }
+
+    /// Read the plugin surface again: what is installed, and what last ran.
+    fn refresh_plugins(&self, cx: &mut Context<Self>) {
+        self.plugins.refresh();
+        self.plugins.refresh_logs();
+        cx.notify();
+    }
+
+    /// Everything the palette offers: the whole command directory, then every
+    /// plugin action the current focus can run. The directory is the same table
+    /// the keymap and the sidebar read, so the palette cannot offer a command
+    /// the shell has no way to run.
+    fn palette_entries(&self, cx: &App) -> Vec<Entry> {
+        let availability = Availability::of(self.terminal.read(cx).live().snapshot.as_deref());
+        let mut entries: Vec<Entry> = COMMANDS
+            .iter()
+            .map(|info| Entry::Command(info.command))
+            .collect();
+        entries.extend(
+            self.plugins
+                .state()
+                .actions
+                .into_iter()
+                .filter(|action| action.is_available(availability))
+                .map(Entry::Plugin),
+        );
+        entries
+    }
+
+    /// The palette holds the keyboard while it is open: a keystroke moves its
+    /// selection, and Enter hands the row's request to the same dispatch a
+    /// click uses, so the two cannot behave differently.
+    fn palette_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        let entries = self.palette_entries(cx);
+        let matches = self.palette.matches(&entries);
+        match self.palette.keystroke(&event.keystroke, matches.len()) {
+            PaletteKey::Close => self.toggle_palette(window, cx),
+            PaletteKey::Run(index) => {
+                let Some(entry) = matches.get(index) else {
+                    return;
+                };
+                let request = entry.request();
+                self.palette.close();
+                self.dispatch(request, window, cx);
+                let focus = self.terminal.read(cx).focus_handle().clone();
+                window.focus(&focus, cx);
+                cx.notify();
+            }
+            PaletteKey::Handled => cx.notify(),
+        }
+    }
+
     /// A keystroke GPUI bound directly, dispatched as its action. The prefix
     /// chords arrive through the interceptor instead, and both end in [`Self::run`].
     fn run_command(&mut self, action: &RunCommand, window: &mut Window, cx: &mut Context<Self>) {
@@ -234,22 +374,32 @@ impl ShellView {
 
     /// Hand a request to the daemon, or run it locally. Both the keymap and a
     /// contribution's click arrive here, so the two cannot behave differently.
-    fn dispatch(&mut self, request: ShellRequest, cx: &mut Context<Self>) {
+    fn dispatch(&mut self, request: ShellRequest, window: &mut Window, cx: &mut Context<Self>) {
         match request {
             ShellRequest::FocusWorkspace(workspace_id) => {
                 self.connection.focus_workspace(&workspace_id)
             }
             ShellRequest::FocusTab(tab_id) => self.connection.focus_tab(&tab_id),
             ShellRequest::FocusPane(pane_id) => self.connection.focus_pane(&pane_id),
-            ShellRequest::Command(command) => {
-                let snapshot = self.terminal.read(cx).live().snapshot.clone();
-                if let Some((method, params)) = snapshot
-                    .as_ref()
-                    .and_then(|snapshot| commands::request(command, snapshot))
-                {
-                    self.connection.request(method, params);
-                }
-            }
+            // A local command is the shell's own, so it goes back through
+            // [`Self::run`]: a palette row and a chord must end in the same
+            // place, and the directory is the only thing that knows which
+            // commands the daemon has no method for.
+            ShellRequest::Command(command) if command.is_local() => self.run(command, window, cx),
+            ShellRequest::Command(command) => self.send_command(command, cx),
+            // Everything a plugin asks for leaves over the API lane, which is
+            // this host's to own; the endpoint connection below never sees it.
+            ShellRequest::PluginAction { action, source } => self.plugins.invoke(action, source),
+            ShellRequest::OpenPluginPane {
+                plugin_id,
+                entrypoint,
+                title,
+                placement,
+            } => self
+                .plugins
+                .open_pane(plugin_id, entrypoint, title, placement),
+            ShellRequest::ClosePluginPane(pane_id) => self.plugins.close_pane(pane_id),
+            ShellRequest::RefreshPlugins => self.refresh_plugins(cx),
         }
     }
 
@@ -341,6 +491,7 @@ impl Render for ShellView {
         let live = self.terminal.read(cx).live().clone();
         let error = self.connection.footer();
         let theme = cx.theme().clone();
+        let plugins = self.plugins.state();
         let sidebar_visible = config::get(cx).layout.sidebar_visible;
         let aside_visible = config::get(cx).layout.aside_visible;
         let dispatch: Dispatch = Rc::new({
@@ -366,6 +517,18 @@ impl Render for ShellView {
                         connection.request(method, params);
                     }
                 }
+                // A plugin request leaves through the host, which owns the API
+                // lane; the dispatch is the shell's, so the two paths cannot
+                // part ways.
+                request @ (ShellRequest::PluginAction { .. }
+                | ShellRequest::OpenPluginPane { .. }
+                | ShellRequest::ClosePluginPane(_)
+                | ShellRequest::RefreshPlugins) => {
+                    entity.update(cx, |shell, cx| {
+                        shell.dispatch(request, window, cx);
+                        cx.notify();
+                    });
+                }
             }
         });
         let prefix = self.prefix_armed.then(|| self.keymap.prefix_label());
@@ -376,6 +539,7 @@ impl Render for ShellView {
             status_error: error.as_deref(),
             rejection: live.rejected.as_deref(),
             prefix: prefix.as_deref(),
+            plugins: &plugins,
             theme: &theme,
             dispatch: &dispatch,
         };
@@ -494,6 +658,18 @@ impl Render for ShellView {
                             .map(|segment| (segment.render)(&invocation, window, cx)),
                     ),
             );
+        if self.palette.is_open() {
+            let entries = self.palette_entries(cx);
+            root = root.child(palette::overlay(
+                &self.palette,
+                &entries,
+                &self.keymap,
+                &self.palette_focus,
+                &dispatch,
+                cx.listener(Self::palette_key),
+                cx,
+            ));
+        }
         if self.settings_open {
             root = root.child(settings::overlay(
                 self.registry.settings_sections(),

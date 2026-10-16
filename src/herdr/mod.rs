@@ -4,6 +4,9 @@
 //! tab, pane and agent model arrives as `ClientEvent` pushes. Nothing here
 //! polls the daemon — the endpoint is the state truth.
 
+/// The JSON API lane is public: `zenix-probe` and the shell's plugin host are
+/// both clients of it, and neither goes through the AI module to reach it.
+pub mod api;
 pub(crate) mod connection;
 pub(crate) mod osc52;
 pub(crate) mod state;

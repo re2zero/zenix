@@ -47,6 +47,12 @@ pub(crate) enum Command {
     ToggleTheme,
     /// Local: the settings surface.
     ToggleSettings,
+    /// Local: the command palette, over the shell.
+    TogglePalette,
+    /// Local: re-read the plugin registry, which the daemon does not push.
+    RefreshPlugins,
+    /// Local: dismiss the daemon's popup pane, if one is open.
+    ClosePopup,
 }
 
 impl Command {
@@ -60,6 +66,9 @@ impl Command {
                 | Command::ToggleAside
                 | Command::ToggleTheme
                 | Command::ToggleSettings
+                | Command::TogglePalette
+                | Command::RefreshPlugins
+                | Command::ClosePopup
         )
     }
 }
@@ -266,6 +275,32 @@ pub(crate) const COMMANDS: &[CommandInfo] = &[
         direct: &["cmd-,"],
         prefixed: &[],
     },
+    // The palette is a view of this same directory plus the daemon's plugin
+    // actions, so it is a command like any other and reaches itself (a second
+    // press closes it).
+    CommandInfo {
+        command: Command::TogglePalette,
+        id: "view.palette",
+        label: "Command Palette",
+        direct: &["cmd-shift-p"],
+        prefixed: &[],
+    },
+    // The plugin surface, which nothing pushes: a plugin linked in a shell
+    // appears here only after this reads the registry again.
+    CommandInfo {
+        command: Command::RefreshPlugins,
+        id: "plugins.refresh",
+        label: "Refresh Plugins",
+        direct: &[],
+        prefixed: &[],
+    },
+    CommandInfo {
+        command: Command::ClosePopup,
+        id: "view.close-popup",
+        label: "Close Popup Pane",
+        direct: &[],
+        prefixed: &[],
+    },
 ];
 
 /// The daemon method a command becomes, or `None` when the shell runs it
@@ -402,7 +437,10 @@ pub(crate) fn request(command: Command, snapshot: &ClientShellSnapshot) -> Optio
         Command::ToggleSidebar
         | Command::ToggleAside
         | Command::ToggleTheme
-        | Command::ToggleSettings => return None,
+        | Command::ToggleSettings
+        | Command::TogglePalette
+        | Command::RefreshPlugins
+        | Command::ClosePopup => return None,
     })
 }
 
@@ -458,6 +496,9 @@ mod tests {
         assert!(request(Command::ToggleAside, &snapshot).is_none());
         assert!(request(Command::ToggleTheme, &snapshot).is_none());
         assert!(request(Command::ToggleSettings, &snapshot).is_none());
+        assert!(request(Command::TogglePalette, &snapshot).is_none());
+        assert!(request(Command::RefreshPlugins, &snapshot).is_none());
+        assert!(request(Command::ClosePopup, &snapshot).is_none());
     }
 
     /// A command the shell runs itself must never also name a daemon method,
@@ -476,7 +517,10 @@ mod tests {
                 "view.toggle-sidebar",
                 "view.toggle-chat",
                 "view.toggle-theme",
-                "view.settings"
+                "view.settings",
+                "view.palette",
+                "plugins.refresh",
+                "view.close-popup"
             ]
         );
         for info in COMMANDS {
