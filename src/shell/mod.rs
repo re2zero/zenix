@@ -31,6 +31,7 @@ use crate::config::{self, ASIDE_WIDTH_DEFAULT, ConfigStore, SIDEBAR_WIDTH_DEFAUL
 use crate::herdr::Connection;
 use crate::plugins::host::PluginHost;
 use crate::plugins::model::Availability;
+use crate::plugins::trust_view::{self, TrustReview};
 use crate::plugins::ui_data::{self, UiData, UiDataHost};
 use crate::plugins::ui_manifest::UiContributions;
 use crate::terminal::Theme as TerminalTheme;
@@ -69,6 +70,11 @@ pub(crate) struct ShellView {
     palette: Palette,
     /// The keyboard while the palette is open.
     palette_focus: FocusHandle,
+    /// The pre-link review: a path is typed into it, and what that path would
+    /// run is shown before anything is linked.
+    trust: TrustReview,
+    /// The keyboard while the review is open.
+    trust_focus: FocusHandle,
     /// The installed plugins, and where an action's outcome appears. Nothing
     /// pushes a plugin change, so this is read rather than painted from a
     /// stream, and refreshed on demand — see `crate::plugins::host`.
@@ -136,6 +142,8 @@ impl ShellView {
             settings_focus: cx.focus_handle(),
             palette: Palette::default(),
             palette_focus: cx.focus_handle(),
+            trust: TrustReview::default(),
+            trust_focus: cx.focus_handle(),
             plugins,
             ui_data_host,
             ui_data: UiData::default(),
@@ -200,6 +208,14 @@ impl ShellView {
         let state = self.plugins.state();
         self.registry = Registry::new(&state.ui);
         self.request_ui_data(&state.ui, false, cx);
+        // The review is where a link's answer belongs while it is open: the
+        // sidebar's log block is behind it, and a refused link leaves no log
+        // entry at all.
+        if self.trust.is_open()
+            && let Some(last) = state.last.clone()
+        {
+            self.trust.note(last);
+        }
         cx.notify();
     }
 
@@ -262,9 +278,10 @@ impl ShellView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // The settings surface and the palette own the keyboard while they are
-        // open: their inputs must see every key, including the prefix.
-        if self.settings_open || self.palette.is_open() {
+        // The settings surface, the palette and the review own the keyboard
+        // while they are open: their inputs must see every key, including the
+        // prefix.
+        if self.settings_open || self.palette.is_open() || self.trust.is_open() {
             return;
         }
         let is_prefix = self.keymap.is_prefix(keystroke);
@@ -322,6 +339,9 @@ impl ShellView {
             // see ask for the same refresh, and it is the registry and the log
             // ring together, because the reason to look is the same.
             Command::RefreshPlugins => self.refresh_plugins(cx),
+            // Linking runs a directory's commands as the user, so the review
+            // comes first, from wherever the command was reached.
+            Command::LinkPlugin => self.dispatch(ShellRequest::OpenPluginTrust, window, cx),
             Command::ClosePopup => self.plugins.close_popup(),
             // Every other command is the daemon's. A command marked local with
             // no arm above would silently do nothing, so say so in tests.
@@ -442,8 +462,13 @@ impl ShellView {
                 let request = entry.request();
                 self.palette.close();
                 self.dispatch(request, window, cx);
-                let focus = self.terminal.read(cx).focus_handle().clone();
-                window.focus(&focus, cx);
+                // A request that opened the review has already claimed the
+                // keyboard; handing it back to the pane here would take it away
+                // again before the review is used.
+                if !self.trust.is_open() {
+                    let focus = self.terminal.read(cx).focus_handle().clone();
+                    window.focus(&focus, cx);
+                }
                 cx.notify();
             }
             PaletteKey::Handled => cx.notify(),
@@ -491,6 +516,55 @@ impl ShellView {
                 cx.notify();
             }
             ShellRequest::RefreshPlugins => self.refresh_plugins(cx),
+            ShellRequest::OpenPluginTrust => {
+                self.trust.open();
+                let focus = self.trust_focus.clone();
+                window.focus(&focus, cx);
+                cx.notify();
+            }
+            // Reading is the shell's own: it is one small file, and the answer
+            // is what the review shows.
+            ShellRequest::ReviewPlugin => {
+                self.trust.review();
+                cx.notify();
+            }
+            ShellRequest::OpenPluginTrustAt(dir) => {
+                self.trust.open_at(std::path::Path::new(&dir));
+                let focus = self.trust_focus.clone();
+                window.focus(&focus, cx);
+                cx.notify();
+            }
+            ShellRequest::LinkPlugin(path) => {
+                self.trust.note(format!("linking {path}…"));
+                self.plugins.link(path);
+                cx.notify();
+            }
+            ShellRequest::ClosePluginTrust => {
+                self.trust.close();
+                let focus = self.terminal.read(cx).focus_handle().clone();
+                window.focus(&focus, cx);
+                cx.notify();
+            }
+        }
+    }
+
+    /// A keystroke while the review is open: Escape closes it, Enter reads the
+    /// path or links it, and everything else is typed into the input.
+    fn trust_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match event.keystroke.key.as_str() {
+            "escape" => {
+                self.dispatch(ShellRequest::ClosePluginTrust, window, cx);
+            }
+            "enter" => {
+                let request = self.trust.enter();
+                self.dispatch(request, window, cx);
+            }
+            _ => {
+                if self.trust.keystroke(&event.keystroke) {
+                    cx.stop_propagation();
+                    cx.notify();
+                }
+            }
         }
     }
 
@@ -615,7 +689,12 @@ impl Render for ShellView {
                 | ShellRequest::OpenPluginPane { .. }
                 | ShellRequest::ClosePluginPane(_)
                 | ShellRequest::ShowPluginPanels
-                | ShellRequest::RefreshPlugins) => {
+                | ShellRequest::RefreshPlugins
+                | ShellRequest::OpenPluginTrust
+                | ShellRequest::ReviewPlugin
+                | ShellRequest::OpenPluginTrustAt(_)
+                | ShellRequest::LinkPlugin(_)
+                | ShellRequest::ClosePluginTrust) => {
                     entity.update(cx, |shell, cx| {
                         shell.dispatch(request, window, cx);
                         cx.notify();
@@ -768,6 +847,17 @@ impl Render for ShellView {
                 self.registry.settings_sections(),
                 &self.settings_focus,
                 &dispatch,
+                cx,
+            ));
+        }
+        // Last, so it is the surface on top: the review is opened from the
+        // palette as well as from the sidebar, and the keyboard follows it.
+        if self.trust.is_open() {
+            root = root.child(trust_view::overlay(
+                &self.trust,
+                &self.trust_focus,
+                &dispatch,
+                cx.listener(Self::trust_key),
                 cx,
             ));
         }

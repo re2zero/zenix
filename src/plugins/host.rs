@@ -101,6 +101,13 @@ impl PluginHost {
         let _ = self.commands.send(Request::RefreshLogs);
     }
 
+    /// Link a plugin directory, enabled. The daemon reads the manifest; this
+    /// side only names the directory, and the registry is re-read afterwards
+    /// because the daemon pushes no change for a link.
+    pub(crate) fn link(&self, path: String) {
+        let _ = self.commands.send(Request::Link { path });
+    }
+
     /// Run one action. `source` names where the click came from, which is the
     /// one part of the invocation context the daemon cannot know by itself.
     pub(crate) fn invoke(&self, action: PluginAction, source: &'static str) {
@@ -137,6 +144,9 @@ impl PluginHost {
 enum Request {
     Refresh,
     RefreshLogs,
+    Link {
+        path: String,
+    },
     Invoke {
         action: PluginAction,
         source: &'static str,
@@ -191,6 +201,18 @@ fn handle(client: &ApiClient, cache: &Mutex<PluginState>, request: Request) {
             refresh_logs(client, cache);
             thread::sleep(OUTCOME_SETTLE);
             refresh_logs(client, cache);
+        }
+        Request::Link { path } => {
+            match api::link_plugin(client, &path, true) {
+                Ok(plugin) => {
+                    note(cache, format!("{}: linked", plugin.plugin_id));
+                    // Nothing pushes a link, so the registry is read again here:
+                    // this is the one moment the client knows for certain that it
+                    // changed.
+                    refresh(client, cache);
+                }
+                Err(error) => note(cache, format!("{path} was not linked: {error}")),
+            }
         }
         Request::OpenPane {
             plugin_id,

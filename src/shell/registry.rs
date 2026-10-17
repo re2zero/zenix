@@ -128,6 +128,19 @@ pub(crate) enum ShellRequest {
     /// Re-read the plugin registry, which nothing pushes, and re-read the data
     /// its declarations print.
     RefreshPlugins,
+    /// Open the pre-link review: a plugin directory is read, and what it would
+    /// run is shown, before anything is linked.
+    OpenPluginTrust,
+    /// Read the path in the review's input and show what it declares.
+    ReviewPlugin,
+    /// Open the review already reading one directory: what an installed
+    /// plugin's row asks for, so its commands can be read back after the fact.
+    OpenPluginTrustAt(String),
+    /// Link a plugin directory. The daemon reads the manifest itself; this is
+    /// the one request in the directory that hands it a path it has not seen.
+    LinkPlugin(String),
+    /// Close the review.
+    ClosePluginTrust,
 }
 
 /// A request's way back into the shell. Shared rather than borrowed because

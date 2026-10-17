@@ -3,7 +3,7 @@
 ## OVERVIEW
 Core GPUI application for zenix desktop frontend. All UI, state, IPC, and system integration.
 
-The UI is being rebuilt on **gpui-kit 0.7.3**: M1 deleted the old GPUI/PTY UI, M3 rebuilt native pane rendering, M4 built the workspace shell (`src/shell/`) on top of it, M5 made the client's settings real (`src/config/` + `src/shell/settings.rs`), M6 added the right-hand AI chat panel (`src/shell/chat.rs`, mounted through the registry's aside slot), M8a hosted the daemon's plugins (`src/plugins/`, the command palette), and M8b mounts the UI a plugin declares for this client (`src/plugins/ui_manifest.rs` → registry contributions, data in `src/plugins/ui_data.rs`, drawn by `src/plugins/views.rs`). See `../.relay/PLAN.md` (local, gitignored) for the milestone plan.
+The UI is being rebuilt on **gpui-kit 0.7.3**: M1 deleted the old GPUI/PTY UI, M3 rebuilt native pane rendering, M4 built the workspace shell (`src/shell/`) on top of it, M5 made the client's settings real (`src/config/` + `src/shell/settings.rs`), M6 added the right-hand AI chat panel (`src/shell/chat.rs`, mounted through the registry's aside slot), M8a hosted the daemon's plugins (`src/plugins/`, the command palette), M8b mounts the UI a plugin declares for this client (`src/plugins/ui_manifest.rs` → registry contributions, data in `src/plugins/ui_data.rs`, drawn by `src/plugins/views.rs`), and M8c opens the plugin surface outwards: every plugin action is an MCP tool (`src/mcp/plugin_tools.rs`) and a plugin directory is read, with its hazards, before it is linked (`src/plugins/trust.rs` + `trust_view.rs`). See `../.relay/PLAN.md` (local, gitignored) for the milestone plan.
 
 ## STRUCTURE
 ```
@@ -28,7 +28,9 @@ src/
 │   ├── panels.rs      # The host's own sidebar blocks (installed plugins, log ring)
 │   ├── ui_manifest.rs # zenix-ui.toml: what a plugin declares for this host to draw
 │   ├── ui_data.rs     # The JSON those declarations' commands print, read off-thread
-│   └── views.rs       # Drawing a declaration: panel, sidebar row, status segment
+│   ├── views.rs       # Drawing a declaration: panel, sidebar row, status segment
+│   ├── trust.rs       # A manifest → the commands it would run, and its hazards (M8c)
+│   └── trust_view.rs  # The pre-link review: the path input, the commands, the link (M8c)
 ├── terminal/          # Cell painting + semantic input (M3)
 │   ├── mod.rs         # Grid geometry, hit testing, key/mouse mapping
 │   ├── painter/       # Cell-grid painter (glyphs, images, graphics, regions parts)
@@ -43,6 +45,9 @@ src/
 ├── provider/          # Theme/asset providers
 ├── api_provider/      # REST API for external integrations
 ├── mcp/               # Model Context Protocol integration
+│   ├── handler.rs     # The orchestrator's tools, plus every plugin action (M8c)
+│   ├── plugin_tools.rs# A plugin action as an MCP tool: naming, context, outcome
+│   └── sse.rs         # The unix-socket listener an agent connects to
 ├── agent/             # Agent detection/integration
 ├── skills/            # Skill system for extensibility
 ├── config_adapters/   # Per-agent config adapters
@@ -61,6 +66,8 @@ src/
 | AI chat panel | shell/chat.rs | Turns over `crate::ai`, tool cards, sessions in `ai/zenix-ai.db` |
 | Plugin host | plugins/{host,api,model}.rs | `plugin.*` over the JSON API lane; reads are on demand, nothing is pushed |
 | Plugin-declared UI | plugins/{ui_manifest,ui_data,views}.rs | `zenix-ui.toml` → registry contributions, fed by a command's stdout JSON |
+| Plugin actions over MCP | mcp/plugin_tools.rs | `plugin.action.list` → tools, `invoke` → the log ring, stdout and exit code (M8c) |
+| Pre-link trust review | plugins/trust.rs, plugins/trust_view.rs | Manifest → argv list + hazards; `plugin.link` only after it is read |
 | Plugin API surface | lib.rs | Public exports only |
 | Daemon smoke gate | bin/zenix-probe.rs | `cargo run --bin zenix-probe` |
 | Endpoint facade | herdr/connection.rs, herdr/state.rs | Commands out, snapshots in |
@@ -115,6 +122,15 @@ src/
   and it is refreshed inside the canvas prepaint, because the painter's metrics are only
   available while a frame is built; a stale copy silently shifts every mouse hit and every
   drawn border by a growing offset.
+- **A bridged tool's name is this client's, not the daemon's** (`mcp/plugin_tools.rs`): the daemon's
+  action id is dotted, and a tool name is read by an MCP client, so the mapping folds it into
+  `[A-Za-z0-9_]` inside the specification's 64 characters. The mapping is a pure function of the
+  qualified id and the list and the call each rebuild it, so neither side caches a table that can go
+  stale. A bridged call answers with the command's own outcome, which means waiting on the log ring:
+  `plugin.action.invoke` returns as soon as the daemon has spawned the command.
+- **Nothing is linked before its commands have been read** (`plugins/trust.rs`): linking hands herdr a
+  directory whose commands run as the user. The review shows every argv the manifest declares plus
+  the hazards worth stopping on; it reads one file and runs nothing.
 - **No local PTY**: daemon panes are the only terminal source
 
 ## ANTI-PATTERNS

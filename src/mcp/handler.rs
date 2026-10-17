@@ -7,7 +7,9 @@ use serde_json::Value;
 use crate::ai::session::SessionManager;
 use crate::ai::tools::{ToolCall, ToolExecutor};
 use crate::ai::workers::WorkerRegistry;
+use crate::herdr::api::ApiClient;
 
+use super::plugin_tools;
 use super::types::WorkerMessage;
 
 #[derive(Clone)]
@@ -16,6 +18,10 @@ pub struct McpToolHandler {
     worker_registry: Arc<WorkerRegistry>,
     session_manager: Arc<SessionManager>,
     workspace_id: String,
+    /// The daemon's JSON API socket, which is where a plugin's actions are
+    /// listed and run from. A call connects, writes a line and reads one back,
+    /// so holding this is holding a path rather than a connection.
+    api: ApiClient,
 }
 
 impl McpToolHandler {
@@ -30,7 +36,18 @@ impl McpToolHandler {
             worker_registry,
             session_manager,
             workspace_id,
+            api: ApiClient::local(),
         }
+    }
+
+    /// Every tool this server offers: the orchestrator's own, then one per
+    /// plugin action the daemon reports. Read per call rather than cached,
+    /// because the daemon's registry — not this process — is what a plugin being
+    /// linked changes, and a tool list is asked for once per client.
+    pub(crate) fn tools(&self) -> Vec<Tool> {
+        let mut tools = Self::build_tools();
+        tools.extend(plugin_tools::tools(&self.api));
+        tools
     }
 
     fn exec_orch(&self, name: &str, args: Value) -> CallToolResult {
@@ -48,7 +65,7 @@ impl McpToolHandler {
         Self::ok(text)
     }
 
-    fn ok(text: String) -> CallToolResult {
+    pub(crate) fn ok(text: String) -> CallToolResult {
         serde_json::from_value(serde_json::json!({
             "content": [{"type": "text", "text": text}],
             "isError": false
@@ -56,7 +73,7 @@ impl McpToolHandler {
         .unwrap_or_else(|_| Self::err("failed to serialize ok response".into()))
     }
 
-    fn err(text: String) -> CallToolResult {
+    pub(crate) fn err(text: String) -> CallToolResult {
         serde_json::from_value(serde_json::json!({
             "content": [{"type": "text", "text": text}],
             "isError": true
@@ -70,7 +87,7 @@ impl McpToolHandler {
         })
     }
 
-    fn tool_def(name: &str, desc: &str, schema: Value) -> Tool {
+    pub(crate) fn tool_def(name: &str, desc: &str, schema: Value) -> Tool {
         serde_json::from_value(serde_json::json!({
             "name": name,
             "description": desc,
@@ -309,7 +326,11 @@ impl McpToolHandler {
                 let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("");
                 worker_broadcast(self, text)
             }
-            _ => Self::err(format!("Unknown tool: {name}")),
+            // Nothing of the orchestrator's, so a plugin may still own the name:
+            // a bridged action is named after the action, and only the daemon's
+            // registry decides who has it.
+            _ => plugin_tools::call_named(&self.api, name, &args)
+                .unwrap_or_else(|| Self::err(format!("Unknown tool: {name}"))),
         }
     }
 }
@@ -336,7 +357,7 @@ impl ServerHandler for McpToolHandler {
         _context: rmcp::service::RequestContext<rmcp::service::RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
         Ok(serde_json::from_value(serde_json::json!({
-            "tools": Self::build_tools()
+            "tools": self.tools()
         }))
         .unwrap())
     }

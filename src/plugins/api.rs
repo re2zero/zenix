@@ -59,15 +59,41 @@ pub(crate) fn invoke_action(
     action: &PluginAction,
     source: &str,
 ) -> Result<PluginCommandLog, ApiError> {
+    invoke_action_in(client, action, json!({"invocation_source": source}))
+}
+
+/// Run one action with a context this side supplies in full. The daemon still
+/// merges it over its own live state: a field named here wins, everything else
+/// is filled from what the daemon knows. That is what makes this the right call
+/// for a caller with no window — an MCP client naming a workspace it means,
+/// rather than the one a user happens to have focused.
+pub(crate) fn invoke_action_in(
+    client: &ApiClient,
+    action: &PluginAction,
+    context: serde_json::Value,
+) -> Result<PluginCommandLog, ApiError> {
     let result = client.call(
         "plugin.action.invoke",
         json!({
             "action_id": action.action_id,
             "plugin_id": action.plugin_id,
-            "context": {"invocation_source": source},
+            "context": context,
         }),
     )?;
     required_field(&result, "log")
+}
+
+/// Link a plugin directory: the daemon reads that directory's manifest, checks
+/// it and remembers the plugin. The answer is the plugin as the daemon now sees
+/// it, and a refusal comes back as an error naming what was wrong — which is the
+/// only place a link's reason appears, since nothing is pushed afterwards.
+pub(crate) fn link_plugin(
+    client: &ApiClient,
+    path: &str,
+    enabled: bool,
+) -> Result<InstalledPlugin, ApiError> {
+    let result = client.call("plugin.link", json!({"path": path, "enabled": enabled}))?;
+    required_field(&result, "plugin")
 }
 
 /// Open one of a plugin's declared panes. `Ok(None)` is the daemon's answer for

@@ -25,6 +25,8 @@ pub(crate) mod api;
 pub(crate) mod host;
 pub(crate) mod model;
 pub(crate) mod panels;
+pub(crate) mod trust;
+pub(crate) mod trust_view;
 pub(crate) mod ui_data;
 pub(crate) mod ui_manifest;
 pub(crate) mod views;

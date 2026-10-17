@@ -51,6 +51,8 @@ pub(crate) enum Command {
     TogglePalette,
     /// Local: re-read the plugin registry, which the daemon does not push.
     RefreshPlugins,
+    /// Local: read a plugin directory before linking it.
+    LinkPlugin,
     /// Local: dismiss the daemon's popup pane, if one is open.
     ClosePopup,
 }
@@ -68,6 +70,7 @@ impl Command {
                 | Command::ToggleSettings
                 | Command::TogglePalette
                 | Command::RefreshPlugins
+                | Command::LinkPlugin
                 | Command::ClosePopup
         )
     }
@@ -294,6 +297,15 @@ pub(crate) const COMMANDS: &[CommandInfo] = &[
         direct: &[],
         prefixed: &[],
     },
+    // The review is a view of the shell's own, like the palette: linking a
+    // directory runs commands as the user, so what it would run is read first.
+    CommandInfo {
+        command: Command::LinkPlugin,
+        id: "plugins.link",
+        label: "Link a Plugin…",
+        direct: &[],
+        prefixed: &[],
+    },
     CommandInfo {
         command: Command::ClosePopup,
         id: "view.close-popup",
@@ -440,6 +452,7 @@ pub(crate) fn request(command: Command, snapshot: &ClientShellSnapshot) -> Optio
         | Command::ToggleSettings
         | Command::TogglePalette
         | Command::RefreshPlugins
+        | Command::LinkPlugin
         | Command::ClosePopup => return None,
     })
 }
@@ -520,6 +533,7 @@ mod tests {
                 "view.settings",
                 "view.palette",
                 "plugins.refresh",
+                "plugins.link",
                 "view.close-popup"
             ]
         );

@@ -109,6 +109,8 @@ fn render_logs(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyEleme
 /// One plugin: its name, where it came from, and what the daemon said about it.
 fn plugin_row(index: usize, plugin: &InstalledPlugin, invocation: &Invocation) -> AnyElement {
     let theme = invocation.theme;
+    let dispatch = invocation.dispatch.clone();
+    let root = plugin.plugin_root.clone();
     let mut detail = plugin.plugin_id.clone();
     if !plugin.enabled {
         detail.push_str(" · disabled");
@@ -140,7 +142,33 @@ fn plugin_row(index: usize, plugin: &InstalledPlugin, invocation: &Invocation) -
                         .child(plugin.version.clone()),
                 ),
         )
-        .child(line(&detail, theme.muted_foreground));
+        // The commands the manifest declares are one click away, where they can
+        // be read as a list rather than as a row's suffix.
+        .child(
+            h_flex()
+                .w_full()
+                .gap_1()
+                .items_center()
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex_1()
+                        .child(line(&detail, theme.muted_foreground)),
+                )
+                .child(
+                    div()
+                        .id(("plugin-commands", index))
+                        .flex_none()
+                        .px_0p5()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .cursor_pointer()
+                        .on_click(move |_, window, cx| {
+                            dispatch(ShellRequest::OpenPluginTrustAt(root.clone()), window, cx);
+                        })
+                        .child("commands"),
+                ),
+        );
     for warning in &plugin.warnings {
         row = row.child(line(warning, theme.warning));
     }

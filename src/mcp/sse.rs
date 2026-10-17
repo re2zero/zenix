@@ -127,7 +127,7 @@ async fn handle_jsonrpc(handler: &McpToolHandler, body: &str) -> String {
 
     let result = match method {
         "tools/list" => {
-            let tools = McpToolHandler::build_tools();
+            let tools = handler.tools();
             ok_json(id, serde_json::json!({"tools": tools}))
         }
         "tools/call" => {

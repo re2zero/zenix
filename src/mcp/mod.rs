@@ -723,6 +723,7 @@ pub fn ensure_builtin_orchestrator() -> ZenixMcpServer {
 }
 
 pub mod handler;
+pub mod plugin_tools;
 pub mod server;
 pub mod sse;
 pub mod types;
