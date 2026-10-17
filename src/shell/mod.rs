@@ -462,10 +462,11 @@ impl ShellView {
                 let request = entry.request();
                 self.palette.close();
                 self.dispatch(request, window, cx);
-                // A request that opened the review has already claimed the
-                // keyboard; handing it back to the pane here would take it away
-                // again before the review is used.
-                if !self.trust.is_open() {
+                // A request that opened an overlay — the settings surface, the
+                // review, or the palette itself — claimed the keyboard itself
+                // while it ran; handing it back to the pane here would take it
+                // away again before the overlay has been used.
+                if !self.overlay_owns_keyboard() {
                     let focus = self.terminal.read(cx).focus_handle().clone();
                     window.focus(&focus, cx);
                 }
@@ -546,6 +547,14 @@ impl ShellView {
                 cx.notify();
             }
         }
+    }
+
+    /// Whether an overlay of the shell's holds the keyboard right now. Each one
+    /// claims it while it opens, so nothing may hand it back to the pane while
+    /// any of them is up — the shell's own chord interceptor defers to them the
+    /// same way.
+    fn overlay_owns_keyboard(&self) -> bool {
+        self.settings_open || self.palette.is_open() || self.trust.is_open()
     }
 
     /// A keystroke while the review is open: Escape closes it, Enter reads the
