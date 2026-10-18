@@ -56,6 +56,19 @@ rm -rf "${ICONSET}"
 # Also bundle the PNG for other uses
 cp res/zenix.png "${APP}/Contents/Resources/"
 
+# License texts — same inventory as [package.metadata.deb]. The Lilex faces are
+# compiled into the binary, so no font files ship, but OFL-1.1 still requires
+# the license text to travel with the font. The dmg volume holds only the .app,
+# so the texts live inside the bundle where the user's copy travels with it.
+DOC="${APP}/Contents/Resources/doc"
+mkdir -p "${DOC}/herdr" "${DOC}/herdr-client" "${DOC}/herdr-protocol"
+cp LICENSE "${DOC}/LICENSE"
+cp THIRD-PARTY.md "${DOC}/"
+cp assets/fonts/OFL.txt "${DOC}/Lilex-OFL.txt"
+cp herdr/LICENSE "${DOC}/herdr/LICENSE"
+cp vendor/herdr-client/LICENSE-APACHE vendor/herdr-client/NOTICE.md "${DOC}/herdr-client/"
+cp vendor/herdr-protocol/LICENSE-APACHE vendor/herdr-protocol/NOTICE.md "${DOC}/herdr-protocol/"
+
 # ------- .dmg -------
 rm -f "${DMG}"
 # Create read/write DMG first, then compress

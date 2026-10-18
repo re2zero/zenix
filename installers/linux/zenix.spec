@@ -44,24 +44,23 @@ architecture, plus system monitoring and plugin support.
 %{__install} -Dm755 target/release/zenix                %{buildroot}%{_bindir}/zenix
 %{__install} -Dm644 res/zenix.desktop                   %{buildroot}%{_datadir}/applications/zenix.desktop
 %{__install} -Dm644 res/zenix.png                       %{buildroot}%{_datadir}/icons/hicolor/512x512/apps/zenix.png
+
+# License texts — same inventory as [package.metadata.deb] in Cargo.toml. The
+# Lilex faces are compiled into the binary, so no font files ship, but OFL-1.1
+# still requires the license text to travel with the font.
 %{__install} -Dm644 LICENSE                             %{buildroot}%{_docdir}/zenix/LICENSE
 %{__install} -Dm644 README.md                           %{buildroot}%{_docdir}/zenix/README.md
+%{__install} -Dm644 THIRD-PARTY.md                      %{buildroot}%{_docdir}/zenix/THIRD-PARTY.md
+%{__install} -Dm644 assets/fonts/OFL.txt                %{buildroot}%{_docdir}/zenix/Lilex-OFL.txt
+%{__install} -Dm644 herdr/LICENSE                       %{buildroot}%{_docdir}/zenix/herdr/LICENSE
+%{__install} -Dm644 vendor/herdr-client/LICENSE-APACHE  %{buildroot}%{_docdir}/zenix/herdr-client/LICENSE-APACHE
+%{__install} -Dm644 vendor/herdr-client/NOTICE.md       %{buildroot}%{_docdir}/zenix/herdr-client/NOTICE.md
+%{__install} -Dm644 vendor/herdr-protocol/LICENSE-APACHE %{buildroot}%{_docdir}/zenix/herdr-protocol/LICENSE-APACHE
+%{__install} -Dm644 vendor/herdr-protocol/NOTICE.md     %{buildroot}%{_docdir}/zenix/herdr-protocol/NOTICE.md
 
 # herdr companion (built by build.rs) — mark ghost so %files doesn't fail if absent
 %{__install} -d %{buildroot}%{_datadir}/zenix/
 %{__install} -m755 target/release/herdr %{buildroot}%{_datadir}/zenix/herdr 2>/dev/null || true
-
-# Fonts
-%{__install} -Dm644 assets/fonts/Lilex-Regular.ttf      %{buildroot}%{_datadir}/zenix/fonts/Lilex-Regular.ttf
-%{__install} -Dm644 assets/fonts/Lilex-Bold.ttf         %{buildroot}%{_datadir}/zenix/fonts/Lilex-Bold.ttf
-%{__install} -Dm644 assets/fonts/Lilex-Italic.ttf       %{buildroot}%{_datadir}/zenix/fonts/Lilex-Italic.ttf
-%{__install} -Dm644 assets/fonts/Lilex-BoldItalic.ttf   %{buildroot}%{_datadir}/zenix/fonts/Lilex-BoldItalic.ttf
-
-# Themes
-%{__install} -Dm644 assets/themes/gruvbox.json          %{buildroot}%{_datadir}/zenix/themes/gruvbox.json
-%{__install} -Dm644 assets/themes/solarized.json        %{buildroot}%{_datadir}/zenix/themes/solarized.json
-%{__install} -Dm644 assets/themes/tokyonight.json       %{buildroot}%{_datadir}/zenix/themes/tokyonight.json
-%{__install} -Dm644 assets/themes/matrix.json           %{buildroot}%{_datadir}/zenix/themes/matrix.json
 
 %files
 %{_bindir}/zenix
@@ -69,10 +68,15 @@ architecture, plus system monitoring and plugin support.
 %ghost %{_datadir}/zenix/herdr
 %{_datadir}/applications/zenix.desktop
 %{_iconsdir}/hicolor/512x512/apps/zenix.png
-%{_docdir}/zenix/LICENSE
-%{_docdir}/zenix/README.md
-%{_datadir}/zenix/fonts/*
-%{_datadir}/zenix/themes/*
+%doc %{_docdir}/zenix/LICENSE
+%doc %{_docdir}/zenix/README.md
+%doc %{_docdir}/zenix/THIRD-PARTY.md
+%doc %{_docdir}/zenix/Lilex-OFL.txt
+%doc %{_docdir}/zenix/herdr/LICENSE
+%doc %{_docdir}/zenix/herdr-client/LICENSE-APACHE
+%doc %{_docdir}/zenix/herdr-client/NOTICE.md
+%doc %{_docdir}/zenix/herdr-protocol/LICENSE-APACHE
+%doc %{_docdir}/zenix/herdr-protocol/NOTICE.md
 
 %post
 update-desktop-database -q 2>/dev/null || :

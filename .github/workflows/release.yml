@@ -270,15 +270,13 @@ jobs:
               src_files="target/release/zenix"
               test -f target/release/herdr && src_files="$src_files target/release/herdr"
               src_files="$src_files res/zenix.desktop res/zenix.png"
-              # License texts, same inventory as [package.metadata.deb]. The spec
-              # has to install these into %{_docdir}/zenix/ for them to ship.
-              src_files="$src_files THIRD-PARTY.md assets/fonts/OFL.txt"
+              # License texts, same inventory as [package.metadata.deb]: no fonts
+              # and no themes — the Lilex faces are compiled into the binary and
+              # nothing reads assets/themes/. zenix.spec installs these into
+              # %{_docdir}/zenix/, so they have to be in the tarball.
+              src_files="$src_files THIRD-PARTY.md assets/fonts/OFL.txt herdr/LICENSE"
               src_files="$src_files vendor/herdr-client/LICENSE-APACHE vendor/herdr-client/NOTICE.md"
               src_files="$src_files vendor/herdr-protocol/LICENSE-APACHE vendor/herdr-protocol/NOTICE.md"
-              # Fonts and themes are still here only because zenix.spec installs
-              # them; the spec must drop those install lines (and the %files
-              # entries) before this list can match Cargo.toml.
-              src_files="$src_files assets/fonts/ assets/themes/"
               test -f README.md && src_files="$src_files README.md"
               test -f LICENSE && src_files="$src_files LICENSE"
 

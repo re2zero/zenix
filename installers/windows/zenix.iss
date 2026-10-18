@@ -46,11 +46,20 @@ Source: "res\zenix.desktop"; DestDir: "{app}"; Flags: ignoreversion skipifsource
 ; Icon
 Source: "res\zenix.png"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
-; Fonts
-Source: "assets\fonts\*"; DestDir: "{app}\fonts"; Flags: ignoreversion recursesubdirs createallsubdirs
-
-; Themes
-Source: "assets\themes\*"; DestDir: "{app}\themes"; Flags: ignoreversion recursesubdirs createallsubdirs
+; License texts — same inventory as [package.metadata.deb] in Cargo.toml. The
+; Lilex faces are compiled into the binary, so no font files ship, but OFL-1.1
+; still requires the license text to travel with the font. Windows has no
+; /usr/share/doc, so they go under {app}\doc: Inno tracks them as installed
+; files and removes them on uninstall, which {commonappdata} would not (it is
+; machine-wide shared state the uninstaller leaves behind).
+Source: "LICENSE"; DestDir: "{app}\doc"; Flags: ignoreversion
+Source: "THIRD-PARTY.md"; DestDir: "{app}\doc"; Flags: ignoreversion
+Source: "assets\fonts\OFL.txt"; DestDir: "{app}\doc"; DestFileName: "Lilex-OFL.txt"; Flags: ignoreversion
+Source: "herdr\LICENSE"; DestDir: "{app}\doc\herdr"; Flags: ignoreversion
+Source: "vendor\herdr-client\LICENSE-APACHE"; DestDir: "{app}\doc\herdr-client"; Flags: ignoreversion
+Source: "vendor\herdr-client\NOTICE.md"; DestDir: "{app}\doc\herdr-client"; Flags: ignoreversion
+Source: "vendor\herdr-protocol\LICENSE-APACHE"; DestDir: "{app}\doc\herdr-protocol"; Flags: ignoreversion
+Source: "vendor\herdr-protocol\NOTICE.md"; DestDir: "{app}\doc\herdr-protocol"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\zenix.exe"
