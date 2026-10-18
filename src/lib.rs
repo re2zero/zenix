@@ -20,7 +20,6 @@ use gpui_kit::*;
 /// `reqwest` async HTTP) fetches this handle and calls `.spawn()` on it.
 pub static TOKIO_HANDLE: OnceLock<tokio::runtime::Handle> = OnceLock::new();
 
-pub mod agent;
 pub mod ai;
 pub mod api_provider;
 pub mod client;
@@ -34,7 +33,6 @@ pub mod plugins;
 pub mod provider;
 pub mod shell;
 pub mod single_instance;
-pub mod skills;
 pub mod sys;
 pub mod terminal;
 pub mod util;

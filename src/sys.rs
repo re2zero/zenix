@@ -6,12 +6,13 @@
 //! the rx/tx rates measured since the previous call rather than raw counters.
 //! A caller that polls on `POLL_INTERVAL_SECS` therefore sees a rate.
 //!
-//! Keeper module — no consumer in the tree. Nothing in the shell, the plugin
-//! host or the MCP lane calls `collect`; `SystemInfo` and `CpuSamples` are only
-//! re-exported from `src/lib.rs` for plugins and sub-applications. The status
-//! bar reports the daemon's state, so this stays a keeper until a panel asks
-//! for the host machine. `DiskMount` carries `#[allow(dead_code)]` because its
-//! fields are written by `collect` and read by nothing.
+//! Consumer: `src/lib.rs` re-exports `SystemInfo` and `CpuSamples`, so these
+//! structs are the plugin/sub-app SDK surface and their fields are the payload.
+//! Nothing in the tree calls `collect` — the status bar reports the daemon's
+//! state, not the host machine's — so a field is read only by a plugin, and by
+//! `collect` itself when it deduplicates mount points. The fields stay because
+//! the payload is the product; the SDK consumers live outside this crate, so no
+//! compiler lint can tell whether one of them reads a field.
 
 use std::sync::{Mutex, OnceLock};
 
@@ -26,7 +27,6 @@ pub struct NetInterface {
 }
 
 #[derive(Debug, Clone, Default)]
-#[allow(dead_code)]
 pub struct DiskMount {
     pub mount_point: String,
     pub total_gb: f32,

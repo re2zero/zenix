@@ -7,13 +7,14 @@
 //! `ProviderRegistry` is the central registry. Use `ProviderRegistry::builtin()`
 //! to get the built-in list, then query by capability.
 //!
-//! Consumers are `config_adapters`, `api_provider`, `mcp` and `agent`, but none
-//! of them is reached from a path the shell runs, so the registry is exercised
-//! only by this module's own tests. Within it, the MCP half of the queries
-//! (`find`, `all`, `mcp_supporting`, `mcp_agent_names`, `mcp_config_path`) is
-//! used by those consumers, while the skills half (`skills_supporting`,
-//! `skill_agent_names`, `skills_path`) is used only by the tests here, because
-//! the module that would consume it (`skills`) has no consumer either.
+//! Consumers: `config_adapters` (`adapter_for` calls `find`, and
+//! `agent_config_dir` resolves `config_dir`) and `api_provider` (which matches a
+//! stored provider to a registry entry). The skills half of the queries
+//! (`skills_supporting`, `skill_agent_names`, `skills_path`, `supports_skills`)
+//! is gone — its only consumer was `src/skills/`. After `src/agent/` and the
+//! MCP config-management half were removed, `all()` and the MCP half
+//! (`mcp_supporting`, `mcp_agent_names`, `mcp_config_path`, `supports_mcp`) are
+//! reached only from the tests in this file.
 
 pub mod builtin;
 
@@ -47,20 +48,9 @@ impl Provider {
         Some(dir.join(self.mcp_config_file?))
     }
 
-    /// Resolve the full skills directory path for this provider.
-    pub fn skills_path(&self) -> Option<PathBuf> {
-        let dir = (self.config_dir)()?;
-        Some(dir.join(self.skills_dir?))
-    }
-
     /// Whether this provider uses the Claude-format JSON MCP config.
     pub fn supports_mcp(&self) -> bool {
         self.mcp_config_file.is_some()
-    }
-
-    /// Whether this provider supports skill directories.
-    pub fn supports_skills(&self) -> bool {
-        self.skills_dir.is_some()
     }
 }
 
@@ -71,7 +61,7 @@ pub struct ProviderRegistry {
 }
 
 impl ProviderRegistry {
-    /// Create a registry with the built-in 12 providers.
+    /// Create a registry with the built-in 8 providers.
     pub fn builtin() -> Self {
         Self {
             providers: crate::provider::builtin::all_providers(),
@@ -103,25 +93,6 @@ impl ProviderRegistry {
         names.sort();
         names
     }
-
-    /// Providers that support skill directories.
-    pub fn skills_supporting(&self) -> Vec<&Provider> {
-        self.providers
-            .iter()
-            .filter(|p| p.supports_skills())
-            .collect()
-    }
-
-    /// Skills-supporting provider names (sorted).
-    pub fn skill_agent_names(&self) -> Vec<String> {
-        let mut names: Vec<String> = self
-            .skills_supporting()
-            .iter()
-            .map(|p| p.name.to_string())
-            .collect();
-        names.sort();
-        names
-    }
 }
 
 #[cfg(test)]
@@ -140,7 +111,6 @@ mod tests {
         let claude = reg.find("claude").unwrap();
         assert_eq!(claude.display_name, "Claude Code");
         assert!(claude.supports_mcp());
-        assert!(claude.supports_skills());
     }
 
     #[test]
@@ -149,13 +119,6 @@ mod tests {
         let mcp = reg.mcp_supporting();
         // claude, codex, opencode, pi, omp, kilo, hermes
         assert!(mcp.len() >= 7);
-    }
-
-    #[test]
-    fn test_skills_supporting() {
-        let reg = ProviderRegistry::builtin();
-        let skills = reg.skills_supporting();
-        assert!(skills.len() >= 7);
     }
 
     #[test]

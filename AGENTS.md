@@ -24,11 +24,9 @@ zenix/
 │   ├── config/            # The client's config (M5): schema + diagnostics + store/global; jsonc.rs/scanner.rs
 │   ├── sys.rs             # System info collector (CPU, mem, net, disk)
 │   ├── client/mod.rs      # Herdr binary manager (install, start, endpoint socket)
-│   ├── provider/          # Theme/asset providers
+│   ├── provider/          # Agent CLI catalog (name, config paths, capabilities)
 │   ├── api_provider/      # REST API for external integrations
 │   ├── mcp/               # MCP orchestrator (M6) + one tool per plugin action (M8c)
-│   ├── agent/             # Agent detection/integration
-│   ├── skills/            # Skill system for extensibility
 │   ├── config_adapters/   # Per-agent config adapters
 │   ├── i18n.rs            # rust-i18n wiring (strings in locales/zenix.yml)
 │   └── platform.rs        # Platform-specific code (Linux/macOS/Windows)
@@ -66,7 +64,8 @@ zenix/
 | Daemon smoke gate | src/bin/zenix-probe.rs | `cargo run --bin zenix-probe` — Welcome + Snapshot + Surface |
 | Endpoint protocol | vendor/herdr-protocol/src/wire.rs | Wire field/variant order is a bincode compatibility contract |
 | Endpoint client | vendor/herdr-client/src/ | connect/session/surface/input; copy-only |
-| Theme system | src/provider/builtin.rs, assets/themes/ | 4 built-in themes |
+| Agent CLI catalog | src/provider/builtin.rs, src/provider/mod.rs | 8 known agent CLIs: name, config dir, MCP config file |
+| Terminal palettes | src/terminal/theme.rs | Built-in palettes as packed RGB; nothing reads `assets/themes/` yet |
 | System monitoring | src/sys.rs | sysinfo crate, real-time stats |
 | Config schema | src/config/mod.rs | JSONC walked against the schema; problems become diagnostics |
 | I18n (CN/EN) | src/i18n.rs, locales/zenix.yml | rust-i18n macro |

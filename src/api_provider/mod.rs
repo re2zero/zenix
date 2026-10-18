@@ -12,14 +12,13 @@
 //!
 //! Config is persisted to `~/.config/zenix/api-providers.json`.
 //!
-//! What is wired is only the store and the type: `load_all` and
-//! `ApiProviderConfig` are read by `src/ai/engine.rs` (which picks a provider
-//! for a session) and by `src/shell/chat.rs` (which lists them). The rest is
-//! planned but not connected — the per-agent sync/unsync/toggle path, the
-//! presets, model fetching and the connection test have no caller, so the
-//! config-generation methods (`to_opencode_provider`, `to_claude_env`,
-//! `to_openai_env`) are reached only through `sync_api_to_agent`, which nothing
-//! calls.
+//! Consumers: `src/ai/engine.rs` picks a provider for a session (and reads its
+//! `endpoint_url`) and `src/shell/chat.rs` lists them — both through `load_all`
+//! and `ApiProviderConfig`. The per-agent sync path, the presets, model fetching
+//! and the connection test had no caller and are gone. The config-generation
+//! methods (`to_opencode_provider`, `to_claude_env`, `to_openai_env`) stay
+//! because the adapter implementations in `src/config_adapters/adapters` call
+//! them. The store's write half (`save_all`, `remove`) is still unwired.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -94,15 +93,6 @@ impl ThinkingLevel {
 
 // ── API Format ──────────────────────────────────────────────────────
 
-/// A preset API provider configuration.
-#[derive(Debug, Clone)]
-pub struct ProviderPreset {
-    pub name: &'static str,
-    pub base_url: &'static str,
-    pub suffix: &'static str,
-    pub format: ApiFormat,
-}
-
 /// Supported API format families.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ApiFormat {
@@ -146,62 +136,6 @@ impl ApiFormat {
             ApiFormat::Anthropic => "Anthropic",
         }
     }
-
-    /// All preset providers for this format.
-    pub fn presets(&self) -> Vec<ProviderPreset> {
-        match self {
-            ApiFormat::OpenAI => vec![
-                ProviderPreset {
-                    name: "OpenAI",
-                    base_url: "https://api.openai.com/v1",
-                    suffix: "/v1/chat/completions",
-                    format: ApiFormat::OpenAI,
-                },
-                ProviderPreset {
-                    name: "Groq",
-                    base_url: "https://api.groq.com/openai/v1",
-                    suffix: "/v1/chat/completions",
-                    format: ApiFormat::OpenAI,
-                },
-                ProviderPreset {
-                    name: "DeepSeek",
-                    base_url: "https://api.deepseek.com/v1",
-                    suffix: "/v1/chat/completions",
-                    format: ApiFormat::OpenAI,
-                },
-                ProviderPreset {
-                    name: "Together",
-                    base_url: "https://api.together.xyz/v1",
-                    suffix: "/v1/chat/completions",
-                    format: ApiFormat::OpenAI,
-                },
-                ProviderPreset {
-                    name: "OpenRouter",
-                    base_url: "https://openrouter.ai/api/v1",
-                    suffix: "/v1/chat/completions",
-                    format: ApiFormat::OpenAI,
-                },
-                ProviderPreset {
-                    name: "Ollama",
-                    base_url: "http://localhost:11434/v1",
-                    suffix: "/v1/chat/completions",
-                    format: ApiFormat::OpenAI,
-                },
-                ProviderPreset {
-                    name: "Zenix",
-                    base_url: "https://ai.zenix.dev/v1",
-                    suffix: "/v1/chat/completions",
-                    format: ApiFormat::OpenAI,
-                },
-            ],
-            ApiFormat::Anthropic => vec![ProviderPreset {
-                name: "Anthropic",
-                base_url: "https://api.anthropic.com/v1",
-                suffix: "/v1/messages",
-                format: ApiFormat::Anthropic,
-            }],
-        }
-    }
 }
 
 // ── API Provider Config ─────────────────────────────────────────────
@@ -238,23 +172,6 @@ impl ApiProviderConfig {
             return format!("{base}/{}", self.url_suffix);
         };
         format!("{base}{suffix}")
-    }
-
-    /// URL for fetching available models.
-    ///
-    /// Derived from `endpoint_url` by locating the version prefix (e.g. `/v1/`)
-    /// and replacing the chat/messages path with `/models`. This avoids
-    /// double-pathing when `base_url` already includes `/v1`.
-    pub fn models_url(&self) -> String {
-        let endpoint = self.endpoint_url();
-        if let Some(idx) = endpoint.find("/v1/") {
-            return format!("{}/models", &endpoint[..idx + 3]);
-        }
-        if let Some(idx) = endpoint.find("/v2/") {
-            return format!("{}/models", &endpoint[..idx + 3]);
-        }
-        let base = self.base_url.trim_end_matches('/');
-        format!("{base}/models")
     }
 }
 
@@ -336,196 +253,6 @@ impl ApiProviderConfig {
     }
 }
 
-// ── Agent Sync ───────────────────────────────────────────────────────
-
-/// Sync a provider to a specific agent CLI's config file.
-///
-/// Uses the `AgentConfigAdapter` for the target agent to determine
-/// the correct config format and file path.
-pub fn sync_api_to_agent(provider: &ApiProviderConfig, agent_name: &str) -> Result<(), String> {
-    let adapter = crate::config_adapters::adapters::adapter_for(agent_name)
-        .ok_or_else(|| format!("unknown or unsupported agent: {agent_name}"))?;
-
-    // Get the API config file path from the adapter
-    let config_path = get_api_config_path(agent_name)?;
-
-    if let Some(parent) = config_path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("create dir: {e}"))?;
-    }
-
-    // Check if the adapter generates env vars or provider entries
-    if let Some(env_vars) = adapter.api_env_vars(provider) {
-        // Write env vars to the config file under "env" key
-        let mut map = crate::config::scanner::ConfigMap::load(&config_path)?;
-        let env_value: serde_json::Value = env_vars
-            .into_iter()
-            .map(|(k, v)| (k, serde_json::Value::String(v)))
-            .collect::<serde_json::Map<_, _>>()
-            .into();
-        map.upsert(&["env"], env_value);
-        map.save()
-    } else if let Some(entry) = adapter.api_config_entry(provider) {
-        // Write provider entry directly to the config file
-        let mut map = crate::config::scanner::ConfigMap::load(&config_path)?;
-        map.upsert(&[&provider.name], entry);
-        map.save()
-    } else {
-        Err(format!(
-            "agent '{agent_name}' does not support API provider configuration"
-        ))
-    }
-}
-
-/// Remove a provider from a specific agent's config.
-pub fn unsync_api_from_agent(provider_name: &str, agent_name: &str) -> Result<(), String> {
-    // Verify the agent is supported
-    let _adapter = crate::config_adapters::adapters::adapter_for(agent_name)
-        .ok_or_else(|| format!("unknown or unsupported agent: {agent_name}"))?;
-
-    let config_path = get_api_config_path(agent_name)?;
-
-    if !config_path.exists() {
-        return Ok(());
-    }
-
-    let mut map = crate::config::scanner::ConfigMap::load(&config_path)?;
-
-    // For OpenCode: remove the provider entry by name
-    if agent_name == "opencode" {
-        map.remove(&[provider_name]);
-        map.save()?;
-        return Ok(());
-    }
-
-    // For all other agents: check if other providers also use this agent
-    // before removing env keys (to avoid deleting another provider's config)
-    let other_providers_use_agent = {
-        let providers = load_all();
-        providers
-            .iter()
-            .filter(|p| p.name != provider_name)
-            .any(|p| p.enabled_agents.iter().any(|a| a == agent_name))
-    };
-
-    if other_providers_use_agent {
-        // Another provider also uses this agent — don't remove env keys
-        // They might be needed by the other provider
-        return Ok(());
-    }
-
-    // Safe to remove known env keys
-    let known_keys: Vec<&str> = vec![
-        "ANTHROPIC_BASE_URL",
-        "ANTHROPIC_AUTH_TOKEN",
-        "ANTHROPIC_MODEL",
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL",
-        "OPENAI_API_KEY",
-        "OPENAI_BASE_URL",
-        "OPENAI_MODEL",
-    ];
-
-    // Only remove keys that are in the env section
-    if let Some(env_obj) = map.get(&["env"]).and_then(|v| v.as_object()) {
-        let keys_to_remove: Vec<&&str> = known_keys
-            .iter()
-            .filter(|key| env_obj.contains_key(**key))
-            .collect();
-
-        if !keys_to_remove.is_empty() {
-            for key in keys_to_remove {
-                map.remove(&["env", *key]);
-            }
-            map.save()?;
-        }
-    }
-
-    Ok(())
-}
-
-/// Get the API config file path for an agent.
-fn get_api_config_path(agent_name: &str) -> Result<std::path::PathBuf, String> {
-    let registry = crate::provider::ProviderRegistry::builtin();
-    let prov = registry
-        .find(agent_name)
-        .ok_or_else(|| format!("unknown agent: {agent_name}"))?;
-
-    // Use the provider's mcp_config_file if available, otherwise fall back to config_dir/config.json
-    prov.mcp_config_path()
-        .or_else(|| (prov.config_dir)().map(|d| d.join("config.json")))
-        .ok_or_else(|| format!("no config path for agent: {agent_name}"))
-}
-
-/// Toggle a provider's enabled state for an agent, syncing the config.
-pub fn toggle_api_agent(provider: &mut ApiProviderConfig, agent_name: &str) -> Result<(), String> {
-    let enabled = provider.enabled_agents.iter().any(|a| a == agent_name);
-    if enabled {
-        provider.enabled_agents.retain(|a| a != agent_name);
-        unsync_api_from_agent(&provider.name, agent_name)?;
-    } else {
-        provider.enabled_agents.push(agent_name.to_string());
-        sync_api_to_agent(provider, agent_name)?;
-    }
-    upsert(provider)
-}
-
-/// Sync a provider to all agents listed in `provider.enabled_agents`.
-///
-/// Returns a list of (agent_name, result) pairs so callers can report
-/// individual failures to the user.
-pub fn sync_to_all_agents(provider: &ApiProviderConfig) -> Vec<(String, Result<(), String>)> {
-    provider
-        .enabled_agents
-        .iter()
-        .map(|agent| {
-            let result = sync_api_to_agent(provider, agent);
-            (agent.clone(), result)
-        })
-        .collect()
-}
-
-/// Remove a provider from all agents that are no longer used by any other provider.
-///
-/// For each agent, checks whether any *other* provider still references it.
-/// If not, safely removes that agent's env config entries.
-///
-/// Returns a list of (agent_name, result) pairs.
-pub fn unsync_from_unused_agents(provider_name: &str) -> Vec<(String, Result<(), String>)> {
-    let all_providers = load_all();
-    let mut results = Vec::new();
-
-    // Collect all agents that appear in any other provider's enabled_agents
-    let mut agents_still_used: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for p in &all_providers {
-        if p.name == provider_name {
-            continue;
-        }
-        for a in &p.enabled_agents {
-            agents_still_used.insert(a.clone());
-        }
-    }
-
-    // Check all known agents to see if this provider was their only source
-    let known_agents = [
-        "claude",
-        "codex",
-        "opencode",
-        "cursor",
-        "aider",
-        "gemini-cli",
-    ];
-
-    for agent in &known_agents {
-        if !agents_still_used.contains(*agent) {
-            let result = unsync_api_from_agent(provider_name, agent);
-            results.push((agent.to_string(), result));
-        }
-    }
-
-    results
-}
-
 // ── Zenix Provider ────────────────────────────────────────────────────
 
 /// Return the first configured "Zenix" provider, if any.
@@ -583,14 +310,6 @@ pub fn save_all(providers: &[ApiProviderConfig]) -> Result<(), String> {
     Ok(())
 }
 
-/// Add or update a provider by name.
-pub fn upsert(config: &ApiProviderConfig) -> Result<(), String> {
-    let mut all = load_all();
-    all.retain(|p| p.name != config.name);
-    all.push(config.clone());
-    save_all(&all)
-}
-
 /// Remove a provider by name.
 pub fn remove(name: &str) -> Result<(), String> {
     let mut all = load_all();
@@ -600,67 +319,6 @@ pub fn remove(name: &str) -> Result<(), String> {
         return Err(format!("provider '{name}' not found"));
     }
     save_all(&all)
-}
-
-/// Test connection to an API provider endpoint.
-pub fn test_connection(config: &ApiProviderConfig) -> Result<String, String> {
-    use std::time::Duration;
-    let url = config.models_url();
-    match ureq::get(&url)
-        .set("Authorization", &format!("Bearer {}", config.api_key))
-        .set("Content-Type", "application/json")
-        .timeout(Duration::from_secs(10))
-        .call()
-    {
-        Ok(resp) => {
-            let status = resp.status();
-            if status == 200 || status == 401 || status == 403 || status == 400 {
-                Ok(format!("OK: endpoint reachable (HTTP {status})"))
-            } else {
-                Err(format!("HTTP {status}: unexpected response"))
-            }
-        }
-        Err(e) => Err(format!("Connection failed: {e}")),
-    }
-}
-
-// ── Model fetching ───────────────────────────────────────────────────
-
-/// Fetch available model names from an API provider's /v1/models endpoint.
-pub fn fetch_models(config: &ApiProviderConfig) -> Result<Vec<String>, String> {
-    let url = config.models_url();
-    let response = ureq::get(&url)
-        .set("Authorization", &format!("Bearer {}", config.api_key))
-        .set("Content-Type", "application/json")
-        .call()
-        .map_err(|e| format!("HTTP request failed: {e}"))?;
-
-    let body = response
-        .into_string()
-        .map_err(|e| format!("read response: {e}"))?;
-
-    parse_openai_model_list(&body)
-}
-
-fn parse_openai_model_list(json: &str) -> Result<Vec<String>, String> {
-    let root: serde_json::Value =
-        serde_json::from_str(json).map_err(|e| format!("parse JSON: {e}"))?;
-
-    let data = root
-        .get("data")
-        .and_then(|v| v.as_array())
-        .ok_or_else(|| "response missing 'data' array".to_string())?;
-
-    let models: Vec<String> = data
-        .iter()
-        .filter_map(|entry| entry.get("id").and_then(|v| v.as_str()).map(String::from))
-        .collect();
-
-    if models.is_empty() {
-        return Err("no models found in response".into());
-    }
-
-    Ok(models)
 }
 
 #[cfg(test)]
@@ -759,86 +417,5 @@ mod tests {
         assert_eq!(env["OPENAI_API_KEY"], "sk-xxx");
         assert_eq!(env["OPENAI_BASE_URL"], "https://api.openai.com");
         assert_eq!(env["OPENAI_MODEL"], "gpt-4o");
-    }
-
-    #[test]
-    fn test_parse_openai_model_list() {
-        let json = r#"{"object":"list","data":[{"id":"gpt-4o","object":"model"},{"id":"gpt-4-turbo","object":"model"}]}"#;
-        let models = parse_openai_model_list(json).unwrap();
-        assert_eq!(models, vec!["gpt-4o", "gpt-4-turbo"]);
-    }
-
-    #[test]
-    fn test_sync_to_all_agents_returns_results_for_each_agent() {
-        // sync_to_all_agents should return one result per enabled agent.
-        // We can't test actual filesystem I/O in unit tests, but we can
-        // verify the function signature and return type.
-        let cfg = ApiProviderConfig {
-            name: "test".into(),
-            format: ApiFormat::OpenAI,
-            base_url: "https://api.openai.com".into(),
-            api_key: "sk-test".into(),
-            model: "gpt-4o".into(),
-            thinking_level: ThinkingLevel::Medium,
-            url_suffix: "/v1/chat/completions".into(),
-            enabled_agents: vec!["claude".into(), "codex".into()],
-        };
-        // The function signature returns Vec<(String, Result<(), String>)>
-        // We verify it compiles and returns the right type.
-        let _results: Vec<(String, Result<(), String>)> = sync_to_all_agents(&cfg);
-        // With no filesystem, the results will have errors, but the count matches
-        assert_eq!(_results.len(), 2);
-        assert_eq!(_results[0].0, "claude");
-        assert_eq!(_results[1].0, "codex");
-    }
-
-    #[test]
-    fn test_sync_to_all_agents_empty_agents() {
-        let cfg = ApiProviderConfig {
-            name: "test".into(),
-            format: ApiFormat::OpenAI,
-            base_url: "https://api.openai.com".into(),
-            api_key: "sk-test".into(),
-            model: "gpt-4o".into(),
-            thinking_level: ThinkingLevel::Medium,
-            url_suffix: "/v1/chat/completions".into(),
-            enabled_agents: vec![],
-        };
-        let results = sync_to_all_agents(&cfg);
-        assert!(results.is_empty());
-    }
-
-    #[test]
-    fn test_unsync_from_unused_agents_signature() {
-        // unsync_from_unused_agents returns Vec<(String, Result<(), String>)>
-        // With no providers loaded from disk, it should return empty results
-        // for all known agents (since no provider uses them).
-        let results = unsync_from_unused_agents("nonexistent-provider");
-        // The function returns results for known agents that are unused.
-        // Since no providers are loaded from disk, all known agents are unused.
-        assert!(!results.is_empty());
-        // Each entry has the agent name as the first element
-        for (agent, _) in &results {
-            assert!(!agent.is_empty());
-        }
-    }
-
-    #[test]
-    fn test_zenix_presets_exist() {
-        // Verify that the Zenix preset is included in OpenAI presets.
-        let presets = ApiFormat::OpenAI.presets();
-        let names: Vec<&str> = presets.iter().map(|p| p.name).collect();
-        assert!(
-            names.contains(&"Zenix"),
-            "Zenix preset should exist in OpenAI presets"
-        );
-        assert!(
-            names.contains(&"Ollama"),
-            "Ollama preset should exist in OpenAI presets"
-        );
-        assert!(
-            names.contains(&"OpenAI"),
-            "OpenAI preset should exist in OpenAI presets"
-        );
     }
 }

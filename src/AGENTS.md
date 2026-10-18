@@ -42,14 +42,13 @@ src/
 ├── config/            # The client's config: schema, diagnostics, store/global (~/.config/zenix/config.json)
 ├── sys.rs             # System info collector (CPU, mem, net, disk)
 ├── client/mod.rs      # Herdr binary manager (install, start, endpoint socket)
-├── provider/          # Theme/asset providers
+├── provider/          # Agent CLI catalog (name, config dir, capabilities)
 ├── api_provider/      # REST API for external integrations
 ├── mcp/               # Model Context Protocol integration
+│   ├── mod.rs         # The orchestrator entry and its socket; the config-management half is gone
 │   ├── handler.rs     # The orchestrator's tools, plus every plugin action (M8c)
 │   ├── plugin_tools.rs# A plugin action as an MCP tool: naming, context, outcome
 │   └── sse.rs         # The unix-socket listener an agent connects to
-├── agent/             # Agent detection/integration
-├── skills/            # Skill system for extensibility
 ├── config_adapters/   # Per-agent config adapters
 ├── i18n.rs            # rust-i18n wiring (strings in locales/zenix.yml)
 └── platform.rs        # Platform-specific code (Linux/macOS/Windows)
@@ -75,8 +74,9 @@ src/
 | Config parsing | config/mod.rs | JSONC, walked against the schema; problems become diagnostics |
 | Herdr lifecycle | client/mod.rs | Endpoint socket via `herdr_client::ConnectTarget` |
 | Endpoint protocol/client | ../vendor/herdr-protocol, ../vendor/herdr-client | Copy-only vendored crates |
-| Theme tokens | provider/builtin.rs | 4 built-in themes |
-| System stats | sys.rs | sysinfo crate |
+| Agent CLI catalog | provider/mod.rs, provider/builtin.rs | 8 known agent CLIs: name, config dir, MCP config file |
+| Terminal palettes | terminal/theme.rs | Built-in palettes as packed RGB; nothing reads `../assets/themes/` yet |
+| System stats | sys.rs | sysinfo crate; `SystemInfo`/`CpuSamples` are the SDK re-export, nothing in the tree calls `collect` |
 | Platform code | platform.rs | Linux/macOS/Windows gated |
 | I18n keys | i18n.rs, ../locales/zenix.yml | rust-i18n `t("key")` |
 

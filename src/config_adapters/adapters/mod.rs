@@ -4,25 +4,16 @@
 //! This module defines the `AgentConfigAdapter` trait and provides concrete
 //! implementations for each supported agent.
 //!
-//! The trait replaces the hardcoded match statements in `sync_api_to_agent()`
-//! and provides a clean extension point for future agents.
+//! The trait is the extension point for a future agent: `adapter_for` hands one
+//! out by name, and `api_env_vars`/`api_config_entry` say what a provider's
+//! config looks like in that agent's format. `config_paths` declares the files
+//! and directories an adapter owns.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::api_provider::ApiProviderConfig;
 use crate::provider::ProviderRegistry;
-
-/// Result of a config sync operation.
-#[derive(Debug, Clone)]
-pub enum SyncResult {
-    /// Config file was created or updated.
-    Updated(PathBuf),
-    /// Config file did not exist; nothing was changed.
-    NotFound(PathBuf),
-    /// This operation is not applicable to this agent.
-    NotApplicable,
-}
 
 /// Specifies a config path managed by an agent adapter.
 #[derive(Debug, Clone)]
