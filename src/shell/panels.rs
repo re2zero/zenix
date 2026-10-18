@@ -62,7 +62,7 @@ fn render_workspaces(invocation: &Invocation, _: &mut Window, _: &mut App) -> An
             .pb_1()
             .text_xs()
             .text_color(theme.muted_foreground)
-            .child("Workspaces"),
+            .child(t("shell.workspaces")),
     );
     if let Some(snapshot) = invocation.snapshot {
         column = column.children(
@@ -317,15 +317,11 @@ fn render_connection(invocation: &Invocation, _: &mut Window, _: &mut App) -> An
         // daemon always carries one when it drops the connection
         // (`state::apply`'s Disconnected arm), so this is the fallback for the
         // case where there is nothing to name.
-        (ConnectionStatus::Disconnected, None) => ("disconnected".to_owned(), theme.danger),
-        (ConnectionStatus::Connecting, _) => (
-            "connecting to the herdr daemon...".to_owned(),
-            theme.muted_foreground,
-        ),
-        (ConnectionStatus::AwaitingSnapshot, _) => (
-            "connected; waiting for snapshot".to_owned(),
-            theme.muted_foreground,
-        ),
+        (ConnectionStatus::Disconnected, None) => (t("status.no_reason"), theme.danger),
+        (ConnectionStatus::Connecting, _) => (t("status.connecting"), theme.muted_foreground),
+        (ConnectionStatus::AwaitingSnapshot, _) => {
+            (t("status.awaiting_snapshot"), theme.muted_foreground)
+        }
         (ConnectionStatus::Connected, _) => (t("status.connected"), theme.success),
     };
     div()

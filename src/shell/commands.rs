@@ -82,11 +82,20 @@ pub(crate) struct CommandInfo {
     pub(crate) command: Command,
     /// Stable id for menus, the palette and plugin contributions.
     pub(crate) id: &'static str,
-    pub(crate) label: &'static str,
     /// Keystrokes bound directly through GPUI's keymap.
     pub(crate) direct: &'static [&'static str],
     /// Keys typed after the prefix.
     pub(crate) prefixed: &'static [&'static str],
+}
+
+impl CommandInfo {
+    /// What the command is called, read from the `command` section of the
+    /// locale file, which is keyed by the command's own id. Resolved when a row
+    /// is drawn rather than stored in the table, so the same table can be read
+    /// in either language and the directory keeps one name for a command.
+    pub(crate) fn label(&self) -> String {
+        crate::i18n::t(&format!("command.{}", self.id))
+    }
 }
 
 /// Every command the shell mounts, in the order a list would show them.
@@ -94,56 +103,48 @@ pub(crate) const COMMANDS: &[CommandInfo] = &[
     CommandInfo {
         command: Command::NewWorkspace,
         id: "workspace.new",
-        label: "New Workspace",
         direct: &["cmd-shift-n"],
         prefixed: &["shift-n"],
     },
     CommandInfo {
         command: Command::CloseWorkspace,
         id: "workspace.close",
-        label: "Close Workspace",
         direct: &[],
         prefixed: &["shift-w"],
     },
     CommandInfo {
         command: Command::NextWorkspace,
         id: "workspace.next",
-        label: "Next Workspace",
         direct: &[],
         prefixed: &["n"],
     },
     CommandInfo {
         command: Command::PreviousWorkspace,
         id: "workspace.previous",
-        label: "Previous Workspace",
         direct: &[],
         prefixed: &["p"],
     },
     CommandInfo {
         command: Command::NewTab,
         id: "tab.new",
-        label: "New Tab",
         direct: &["cmd-t"],
         prefixed: &["t"],
     },
     CommandInfo {
         command: Command::CloseTab,
         id: "tab.close",
-        label: "Close Tab",
         direct: &["cmd-shift-w"],
         prefixed: &["shift-t"],
     },
     CommandInfo {
         command: Command::NextTab,
         id: "tab.next",
-        label: "Next Tab",
         direct: &["cmd-shift-]"],
         prefixed: &["]"],
     },
     CommandInfo {
         command: Command::PreviousTab,
         id: "tab.previous",
-        label: "Previous Tab",
         direct: &["cmd-shift-["],
         prefixed: &["["],
     },
@@ -155,126 +156,108 @@ pub(crate) const COMMANDS: &[CommandInfo] = &[
     CommandInfo {
         command: Command::MoveTabPrevious,
         id: "tab.move-left",
-        label: "Move Tab Left",
         direct: &[],
         prefixed: &[","],
     },
     CommandInfo {
         command: Command::MoveTabNext,
         id: "tab.move-right",
-        label: "Move Tab Right",
         direct: &[],
         prefixed: &["."],
     },
     CommandInfo {
         command: Command::SplitRight,
         id: "pane.split-right",
-        label: "Split Right",
         direct: &["cmd-d"],
         prefixed: &["s"],
     },
     CommandInfo {
         command: Command::SplitDown,
         id: "pane.split-down",
-        label: "Split Down",
         direct: &["cmd-shift-d"],
         prefixed: &["v"],
     },
     CommandInfo {
         command: Command::ClosePane,
         id: "pane.close",
-        label: "Close Pane",
         direct: &["cmd-w"],
         prefixed: &["x"],
     },
     CommandInfo {
         command: Command::Zoom,
         id: "pane.zoom",
-        label: "Toggle Pane Zoom",
         direct: &["cmd-shift-enter"],
         prefixed: &["z"],
     },
     CommandInfo {
         command: Command::FocusLeft,
         id: "pane.focus-left",
-        label: "Focus Pane Left",
         direct: &["cmd-alt-left"],
         prefixed: &["h"],
     },
     CommandInfo {
         command: Command::FocusRight,
         id: "pane.focus-right",
-        label: "Focus Pane Right",
         direct: &["cmd-alt-right"],
         prefixed: &["l"],
     },
     CommandInfo {
         command: Command::FocusUp,
         id: "pane.focus-up",
-        label: "Focus Pane Up",
         direct: &["cmd-alt-up"],
         prefixed: &["k"],
     },
     CommandInfo {
         command: Command::FocusDown,
         id: "pane.focus-down",
-        label: "Focus Pane Down",
         direct: &["cmd-alt-down"],
         prefixed: &["j"],
     },
     CommandInfo {
         command: Command::ResizeLeft,
         id: "pane.resize-left",
-        label: "Resize Pane Left",
         direct: &[],
         prefixed: &["shift-h"],
     },
     CommandInfo {
         command: Command::ResizeRight,
         id: "pane.resize-right",
-        label: "Resize Pane Right",
         direct: &[],
         prefixed: &["shift-l"],
     },
     CommandInfo {
         command: Command::ResizeUp,
         id: "pane.resize-up",
-        label: "Resize Pane Up",
         direct: &[],
         prefixed: &["shift-k"],
     },
     CommandInfo {
         command: Command::ResizeDown,
         id: "pane.resize-down",
-        label: "Resize Pane Down",
         direct: &[],
         prefixed: &["shift-j"],
     },
     CommandInfo {
         command: Command::ToggleSidebar,
         id: "view.toggle-sidebar",
-        label: "Toggle Sidebar",
         direct: &["cmd-b"],
         prefixed: &["b"],
     },
     CommandInfo {
         command: Command::ToggleAside,
         id: "view.toggle-chat",
-        label: "Toggle Chat",
         direct: &[],
         prefixed: &["a"],
     },
     CommandInfo {
         command: Command::ToggleTheme,
         id: "view.toggle-theme",
-        label: "Toggle Light/Dark",
         direct: &["cmd-shift-l"],
         prefixed: &[],
     },
     CommandInfo {
         command: Command::ToggleSettings,
         id: "view.settings",
-        label: "Settings",
         direct: &["cmd-,"],
         prefixed: &[],
     },
@@ -284,7 +267,6 @@ pub(crate) const COMMANDS: &[CommandInfo] = &[
     CommandInfo {
         command: Command::TogglePalette,
         id: "view.palette",
-        label: "Command Palette",
         direct: &["cmd-shift-p"],
         prefixed: &[],
     },
@@ -293,7 +275,6 @@ pub(crate) const COMMANDS: &[CommandInfo] = &[
     CommandInfo {
         command: Command::RefreshPlugins,
         id: "plugins.refresh",
-        label: "Refresh Plugins",
         direct: &[],
         prefixed: &[],
     },
@@ -302,14 +283,12 @@ pub(crate) const COMMANDS: &[CommandInfo] = &[
     CommandInfo {
         command: Command::LinkPlugin,
         id: "plugins.link",
-        label: "Link a Plugin…",
         direct: &[],
         prefixed: &[],
     },
     CommandInfo {
         command: Command::ClosePopup,
         id: "view.close-popup",
-        label: "Close Popup Pane",
         direct: &[],
         prefixed: &[],
     },
@@ -573,6 +552,21 @@ mod tests {
                 assert!(!seen.contains(&(*keystroke).to_owned()), "{keystroke}");
                 seen.push((*keystroke).to_owned());
             }
+        }
+    }
+
+    /// A label is a key the locale file answers, not a string kept in the table.
+    /// `i18n::t` hands back the key verbatim when nothing is found, so a label
+    /// that comes back as its own key is a command whose key was never added.
+    #[test]
+    fn every_command_label_resolves_through_the_locale_file() {
+        for info in COMMANDS {
+            assert_ne!(
+                info.label(),
+                format!("command.{}", info.id),
+                "{} has no key in the `command` section",
+                info.id
+            );
         }
     }
 

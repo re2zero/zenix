@@ -536,7 +536,8 @@ impl ShellView {
                 cx.notify();
             }
             ShellRequest::LinkPlugin(path) => {
-                self.trust.note(format!("linking {path}…"));
+                self.trust
+                    .note(rust_i18n::t!("shell.trust.linking", path = path).to_string());
                 self.plugins.link(path);
                 cx.notify();
             }

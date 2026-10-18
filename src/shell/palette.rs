@@ -18,6 +18,7 @@ use std::sync::Arc;
 use super::commands::{COMMANDS, Command};
 use super::keymap::Keymap;
 use super::registry::{Dispatch, ShellRequest};
+use crate::i18n::t;
 use crate::plugins::model::PluginAction;
 use crate::plugins::ui_manifest::CommandSpec;
 
@@ -46,7 +47,7 @@ impl Entry {
             Self::Command(command) => COMMANDS
                 .iter()
                 .find(|info| info.command == *command)
-                .map(|info| info.label.to_owned())
+                .map(|info| info.label())
                 .unwrap_or_else(|| format!("{command:?}")),
             Self::Plugin { action, declared } => declared
                 .as_ref()
@@ -229,7 +230,7 @@ pub(crate) fn overlay(
         div()
             .text_sm()
             .text_color(theme.muted_foreground)
-            .child("type a command")
+            .child(t("shell.palette.prompt"))
     } else {
         div()
             .text_sm()
@@ -254,7 +255,7 @@ pub(crate) fn overlay(
                 .py_1()
                 .text_xs()
                 .text_color(theme.muted_foreground)
-                .child("nothing matches"),
+                .child(t("shell.palette.no_matches")),
         );
     }
     let boxed = v_flex()

@@ -15,6 +15,19 @@ status:
   disconnected:
     en: "Disconnected: %{reason}"
     zh-CN: "已断开: %{reason}"
+  # The connection segment's other two states: the handshake is not finished,
+  # and the handshake is finished but the first snapshot has not landed.
+  connecting:
+    en: "connecting to the herdr daemon..."
+    zh-CN: "正在连接 herdr daemon…"
+  awaiting_snapshot:
+    en: "connected; waiting for snapshot"
+    zh-CN: "已连接；等待快照"
+  # `disconnected` needs a reason. The daemon always carries one when it drops
+  # the connection, so this is the word for the case where there is none.
+  no_reason:
+    en: "disconnected"
+    zh-CN: "已断开"
 
 settings:
   title:
@@ -138,3 +151,162 @@ ai:
     monitor_title:
       en: "Active Agents"
       zh-CN: "运行中的 Agent"
+
+# The shell's own copy: what it draws outside the settings pages. Two things are
+# deliberately not here. Symbol-only buttons (`<`, `+`, `x`, `^`) are glyphs, not
+# words, so a locale has nothing to say about them; and the language names on the
+# Appearance page stay as each language calls itself.
+shell:
+  workspaces:
+    en: "Workspaces"
+    zh-CN: "工作区"
+  palette:
+    prompt:
+      en: "type a command"
+      zh-CN: "输入命令"
+    no_matches:
+      en: "nothing matches"
+      zh-CN: "没有匹配项"
+  plugins:
+    title:
+      en: "Plugins"
+      zh-CN: "插件"
+    logs:
+      en: "Plugin logs"
+      zh-CN: "插件日志"
+    commands:
+      en: "commands"
+      zh-CN: "命令"
+  views:
+    reading:
+      en: "reading"
+      zh-CN: "读取中"
+    no_data:
+      en: "no data"
+      zh-CN: "无数据"
+  trust:
+    title:
+      en: "Link a plugin — what it would run"
+      zh-CN: "链接插件 — 它会运行什么"
+    review:
+      en: "Review"
+      zh-CN: "查看"
+    link:
+      en: "Link"
+      zh-CN: "链接"
+    type_directory:
+      en: "Type the directory a plugin lives in."
+      zh-CN: "请输入插件所在的目录。"
+    invitation:
+      en: "Type a plugin directory and press Enter to read the commands it would run."
+      zh-CN: "输入插件目录并按回车，读取它将运行的命令。"
+    would_run:
+      en: "%{count} command(s) would run as you, with the plugin's directory as the working directory."
+      zh-CN: "将要以你的身份运行 %{count} 条命令，工作目录为插件所在的目录。"
+    no_commands:
+      en: "This manifest declares no command."
+      zh-CN: "该清单没有声明任何命令。"
+    linking:
+      en: "linking %{path}…"
+      zh-CN: "正在链接 %{path}…"
+
+# The command directory. This section is keyed by each command's own id, which is
+# what `CommandInfo::label` resolves against, so a key that does not match an id
+# is a row that shows its key. `view.settings` repeats `settings.title` because
+# the palette names the command, not the page it opens.
+command:
+  workspace:
+    new:
+      en: "New Workspace"
+      zh-CN: "新建工作区"
+    close:
+      en: "Close Workspace"
+      zh-CN: "关闭工作区"
+    next:
+      en: "Next Workspace"
+      zh-CN: "下一个工作区"
+    previous:
+      en: "Previous Workspace"
+      zh-CN: "上一个工作区"
+  tab:
+    new:
+      en: "New Tab"
+      zh-CN: "新建标签页"
+    close:
+      en: "Close Tab"
+      zh-CN: "关闭标签页"
+    next:
+      en: "Next Tab"
+      zh-CN: "下一个标签页"
+    previous:
+      en: "Previous Tab"
+      zh-CN: "上一个标签页"
+    move-left:
+      en: "Move Tab Left"
+      zh-CN: "标签页左移"
+    move-right:
+      en: "Move Tab Right"
+      zh-CN: "标签页右移"
+  pane:
+    split-right:
+      en: "Split Right"
+      zh-CN: "向右分屏"
+    split-down:
+      en: "Split Down"
+      zh-CN: "向下分屏"
+    close:
+      en: "Close Pane"
+      zh-CN: "关闭窗格"
+    zoom:
+      en: "Toggle Pane Zoom"
+      zh-CN: "切换窗格缩放"
+    focus-left:
+      en: "Focus Pane Left"
+      zh-CN: "聚焦左侧窗格"
+    focus-right:
+      en: "Focus Pane Right"
+      zh-CN: "聚焦右侧窗格"
+    focus-up:
+      en: "Focus Pane Up"
+      zh-CN: "聚焦上方窗格"
+    focus-down:
+      en: "Focus Pane Down"
+      zh-CN: "聚焦下方窗格"
+    resize-left:
+      en: "Resize Pane Left"
+      zh-CN: "向左调整窗格"
+    resize-right:
+      en: "Resize Pane Right"
+      zh-CN: "向右调整窗格"
+    resize-up:
+      en: "Resize Pane Up"
+      zh-CN: "向上调整窗格"
+    resize-down:
+      en: "Resize Pane Down"
+      zh-CN: "向下调整窗格"
+  view:
+    toggle-sidebar:
+      en: "Toggle Sidebar"
+      zh-CN: "切换侧栏"
+    toggle-chat:
+      en: "Toggle Chat"
+      zh-CN: "切换对话面板"
+    toggle-theme:
+      en: "Toggle Light/Dark"
+      zh-CN: "切换明暗主题"
+    settings:
+      en: "Settings"
+      zh-CN: "设置"
+    palette:
+      en: "Command Palette"
+      zh-CN: "命令面板"
+    close-popup:
+      en: "Close Popup Pane"
+      zh-CN: "关闭弹出窗格"
+  plugins:
+    refresh:
+      en: "Refresh Plugins"
+      zh-CN: "刷新插件"
+    link:
+      en: "Link a Plugin…"
+      zh-CN: "链接插件…"

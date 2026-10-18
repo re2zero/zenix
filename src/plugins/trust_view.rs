@@ -19,6 +19,7 @@ use gpui_kit::component::{ActiveTheme, Theme, h_flex, v_flex};
 use gpui_kit::*;
 
 use super::trust::{self, Preview};
+use crate::i18n::t;
 use crate::shell::registry::{Dispatch, ShellRequest};
 
 /// The review as the shell holds it: the path that was typed, what reading it
@@ -76,7 +77,7 @@ impl TrustReview {
         self.answer = None;
         if typed.is_empty() {
             self.reviewed = None;
-            self.preview = Some(Err("Type the directory a plugin lives in.".to_owned()));
+            self.preview = Some(Err(t("shell.trust.type_directory")));
             return;
         }
         let dir = PathBuf::from(typed);
@@ -187,19 +188,16 @@ pub(crate) fn overlay(
                 .items_center()
                 .border_b_1()
                 .border_color(theme.border)
-                .child(
-                    div()
-                        .flex_none()
-                        .text_sm()
-                        .child("Link a plugin — what it would run"),
-                )
+                .child(div().flex_none().text_sm().child(t("shell.trust.title")))
                 .child(div().flex_1())
-                .child(button("plugin-trust-close", "Close", &theme).on_click({
-                    let close = close.clone();
-                    move |_, window, cx| {
-                        close(ShellRequest::ClosePluginTrust, window, cx);
-                    }
-                })),
+                .child(
+                    button("plugin-trust-close", &t("settings.close"), &theme).on_click({
+                        let close = close.clone();
+                        move |_, window, cx| {
+                            close(ShellRequest::ClosePluginTrust, window, cx);
+                        }
+                    }),
+                ),
         )
         .child(
             h_flex()
@@ -212,14 +210,16 @@ pub(crate) fn overlay(
                 .border_b_1()
                 .border_color(theme.border)
                 .child(div().flex_1().min_w_0().child(input))
-                .child(button("plugin-trust-review", "Review", &theme).on_click({
-                    let read = read.clone();
-                    move |_, window, cx| {
-                        read(ShellRequest::ReviewPlugin, window, cx);
-                    }
-                }))
+                .child(
+                    button("plugin-trust-review", &t("shell.trust.review"), &theme).on_click({
+                        let read = read.clone();
+                        move |_, window, cx| {
+                            read(ShellRequest::ReviewPlugin, window, cx);
+                        }
+                    }),
+                )
                 .children(linkable.map(|path| {
-                    button("plugin-trust-link", "Link", &theme).on_click({
+                    button("plugin-trust-link", &t("shell.trust.link"), &theme).on_click({
                         let link = dispatch.clone();
                         move |_, window, cx| {
                             link(ShellRequest::LinkPlugin(path.clone()), window, cx);
@@ -269,10 +269,7 @@ pub(crate) fn overlay(
 /// commands a manifest declares.
 fn body(preview: Option<&Result<Preview, String>>, theme: &Theme) -> AnyElement {
     match preview {
-        None => note(
-            "Type a plugin directory and press Enter to read the commands it would run.",
-            theme.muted_foreground,
-        ),
+        None => note(&t("shell.trust.invitation"), theme.muted_foreground),
         Some(Err(error)) => note(error, theme.danger),
         Some(Ok(preview)) => declared(preview, theme),
     }
@@ -302,20 +299,14 @@ fn declared(preview: &Preview, theme: &Theme) -> AnyElement {
             ),
     );
     column = column.child(note(
-        &format!(
-            "{} command(s) would run as you, with the plugin's directory as the working directory.",
-            preview.commands.len()
-        ),
+        rust_i18n::t!("shell.trust.would_run", count = preview.commands.len()).as_ref(),
         theme.muted_foreground,
     ));
     for warning in &preview.warnings {
         column = column.child(note(warning, theme.warning));
     }
     if preview.commands.is_empty() {
-        column = column.child(note(
-            "This manifest declares no command.",
-            theme.muted_foreground,
-        ));
+        column = column.child(note(&t("shell.trust.no_commands"), theme.muted_foreground));
     }
     for (index, command) in preview.commands.iter().enumerate() {
         let hazard = preview.hazards.iter().find(|hazard| hazard.index == index);

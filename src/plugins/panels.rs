@@ -46,7 +46,7 @@ fn render_plugins(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyEl
     let availability = Availability::of(invocation.snapshot);
     let mut column = v_flex().w_full().px_1().py_1().gap_0p5().child(header(
         "plugins-header",
-        "Plugins",
+        &crate::i18n::t("shell.plugins.title"),
         &crate::i18n::t("general.refresh"),
         ShellRequest::RefreshPlugins,
         invocation,
@@ -87,7 +87,7 @@ fn render_logs(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyEleme
     }
     let mut column = v_flex().w_full().px_1().py_1().gap_0p5().child(header(
         "plugin-logs-header",
-        "Plugin logs",
+        &crate::i18n::t("shell.plugins.logs"),
         &crate::i18n::t("general.refresh"),
         ShellRequest::RefreshPlugins,
         invocation,
@@ -166,7 +166,7 @@ fn plugin_row(index: usize, plugin: &InstalledPlugin, invocation: &Invocation) -
                         .on_click(move |_, window, cx| {
                             dispatch(ShellRequest::OpenPluginTrustAt(root.clone()), window, cx);
                         })
-                        .child("commands"),
+                        .child(crate::i18n::t("shell.plugins.commands")),
                 ),
         );
     for warning in &plugin.warnings {

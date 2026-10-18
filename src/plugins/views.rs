@@ -41,7 +41,10 @@ pub(crate) fn panel(
             Some(Data::Ready(value)) => draw(rows(spec.view, value), theme),
             Some(Data::Failed(why)) => failure(why, theme),
             // Nothing yet and nothing wrong: the command has not answered.
-            Some(Data::Loading) | None => line("reading", theme.muted_foreground),
+            Some(Data::Loading) | None => line(
+                &crate::i18n::t("shell.views.reading"),
+                theme.muted_foreground,
+            ),
         })
         .into_any_element()
 }
@@ -250,7 +253,10 @@ fn draw(rows: Rows, theme: &Theme) -> AnyElement {
             .into_any_element(),
         Rows::Pairs(pairs) => {
             if pairs.is_empty() {
-                return line("no data", theme.muted_foreground);
+                return line(
+                    &crate::i18n::t("shell.views.no_data"),
+                    theme.muted_foreground,
+                );
             }
             let mut column = v_flex().w_full().gap_0p5();
             for (key, value) in pairs {
@@ -280,7 +286,10 @@ fn draw(rows: Rows, theme: &Theme) -> AnyElement {
         }
         Rows::Lines(lines) => {
             if lines.is_empty() {
-                return line("no data", theme.muted_foreground);
+                return line(
+                    &crate::i18n::t("shell.views.no_data"),
+                    theme.muted_foreground,
+                );
             }
             let mut column = v_flex().w_full().gap_0p5();
             for text in lines {
