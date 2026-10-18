@@ -55,6 +55,10 @@ pub(crate) enum Command {
     LinkPlugin,
     /// Local: dismiss the daemon's popup pane, if one is open.
     ClosePopup,
+    /// Local: write the focused tab's layout to the project's template file.
+    SaveLayout,
+    /// Local: restore the project's template as a new tab.
+    RestoreLayout,
 }
 
 impl Command {
@@ -72,6 +76,8 @@ impl Command {
                 | Command::RefreshPlugins
                 | Command::LinkPlugin
                 | Command::ClosePopup
+                | Command::SaveLayout
+                | Command::RestoreLayout
         )
     }
 }
@@ -292,6 +298,20 @@ pub(crate) const COMMANDS: &[CommandInfo] = &[
         direct: &[],
         prefixed: &[],
     },
+    // The project's layout template. Saving reads the focused tab; restoring is
+    // deliberately not automatic, because `layout.apply` always makes a new tab.
+    CommandInfo {
+        command: Command::SaveLayout,
+        id: "layout.save",
+        direct: &[],
+        prefixed: &[],
+    },
+    CommandInfo {
+        command: Command::RestoreLayout,
+        id: "layout.restore",
+        direct: &[],
+        prefixed: &[],
+    },
 ];
 
 /// The daemon method a command becomes, or `None` when the shell runs it
@@ -432,7 +452,9 @@ pub(crate) fn request(command: Command, snapshot: &ClientShellSnapshot) -> Optio
         | Command::TogglePalette
         | Command::RefreshPlugins
         | Command::LinkPlugin
-        | Command::ClosePopup => return None,
+        | Command::ClosePopup
+        | Command::SaveLayout
+        | Command::RestoreLayout => return None,
     })
 }
 
@@ -513,7 +535,9 @@ mod tests {
                 "view.palette",
                 "plugins.refresh",
                 "plugins.link",
-                "view.close-popup"
+                "view.close-popup",
+                "layout.save",
+                "layout.restore"
             ]
         );
         for info in COMMANDS {

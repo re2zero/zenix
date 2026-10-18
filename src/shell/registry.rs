@@ -16,6 +16,7 @@ use herdr_client::protocol::{ClientShellSnapshot, PaneSurfaceFrame};
 
 use super::commands::Command;
 use crate::herdr::ConnectionStatus;
+use crate::layout::LayoutState;
 use crate::plugins::host::PluginState;
 use crate::plugins::model::{Placement, PluginAction};
 use crate::plugins::ui_data::UiData;
@@ -141,6 +142,10 @@ pub(crate) enum ShellRequest {
     LinkPlugin(String),
     /// Close the review.
     ClosePluginTrust,
+    /// Write the focused tab's layout to the project's template file.
+    SaveLayout,
+    /// Restore the project's template as a new tab in the focused workspace.
+    RestoreLayout,
 }
 
 /// A request's way back into the shell. Shared rather than borrowed because
@@ -166,6 +171,8 @@ pub(crate) struct Invocation<'a> {
     pub(crate) plugins: &'a PluginState,
     /// What the declarations' commands last printed, by contribution id.
     pub(crate) ui_data: &'a UiData,
+    /// The project the focused pane's cwd belongs to, and the template found in it.
+    pub(crate) layout: &'a LayoutState,
     pub(crate) theme: &'a Theme,
     pub(crate) dispatch: &'a Dispatch,
 }

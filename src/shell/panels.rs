@@ -6,6 +6,8 @@
 //! change how the shell mounts them. The layout is skeleton level by decision
 //! (D3): a workspace's name, its cwd and git branch, and its agent's status.
 
+use std::path::{Path, PathBuf};
+
 use gpui_kit::component::{ActiveTheme, Theme, h_flex, v_flex};
 use gpui_kit::*;
 use herdr_client::protocol::{
@@ -15,6 +17,8 @@ use herdr_client::protocol::{
 use super::registry::{Builtin, Invocation, ShellRequest};
 use crate::herdr::ConnectionStatus;
 use crate::i18n::t;
+use crate::layout::{DIR, FILE_NAME, LayoutState, Template};
+use crate::plugins::panels::{header, line};
 
 /// The sidebar's blocks, top to bottom.
 pub(crate) const PANELS: &[Builtin] = &[
@@ -25,6 +29,10 @@ pub(crate) const PANELS: &[Builtin] = &[
     Builtin {
         id: "agents",
         render: render_agents,
+    },
+    Builtin {
+        id: "layout",
+        render: render_layout,
     },
 ];
 
@@ -306,6 +314,77 @@ fn status_label(status: AgentStatus) -> &'static str {
     }
 }
 
+/// The project the focused pane belongs to and the template found in it. The block
+/// speaks only once a project is known, which is after the first snapshot has named
+/// a focused pane. Saving and restoring are both clicks: an apply always makes a new
+/// tab, so the block must not run one on its own.
+fn render_layout(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyElement {
+    let theme = invocation.theme;
+    let layout = invocation.layout;
+    let Some(root) = layout.root.as_ref() else {
+        return div().into_any_element();
+    };
+    let dispatch = invocation.dispatch.clone();
+    let path = layout_path(layout, root);
+    let mut column = v_flex().w_full().px_1().py_1().gap_0p5().child(header(
+        "layout-header",
+        &t("layout.title"),
+        &t("layout.save"),
+        ShellRequest::SaveLayout,
+        invocation,
+    ));
+    let row = h_flex()
+        .w_full()
+        .min_w_0()
+        .items_center()
+        .justify_between()
+        .child(line(&path.display().to_string(), theme.muted_foreground));
+    column = column.child(if layout.template.is_some() {
+        row.child(
+            div()
+                .id("layout-restore")
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .cursor_pointer()
+                .on_click(move |_, window, cx| dispatch(ShellRequest::RestoreLayout, window, cx))
+                .child(t("layout.restore")),
+        )
+    } else {
+        row
+    });
+    if let Some(template) = layout.template.as_ref() {
+        column = column.child(line(&layout_detail(template), theme.muted_foreground));
+    } else {
+        column = column.child(line(&t("layout.no_template"), theme.muted_foreground));
+    }
+    if let Some(last) = layout.last.as_deref() {
+        column = column.child(line(last, theme.success));
+    }
+    if let Some(error) = layout.error.as_deref() {
+        column = column.child(line(error, theme.danger));
+    }
+    column.into_any_element()
+}
+
+/// The file the block names: the one found by walking up from the pane, or the one
+/// saving would create when the project has none.
+fn layout_path(layout: &LayoutState, root: &Path) -> PathBuf {
+    layout
+        .path
+        .clone()
+        .unwrap_or_else(|| root.join(DIR).join(FILE_NAME))
+}
+
+/// How many panes the template would create, and the tab name it carries when it
+/// carries one. An export cannot carry a name, so this is the file's own field.
+fn layout_detail(template: &Template) -> String {
+    let panes = rust_i18n::t!("layout.panes", panes = template.root.panes()).to_string();
+    match template.tab_label.as_deref() {
+        Some(label) => format!("{panes} · {label}"),
+        None => panes,
+    }
+}
+
 fn render_connection(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyElement {
     let theme = invocation.theme;
     let (label, color) = match (invocation.status, invocation.status_error) {
@@ -475,6 +554,43 @@ mod tests {
         snapshot.agents[0].terminal_title_stripped = None;
         snapshot.agents[0].title = None;
         assert_eq!(agent_detail(&snapshot.agents[0]), "working · w1");
+    }
+
+    #[test]
+    fn the_block_names_the_file_saving_would_create_when_the_project_has_none() {
+        let project = Path::new("/tmp/zenix-layout-project");
+        let state = LayoutState {
+            root: Some(project.to_path_buf()),
+            ..LayoutState::default()
+        };
+        assert_eq!(
+            layout_path(&state, project),
+            project.join(DIR).join(FILE_NAME),
+            "the file a save would create"
+        );
+        // A template found further up than the project is the one the block names.
+        let state = LayoutState {
+            root: Some(project.to_path_buf()),
+            path: Some(Path::new("/tmp/zenix-layout-project/.zenix/layout.toml").to_path_buf()),
+            ..LayoutState::default()
+        };
+        assert_eq!(
+            layout_path(&state, project),
+            Path::new("/tmp/zenix-layout-project/.zenix/layout.toml").to_path_buf()
+        );
+    }
+
+    #[test]
+    fn the_layout_detail_names_the_tab_only_when_the_template_carries_one() {
+        let template: Template =
+            toml::from_str("[root]\ntype = \"pane\"\n").expect("a one-pane template");
+        let detail = layout_detail(&template);
+        assert!(!detail.contains("zenix"), "{detail}");
+        let named = Template {
+            tab_label: Some("zenix".to_owned()),
+            ..template.clone()
+        };
+        assert!(layout_detail(&named).contains("zenix"), "{named:?}");
     }
 
     fn snapshot_with_agents() -> ClientShellSnapshot {

@@ -210,6 +210,31 @@ shell:
       en: "linking %{path}…"
       zh-CN: "正在链接 %{path}…"
 
+# The project's layout template. The block names the project it found by walking up
+# from the focused pane, and the two lines below are what a save or a restore did.
+layout:
+  title:
+    en: "Layout"
+    zh-CN: "布局"
+  save:
+    en: "save"
+    zh-CN: "保存"
+  restore:
+    en: "restore"
+    zh-CN: "恢复"
+  no_template:
+    en: "no template in this project"
+    zh-CN: "此项目没有模板"
+  panes:
+    en: "%{panes} panes"
+    zh-CN: "%{panes} 个窗格"
+  saved:
+    en: "saved %{path}"
+    zh-CN: "已保存 %{path}"
+  restored:
+    en: "restored as tab %{tab}"
+    zh-CN: "已恢复为标签 %{tab}"
+
 # The command directory. This section is keyed by each command's own id, which is
 # what `CommandInfo::label` resolves against, so a key that does not match an id
 # is a row that shows its key. `view.settings` repeats `settings.title` because
@@ -310,3 +335,10 @@ command:
     link:
       en: "Link a Plugin…"
       zh-CN: "链接插件…"
+  layout:
+    save:
+      en: "Save Layout"
+      zh-CN: "保存布局"
+    restore:
+      en: "Restore Layout"
+      zh-CN: "恢复布局"

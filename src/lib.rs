@@ -27,6 +27,7 @@ pub mod config;
 pub mod config_adapters;
 pub mod herdr;
 pub mod i18n;
+pub mod layout;
 pub mod mcp;
 pub mod platform;
 pub mod plugins;

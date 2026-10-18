@@ -20,15 +20,18 @@ pub(crate) mod panels;
 pub(crate) mod registry;
 pub(crate) mod settings;
 
+use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui_kit::component::{ActiveTheme, ThemeMode, h_flex, v_flex};
 use gpui_kit::*;
-use herdr_client::protocol::ClientShellTab;
+use herdr_client::protocol::{ClientShellSnapshot, ClientShellTab};
 
 use crate::config::{self, ASIDE_WIDTH_DEFAULT, ConfigStore, SIDEBAR_WIDTH_DEFAULT};
 use crate::herdr::Connection;
+use crate::herdr::api::ApiClient;
+use crate::layout::{self, LayoutState};
 use crate::plugins::host::PluginHost;
 use crate::plugins::model::Availability;
 use crate::plugins::trust_view::{self, TrustReview};
@@ -85,6 +88,9 @@ pub(crate) struct ShellView {
     /// What those commands last printed, as of the last answer. A field rather
     /// than a per-frame read, so a paint clones nothing.
     ui_data: UiData,
+    /// The project the focused pane belongs to and the layout template found in
+    /// it. The walk and the read happen when the cwd moves, not every frame.
+    layout: LayoutState,
     /// The prefix has been typed and the next keystroke is its chord.
     prefix_armed: bool,
     /// The terminal's last drawn revision, so a paint that changed nothing
@@ -109,8 +115,27 @@ impl ShellView {
         let connection = terminal.read(cx).connection();
         let observe = cx.observe(&terminal, |shell, terminal, cx| {
             let revision = terminal.read(cx).live().revision;
-            if revision != shell.drawn {
+            let cwd = terminal
+                .read(cx)
+                .live()
+                .snapshot
+                .as_deref()
+                .and_then(layout_cwd)
+                .map(|cwd| cwd.to_owned());
+            let drawn = revision != shell.drawn;
+            // A scan is a handful of directory checks and one small file, so it
+            // runs when the focused pane's cwd moves and not on every revision.
+            let mut scanned = false;
+            if let Some(cwd) = cwd.as_deref()
+                && Some(cwd) != shell.layout.cwd.as_deref()
+            {
+                shell.layout.scan(Path::new(cwd));
+                scanned = true;
+            }
+            if drawn {
                 shell.drawn = revision;
+            }
+            if drawn || scanned {
                 cx.notify();
             }
         });
@@ -147,6 +172,7 @@ impl ShellView {
             plugins,
             ui_data_host,
             ui_data: UiData::default(),
+            layout: LayoutState::default(),
             prefix_armed: false,
             drawn: 0,
             _observe: observe,
@@ -343,6 +369,11 @@ impl ShellView {
             // comes first, from wherever the command was reached.
             Command::LinkPlugin => self.dispatch(ShellRequest::OpenPluginTrust, window, cx),
             Command::ClosePopup => self.plugins.close_popup(),
+            // The template is the project's, not the daemon's: saving writes a
+            // file, and restoring stays a command because `layout.apply` always
+            // makes a new tab.
+            Command::SaveLayout => self.save_layout(cx),
+            Command::RestoreLayout => self.restore_layout(cx),
             // Every other command is the daemon's. A command marked local with
             // no arm above would silently do nothing, so say so in tests.
             command => {
@@ -547,7 +578,81 @@ impl ShellView {
                 window.focus(&focus, cx);
                 cx.notify();
             }
+            ShellRequest::SaveLayout => self.save_layout(cx),
+            ShellRequest::RestoreLayout => self.restore_layout(cx),
         }
+    }
+
+    /// Write the focused tab's layout into the project's file. The daemon answers
+    /// with the tree and the ids it owns; the file keeps the same tree without
+    /// them, so the template outlives this run.
+    fn save_layout(&mut self, cx: &mut Context<Self>) {
+        let snapshot = self.terminal.read(cx).live().snapshot.clone();
+        let Some(tab_id) = snapshot.and_then(|snapshot| snapshot.focused_tab_id.clone()) else {
+            return;
+        };
+        let Some(root) = self.layout.root.clone() else {
+            return;
+        };
+        let path = root.join(layout::DIR).join(layout::FILE_NAME);
+        let client = ApiClient::local();
+        // The API lane is a blocking socket call, so it runs off the UI thread as
+        // every other call on it does.
+        cx.spawn(async move |shell, cx| {
+            let outcome = cx
+                .background_executor()
+                .spawn(async move {
+                    let template = layout::export(&client, &tab_id)?;
+                    layout::write(&path, &template)?;
+                    Ok(path)
+                })
+                .await;
+            let outcome = outcome.map(|path| {
+                rust_i18n::t!("layout.saved", path = path.display().to_string()).to_string()
+            });
+            let _ = shell.update(cx, |shell, cx| {
+                shell.layout.record(outcome);
+                // The file may not have existed before this save, so the block
+                // shows what the project holds now.
+                if shell.layout.error.is_none()
+                    && let Some(cwd) = shell.layout.cwd.clone()
+                {
+                    shell.layout.scan(Path::new(&cwd));
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Restore the project's template as a new tab in the focused workspace. The
+    /// daemon never replaces a tab on an apply, so this only ever runs when a
+    /// person asked for it.
+    fn restore_layout(&mut self, cx: &mut Context<Self>) {
+        let Some(template) = self.layout.template.clone() else {
+            return;
+        };
+        let snapshot = self.terminal.read(cx).live().snapshot.clone();
+        let Some(workspace_id) =
+            snapshot.and_then(|snapshot| snapshot.focused_workspace_id.clone())
+        else {
+            return;
+        };
+        let client = ApiClient::local();
+        cx.spawn(async move |shell, cx| {
+            let outcome = cx
+                .background_executor()
+                .spawn(async move { layout::apply(&client, &workspace_id, &template) })
+                .await;
+            let outcome = outcome.map(|description| {
+                rust_i18n::t!("layout.restored", tab = description.tab_id).to_string()
+            });
+            let _ = shell.update(cx, |shell, cx| {
+                shell.layout.record(outcome);
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Whether an overlay of the shell's holds the keyboard right now. Each one
@@ -704,7 +809,9 @@ impl Render for ShellView {
                 | ShellRequest::ReviewPlugin
                 | ShellRequest::OpenPluginTrustAt(_)
                 | ShellRequest::LinkPlugin(_)
-                | ShellRequest::ClosePluginTrust) => {
+                | ShellRequest::ClosePluginTrust
+                | ShellRequest::SaveLayout
+                | ShellRequest::RestoreLayout) => {
                     entity.update(cx, |shell, cx| {
                         shell.dispatch(request, window, cx);
                         cx.notify();
@@ -722,6 +829,7 @@ impl Render for ShellView {
             prefix: prefix.as_deref(),
             plugins: &plugins,
             ui_data: &self.ui_data,
+            layout: &self.layout,
             theme: &theme,
             dispatch: &dispatch,
         };
@@ -873,6 +981,15 @@ impl Render for ShellView {
         }
         root
     }
+}
+
+/// The cwd the layout block speaks for: the focused pane's, preferring the cwd the
+/// daemon carries for its foreground process. A snapshot with no focused pane has
+/// nothing to walk up from.
+fn layout_cwd(snapshot: &ClientShellSnapshot) -> Option<&str> {
+    let id = snapshot.focused_pane_id.as_deref()?;
+    let pane = snapshot.panes.iter().find(|pane| pane.pane_id == id)?;
+    pane.foreground_cwd.as_deref().or(pane.cwd.as_deref())
 }
 
 /// The chrome above the grid: which workspace is in front, and the local
