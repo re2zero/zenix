@@ -1,3 +1,18 @@
+//! System snapshot of the machine zenix runs on: CPU, memory, network and disk
+//! counters read through `sysinfo`.
+//!
+//! `collect()` keeps the `System` and `Networks` handles process-global and
+//! takes the previous network counters as its baseline, so each call returns
+//! the rx/tx rates measured since the previous call rather than raw counters.
+//! A caller that polls on `POLL_INTERVAL_SECS` therefore sees a rate.
+//!
+//! Keeper module — no consumer in the tree. Nothing in the shell, the plugin
+//! host or the MCP lane calls `collect`; `SystemInfo` and `CpuSamples` are only
+//! re-exported from `src/lib.rs` for plugins and sub-applications. The status
+//! bar reports the daemon's state, so this stays a keeper until a panel asks
+//! for the host machine. `DiskMount` carries `#[allow(dead_code)]` because its
+//! fields are written by `collect` and read by nothing.
+
 use std::sync::{Mutex, OnceLock};
 
 use sysinfo::{Disks, Networks, System};

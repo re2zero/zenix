@@ -8,6 +8,15 @@
 //!     `{ "mcpServers": { <name>: { command, args?, env?, disabled? } } }`
 //!
 //! Uses the ProviderRegistry for agent config paths and supports JSONC config files.
+//!
+//! What is wired is the orchestrator: the shell holds `start_orchestrator`'s
+//! return value, and that path runs through `server` → `handler` →
+//! `sse`/`plugin_tools`/`types`. It is the only consumer this module has. The
+//! config-management half — scan/read/add/edit/remove/toggle/test across the
+//! per-agent Claude-format configs and zenix's own NDJSON store — has no
+//! consumer, because no settings page mounts an MCP panel through the
+//! contribution registry; `ensure_builtin_orchestrator` is the entry point that
+//! would register the orchestrator in that store, and it is itself never called.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

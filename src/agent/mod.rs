@@ -1,5 +1,17 @@
 //! Agent CLI detection — checks local filesystem for installed agent CLIs.
 //! Uses the ProviderRegistry for agent definitions.
+//!
+//! Keeper module — no consumer in the tree. It offers a PATH lookup for one
+//! binary (`find_any_binary`), a detection pass over every registry provider
+//! that turns each into an `AgentCliInfo` with its resolved path
+//! (`detect_all_agents`), and an install path that either runs the registry's
+//! install command or opens the provider's download page (`install_agent`).
+//!
+//! Nothing calls them: the shell's agent monitor builds its sidebar rows from
+//! the daemon's snapshot pushes rather than a local PATH scan, so a local
+//! detection pass has no consumer until a settings page wants "is this CLI
+//! installed" or "install it". The module-level `#![allow(dead_code)]` is what
+//! keeps the lint quiet while it stays unwired.
 
 #![allow(dead_code)]
 

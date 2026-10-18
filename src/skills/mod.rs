@@ -5,6 +5,15 @@
 //! Compatibility matrix:
 //!   Claude-format (directory with SKILL.md): claude, codex, pi, omp, kilo, hermes, droid
 //!   OpenCode (also reads Claude-format skills): opencode
+//!
+//! Keeper module — no consumer in the tree. It provides the skills half of the
+//! settings surface: scan every agent's skills directory, link one agent's copy
+//! of a skill into another with a symlink, move a skill into zenix's own
+//! directory, install from git / a local directory / the skills.sh API, and
+//! read the local `community-skills.json`. No settings page mounts a skill list
+//! through the contribution registry, and the MCP lane exposes plugin actions
+//! rather than skills, so every entry point here is reached only from the
+//! plugin/sub-app SDK (`pub mod skills` in `src/lib.rs`).
 
 use std::collections::HashMap;
 use std::path::PathBuf;

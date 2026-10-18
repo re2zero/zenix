@@ -11,6 +11,15 @@
 //! via `to_opencode_provider()` and `to_claude_env()` methods.
 //!
 //! Config is persisted to `~/.config/zenix/api-providers.json`.
+//!
+//! What is wired is only the store and the type: `load_all` and
+//! `ApiProviderConfig` are read by `src/ai/engine.rs` (which picks a provider
+//! for a session) and by `src/shell/chat.rs` (which lists them). The rest is
+//! planned but not connected — the per-agent sync/unsync/toggle path, the
+//! presets, model fetching and the connection test have no caller, so the
+//! config-generation methods (`to_opencode_provider`, `to_claude_env`,
+//! `to_openai_env`) are reached only through `sync_api_to_agent`, which nothing
+//! calls.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

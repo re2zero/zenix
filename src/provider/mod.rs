@@ -6,6 +6,14 @@
 //!
 //! `ProviderRegistry` is the central registry. Use `ProviderRegistry::builtin()`
 //! to get the built-in list, then query by capability.
+//!
+//! Consumers are `config_adapters`, `api_provider`, `mcp` and `agent`, but none
+//! of them is reached from a path the shell runs, so the registry is exercised
+//! only by this module's own tests. Within it, the MCP half of the queries
+//! (`find`, `all`, `mcp_supporting`, `mcp_agent_names`, `mcp_config_path`) is
+//! used by those consumers, while the skills half (`skills_supporting`,
+//! `skill_agent_names`, `skills_path`) is used only by the tests here, because
+//! the module that would consume it (`skills`) has no consumer either.
 
 pub mod builtin;
 
