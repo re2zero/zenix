@@ -32,7 +32,7 @@ pub(crate) fn panel(
     let column = v_flex().w_full().px_1().py_1().gap_0p5().child(header(
         spec.qualified_id(),
         &spec.title,
-        "refresh",
+        &crate::i18n::t("general.refresh"),
         ShellRequest::RefreshPlugins,
         invocation,
     ));

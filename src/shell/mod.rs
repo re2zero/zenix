@@ -921,7 +921,13 @@ fn title_bar(invocation: &Invocation, sidebar_visible: bool) -> AnyElement {
         ))
         .child(toggle_button(
             "toggle-theme",
-            if theme.is_dark() { "light" } else { "dark" },
+            // The button names the mode it would switch to, so the label is the
+            // other mode's name.
+            if theme.is_dark() {
+                crate::i18n::t("settings.appearance.theme_light")
+            } else {
+                crate::i18n::t("settings.appearance.theme_dark")
+            },
             Command::ToggleTheme,
             invocation,
         ))

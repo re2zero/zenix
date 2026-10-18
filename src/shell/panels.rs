@@ -14,6 +14,7 @@ use herdr_client::protocol::{
 
 use super::registry::{Builtin, Invocation, ShellRequest};
 use crate::herdr::ConnectionStatus;
+use crate::i18n::t;
 
 /// The sidebar's blocks, top to bottom.
 pub(crate) const PANELS: &[Builtin] = &[
@@ -191,7 +192,7 @@ fn render_agents(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyEle
                 .pb_1()
                 .text_xs()
                 .text_color(theme.muted_foreground)
-                .child("Agents"),
+                .child(t("ai.agent.monitor_title")),
         )
         .children(
             agents
@@ -308,9 +309,14 @@ fn status_label(status: AgentStatus) -> &'static str {
 fn render_connection(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyElement {
     let theme = invocation.theme;
     let (label, color) = match (invocation.status, invocation.status_error) {
-        (ConnectionStatus::Disconnected, Some(error)) => {
-            (format!("disconnected: {error}"), theme.danger)
-        }
+        (ConnectionStatus::Disconnected, Some(error)) => (
+            rust_i18n::t!("status.disconnected", reason = error).to_string(),
+            theme.danger,
+        ),
+        // The key reads "Disconnected: %{reason}", so it needs a reason. The
+        // daemon always carries one when it drops the connection
+        // (`state::apply`'s Disconnected arm), so this is the fallback for the
+        // case where there is nothing to name.
         (ConnectionStatus::Disconnected, None) => ("disconnected".to_owned(), theme.danger),
         (ConnectionStatus::Connecting, _) => (
             "connecting to the herdr daemon...".to_owned(),
@@ -320,7 +326,7 @@ fn render_connection(invocation: &Invocation, _: &mut Window, _: &mut App) -> An
             "connected; waiting for snapshot".to_owned(),
             theme.muted_foreground,
         ),
-        (ConnectionStatus::Connected, _) => ("connected".to_owned(), theme.success),
+        (ConnectionStatus::Connected, _) => (t("status.connected"), theme.success),
     };
     div()
         .text_xs()

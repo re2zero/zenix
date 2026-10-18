@@ -47,7 +47,7 @@ fn render_plugins(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyEl
     let mut column = v_flex().w_full().px_1().py_1().gap_0p5().child(header(
         "plugins-header",
         "Plugins",
-        "refresh",
+        &crate::i18n::t("general.refresh"),
         ShellRequest::RefreshPlugins,
         invocation,
     ));
@@ -88,7 +88,7 @@ fn render_logs(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyEleme
     let mut column = v_flex().w_full().px_1().py_1().gap_0p5().child(header(
         "plugin-logs-header",
         "Plugin logs",
-        "refresh",
+        &crate::i18n::t("general.refresh"),
         ShellRequest::RefreshPlugins,
         invocation,
     ));

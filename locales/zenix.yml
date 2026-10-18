@@ -1,38 +1,20 @@
 _version: 2
 
+# Every key here is a string the client actually draws. A key for a surface
+# that no longer exists is not kept: the settings pages for MCP, Skills, API
+# providers, agent install and the system panel were removed in M1, and the
+# landing screen went with them.
+#
+# Placeholders are `%{name}` — rust-i18n 4.2.4 substitutes only that form and
+# passes a bare `{name}` through verbatim (measured, see src/i18n.rs's test).
+
 status:
-  initializing:
-    en: "Initializing..."
-    zh-CN: "正在初始化..."
   connected:
     en: "Connected"
     zh-CN: "已连接"
   disconnected:
     en: "Disconnected: %{reason}"
     zh-CN: "已断开: %{reason}"
-  waiting:
-    en: "Waiting (attempt %{n})..."
-    zh-CN: "等待中 (第 %{n} 次尝试)..."
-  timed_out:
-    en: "Timed out"
-    zh-CN: "连接超时"
-  not_found:
-    en: "herdr not found"
-    zh-CN: "未找到 herdr"
-  failed:
-    en: "Failed: %{err}"
-    zh-CN: "失败: %{err}"
-
-landing:
-  title:
-    en: "zenix"
-    zh-CN: "zenix"
-  terminal_btn:
-    en: "Terminal"
-    zh-CN: "终端"
-  herdr_btn:
-    en: "Launch herdr"
-    zh-CN: "启动 herdr"
 
 settings:
   title:
@@ -85,44 +67,6 @@ settings:
     daemon_hint:
       en: "Pane shell, new-workspace cwd, scrollback, keybindings and plugins live in the daemon's own config."
       zh-CN: "窗格 shell、新工作区目录、回滚、键位与插件在 daemon 自己的配置里。"
-  tab:
-    general:
-      en: "General"
-      zh-CN: "通用"
-    appearance:
-      en: "Appearance"
-      zh-CN: "外观"
-    terminal:
-      en: "Terminal"
-      zh-CN: "终端"
-    agent_cli:
-      en: "Agent"
-      zh-CN: "智能体"
-    mcp:
-      en: "MCP"
-      zh-CN: "MCP"
-    skills:
-      en: "Skills"
-      zh-CN: "技能"
-    api:
-      en: "API"
-      zh-CN: "API"
-    extensions:
-      en: "Extensions"
-      zh-CN: "扩展"
-  about:
-    en: "About"
-    zh-CN: "关于"
-  config_path:
-    en: "Config: {path}"
-    zh-CN: "配置路径: {path}"
-  mcp_templates:
-    en: "Templates:"
-    zh-CN: "模板:"
-  general:
-    language:
-      en: "Language"
-      zh-CN: "语言"
   appearance:
     title:
       en: "Appearance"
@@ -142,21 +86,6 @@ settings:
     locale:
       en: "Language"
       zh-CN: "语言"
-    font:
-      en: "Font"
-      zh-CN: "字体"
-    font_size:
-      en: "Font size"
-      zh-CN: "字体大小"
-    font_family:
-      en: "Font family"
-      zh-CN: "字体"
-    change_font:
-      en: "Change"
-      zh-CN: "更改"
-    active:
-      en: "Active"
-      zh-CN: "当前"
   terminal:
     title:
       en: "Terminal"
@@ -170,439 +99,12 @@ settings:
     palette_light:
       en: "Palette (light)"
       zh-CN: "调色板（浅色）"
-    font_family:
-      en: "Font family"
-      zh-CN: "字体"
-    cursor_style:
-      en: "Cursor style"
-      zh-CN: "光标样式"
-    opacity:
-      en: "Opacity"
-      zh-CN: "透明度"
-    cursor_block:
-      en: "Block"
-      zh-CN: "方块"
-    cursor_bar:
-      en: "Bar"
-      zh-CN: "竖线"
-    cursor_underline:
-      en: "Underline"
-      zh-CN: "下划线"
-    cursor_blink:
-      en: "Cursor blink"
-      zh-CN: "光标闪烁"
-    scrollback:
-      en: "Scrollback"
-      zh-CN: "回滚行数"
-    lines:
-      en: "lines"
-      zh-CN: "行"
-    blink_on:
-      en: "on"
-      zh-CN: "开"
-    blink_off:
-      en: "off"
-      zh-CN: "关"
-  ai:
-    chat:
-      placeholder:
-        en: "Type a message..."
-        zh-CN: "输入消息…"
-      send:
-        en: "Send"
-        zh-CN: "发送"
-      stop:
-        en: "Stop"
-        zh-CN: "停止"
-      streaming:
-        en: "Orchestrating…"
-        zh-CN: "编排中…"
-      new_session:
-        en: "+ New"
-        zh-CN: "+ 新建"
-      history:
-        en: "📋"
-        zh-CN: "📋"
-      messages:
-        en: "msgs"
-        zh-CN: "条消息"
-      new_session_title:
-        en: "New Chat"
-        zh-CN: "新建会话"
-  agent_cli:
-    no_agent_selected:
-      en: "Select an agent to view details"
-      zh-CN: "选择一个 agent 查看详情"
-    binary_path:
-      en: "Binary"
-      zh-CN: "路径"
-    search_hint:
-      en: "Search agents..."
-      zh-CN: "搜索 agent..."
-    installed_only:
-      en: "Installed only"
-      zh-CN: "仅已安装"
-    search_placeholder:
-      en: "Search..."
-      zh-CN: "搜索..."
-    refresh:
-      en: "Refresh"
-      zh-CN: "刷新"
-    add_mcp_extensions:
-      en: "+ Add MCP → Extensions"
-      zh-CN: "+ 添加 MCP → 扩展"
-    copy:
-      en: "Copy"
-      zh-CN: "复制"
-    context_menu:
-      en: "Agent context menu"
-      zh-CN: "Agent 上下文菜单"
-    agent_name:
-      en: "Agent"
-      zh-CN: "Agent"
-    install_command:
-      en: "Install command"
-      zh-CN: "安装命令"
-  no_api_providers:
-    en: "No API provider bound"
-    zh-CN: "未绑定 API 提供商"
-  mcp:
-    title:
-      en: "MCP Servers"
-      zh-CN: "MCP 服务器"
-    no_zenix_servers:
-      en: "No zenix-managed servers"
-      zh-CN: "没有 Zenix 管理的服务器"
-    search:
-      en: "Search servers..."
-      zh-CN: "搜索服务器..."
-    form:
-      name:
-        en: "Name"
-        zh-CN: "名称"
-      type:
-        en: "Type"
-        zh-CN: "类型"
-      command:
-        en: "Command"
-        zh-CN: "命令"
-      args:
-        en: "Args"
-        zh-CN: "参数"
-      env:
-        en: "Env"
-        zh-CN: "环境变量"
-      title_add:
-        en: "Add MCP Server"
-        zh-CN: "添加 MCP 服务器"
-      title_edit:
-        en: "Edit MCP Server"
-        zh-CN: "编辑 MCP 服务器"
-      title_agent_add:
-        en: "Add MCP Server to {agent}"
-        zh-CN: "向 {agent} 添加 MCP 服务器"
-      title_agent_edit:
-        en: "Edit MCP Server for {agent}"
-        zh-CN: "编辑 {agent} 的 MCP 服务器"
-      agent_label:
-        en: "Agent: {agent}"
-        zh-CN: "Agent：{agent}"
-      agent_name:
-        en: "Server name"
-        zh-CN: "服务器名称"
-      agent_type:
-        en: "Type"
-        zh-CN: "类型"
-      agent_command:
-        en: "Command"
-        zh-CN: "命令"
-      agent_args:
-        en: "Args"
-        zh-CN: "参数"
-      agent_env:
-        en: "Env"
-        zh-CN: "环境变量"
-      agent_url:
-        en: "URL"
-        zh-CN: "URL"
-  api:
-    title:
-      en: "API Providers"
-      zh-CN: "API 提供商"
-    search:
-      en: "Search providers..."
-      zh-CN: "搜索提供商..."
-    no_providers:
-      en: "No API providers configured"
-      zh-CN: "未配置 API 提供商"
-    form:
-      name:
-        en: "Name"
-        zh-CN: "名称"
-      format:
-        en: "Format"
-        zh-CN: "格式"
-      preset:
-        en: "Preset"
-        zh-CN: "预设"
-      suffix:
-        en: "Suffix"
-        zh-CN: "后缀"
-      custom:
-        en: "Custom"
-        zh-CN: "自定义"
-      base_url:
-        en: "Base URL"
-        zh-CN: "基础 URL"
-      api_key:
-        en: "API Key"
-        zh-CN: "API 密钥"
-      think:
-        en: "Think"
-        zh-CN: "推理"
-      model:
-        en: "Model"
-        zh-CN: "模型"
-      title_add:
-        en: "Add API Provider"
-        zh-CN: "添加 API 提供商"
-      title_edit:
-        en: "Edit API Provider"
-        zh-CN: "编辑 API 提供商"
-      model_fetch_hint:
-        en: "Model: (fetch to populate)"
-        zh-CN: "模型：(点击获取以加载)"
-      models_available:
-        en: "{count} models available — select one below:"
-        zh-CN: "有 {count} 个模型可用 — 请从下方选择："
-  confirm:
-    delete_mcp:
-      en: 'Delete MCP server {name}?'
-      zh-CN: '删除 MCP 服务器 {name}？'
-    delete_skill:
-      en: 'Uninstall skill {name}?'
-      zh-CN: '卸载技能 {name}？'
-    delete_api:
-      en: 'Remove API provider {name}?'
-      zh-CN: '移除 API 提供商 {name}？'
 
 general:
-  "yes":
-    en: "Yes"
-    zh-CN: "是"
-  "no":
-    en: "No"
-    zh-CN: "否"
-  cancel:
-    en: "Cancel"
-    zh-CN: "取消"
-  edit:
-    en: "Edit"
-    zh-CN: "编辑"
-  test:
-    en: "Test"
-    zh-CN: "测试"
-  models:
-    en: "Models"
-    zh-CN: "模型"
-  remove:
-    en: "Remove"
-    zh-CN: "移除"
-  add:
-    en: "Add"
-    zh-CN: "添加"
-  update:
-    en: "Update"
-    zh-CN: "更新"
   refresh:
     en: "Refresh"
     zh-CN: "刷新"
-  ok:
-    en: "OK"
-    zh-CN: "成功"
-  fail:
-    en: "Fail"
-    zh-CN: "失败"
-  search:
-    en: "Search..."
-    zh-CN: "搜索..."
 
-system:
-  title:
-    en: "System"
-    zh-CN: "系统"
-  overview:
-    en: "Overview"
-    zh-CN: "概览"
-  cpu:
-    en: "CPU"
-    zh-CN: "CPU"
-  cpu_overall:
-    en: "Overall %{pct}%"
-    zh-CN: "总使用率 %{pct}%"
-  cpu_load_avg:
-    en: "Load avg: %{l1}  %{l5}  %{l15}"
-    zh-CN: "平均负载: %{l1}  %{l5}  %{l15}"
-  memory:
-    en: "Memory"
-    zh-CN: "内存"
-  memory_used:
-    en: "%{used} / %{total} GB  (%{pct}%)"
-    zh-CN: "%{used} / %{total} GB  (%{pct}%)"
-  memory_cache:
-    en: "Cache %{cache} GB  ·  Buffers %{buffers} GB"
-    zh-CN: "缓存 %{cache} GB  ·  缓冲 %{buffers} GB"
-  swap:
-    en: "Swap"
-    zh-CN: "交换分区"
-  swap_used:
-    en: "%{used} / %{total} GB  (%{pct}%)"
-    zh-CN: "%{used} / %{total} GB  (%{pct}%)"
-  network:
-    en: "Network"
-    zh-CN: "网络"
-  disk:
-    en: "Disk"
-    zh-CN: "磁盘"
-
-agent:
-  not_installed:
-    en: "Not installed"
-    zh-CN: "未安装"
-  installed:
-    en: "Installed"
-    zh-CN: "已安装"
-  outdated:
-    en: "Outdated (v%{current} → v%{expected})"
-    zh-CN: "版本过旧 (v%{current} → v%{expected})"
-  binary_only:
-    en: "Binary only"
-    zh-CN: "仅二进制"
-  install:
-    en: "Install"
-    zh-CN: "安装"
-  update:
-    en: "Update"
-    zh-CN: "更新"
-  uninstall:
-    en: "Uninstall"
-    zh-CN: "卸载"
-  install_hook:
-    en: "Integrate"
-    zh-CN: "集成"
-
-mcp:
-  add_server:
-    en: "+ Add"
-    zh-CN: "+ 添加"
-  edit_server:
-    en: "Edit"
-    zh-CN: "编辑"
-  remove_server:
-    en: "Remove"
-    zh-CN: "移除"
-  enabled:
-    en: "Enabled"
-    zh-CN: "已启用"
-  disabled:
-    en: "Disabled"
-    zh-CN: "已禁用"
-  no_servers:
-    en: "No MCP servers configured"
-    zh-CN: "未配置 MCP 服务器"
-  per_agent_configs:
-    en: "Per-Agent MCP Configs"
-    zh-CN: "各代理 MCP 配置"
-  no_agent_configs:
-    en: "No agent MCP configs found"
-    zh-CN: "未找到代理 MCP 配置"
-  view_json:
-    en: "JSON"
-    zh-CN: "JSON"
-  view_preview:
-    en: "Preview"
-    zh-CN: "预览"
-  enable:
-    en: "Enable"
-    zh-CN: "启用"
-  disable:
-    en: "Disable"
-    zh-CN: "禁用"
-
-skills:
-  refresh:
-    en: "Refresh"
-    zh-CN: "刷新"
-  per_agent:
-    en: "Per-Agent Skills"
-    zh-CN: "各代理 Skills"
-  add_skill:
-    en: "+ Add Skill"
-    zh-CN: "+ 添加 Skill"
-  add_from_git:
-    en: "Git Clone"
-    zh-CN: "Git 克隆"
-  add_from_local:
-    en: "Local"
-    zh-CN: "本地"
-  link:
-    en: "Link"
-    zh-CN: "链接"
-  unlink:
-    en: "Disconnect"
-    zh-CN: "断开"
-  remove:
-    en: "Remove"
-    zh-CN: "移除"
-  move_to_zenix:
-    en: "Migrate"
-    zh-CN: "迁移"
-  no_skills:
-    en: "No skills found"
-    zh-CN: "未找到 Skills"
-  linked_to:
-    en: "Linked to %{count} agent(s)"
-    zh-CN: "已链接至 %{count} 个代理"
-  install_success:
-    en: "Installed: %{name}"
-    zh-CN: "已安装: %{name}"
-  install_fail:
-    en: "Install failed: %{err}"
-    zh-CN: "安装失败: %{err}"
-  installed:
-    en: "Installed"
-    zh-CN: "已安装"
-  market:
-    en: "Market"
-    zh-CN: "市场"
-  no_installed:
-    en: "No skills installed"
-    zh-CN: "未安装技能"
-  market_description:
-    en: "Browse and install skills from community sources."
-    zh-CN: "浏览并安装社区来源的技能。"
-  search:
-    en: "Search skills..."
-    zh-CN: "搜索技能..."
-  dialog_git_url:
-    en: "Git URL"
-    zh-CN: "Git 地址"
-  dialog_local_path:
-    en: "Local Path"
-    zh-CN: "本地路径"
-  market_loading:
-    en: "Loading market..."
-    zh-CN: "正在加载市场..."
-  market_empty:
-    en: "No market data loaded"
-    zh-CN: "未加载市场数据"
-  fetch_market:
-    en: "Fetch Market"
-    zh-CN: "获取市场"
-
-# ═══════════════════════════════════════════════════════════════════════
-# AI Orchestrator — multi-agent chat panel
-# ═══════════════════════════════════════════════════════════════════════
 ai:
   config_empty:
     en: "Please configure an API Provider first."
@@ -610,6 +112,9 @@ ai:
   config_empty_hint:
     en: "Add one to ~/.config/zenix/api-providers.json."
     zh-CN: "请在 ~/.config/zenix/api-providers.json 中添加一个。"
+  placeholder:
+    en: "Type a message... (@ to mention, / for commands)"
+    zh-CN: "输入消息... (@ 提及，/ 命令)"
   chat:
     title:
       en: "Chat"
@@ -617,21 +122,9 @@ ai:
     empty_hint:
       en: "Ask for a task: the orchestrator can start, drive and read the daemon's panes."
       zh-CN: "直接下达任务：编排器可以启停 daemon 的窗格并读取其输出。"
-    new_chat:
-      en: "New Chat"
-      zh-CN: "新会话"
     new_session:
       en: "+ New"
       zh-CN: "+ 新建"
-    history:
-      en: "History"
-      zh-CN: "历史"
-    search_btn:
-      en: "Search"
-      zh-CN: "搜索"
-    config_btn:
-      en: "Config"
-      zh-CN: "配置"
     send:
       en: "Send"
       zh-CN: "发送"
@@ -641,61 +134,7 @@ ai:
     streaming:
       en: "Thinking..."
       zh-CN: "思考中…"
-    messages:
-      en: "messages"
-      zh-CN: "条消息"
-    settings:
-      en: "⚙"
-      zh-CN: "⚙"
-  history:
-    title:
-      en: "Session History"
-      zh-CN: "会话历史"
   agent:
     monitor_title:
       en: "Active Agents"
       zh-CN: "运行中的 Agent"
-    running:
-      en: "Running %{n}"
-      zh-CN: "运行中 %{n}"
-    expand:
-      en: "Expand"
-      zh-CN: "展开"
-    collapse:
-      en: "Collapse"
-      zh-CN: "收起"
-  search:
-    icon:
-      en: "🔍"
-      zh-CN: "🔍"
-  config:
-    no_workspace:
-      en: "No workspace"
-      zh-CN: "无工作区"
-    configure:
-      en: "Configure"
-      zh-CN: "配置"
-  new_session:
-    en: "New Session"
-    zh-CN: "新建会话"
-  session_placeholder:
-    en: "New Chat"
-    zh-CN: "新会话"
-  model_select:
-    en: "Model"
-    zh-CN: "模型"
-  workspace_select:
-    en: "Workspace"
-    zh-CN: "工作区"
-  thinking_level:
-    en: "Thinking"
-    zh-CN: "思考级别"
-  send_message:
-    en: "Send message"
-    zh-CN: "发送消息"
-  placeholder:
-    en: "Type a message... (@ to mention, / for commands)"
-    zh-CN: "输入消息... (@ 提及，/ 命令)"
-  error_no_session:
-    en: "No active session"
-    zh-CN: "无活动会话"
