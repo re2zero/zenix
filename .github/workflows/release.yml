@@ -131,7 +131,7 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Build inside ${{ matrix.image }}
+      - name: Build and package (.deb) inside ${{ matrix.image }}
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
@@ -145,11 +145,16 @@ jobs:
                 sed -i "s|security.ubuntu.com|old-releases.ubuntu.com|g" /etc/apt/sources.list
                 apt-get update -qq
               }
+              # The runtime libraries sit next to the -dev ones because cargo-deb
+              # derives Depends from ldd: every DT_NEEDED entry has to resolve
+              # inside this container, otherwise the control file loses them.
               apt-get install -y -qq --no-install-recommends \
                 ca-certificates curl pkg-config make gcc g++ xz-utils \
                 libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev \
                 libfontconfig1-dev libfreetype6-dev libexpat1-dev \
-                libwayland-dev libegl1-mesa-dev libgl1-mesa-dev
+                libwayland-dev libegl1-mesa-dev libgl1-mesa-dev \
+                libxcb1 libxkbcommon0 libxkbcommon-x11-0 \
+                libfontconfig1 libfreetype6 libwayland-client0
 
               curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
               source "$HOME/.cargo/env"
@@ -161,49 +166,16 @@ jobs:
               cargo build --release
               cd herdr && cargo build --release && cd ..
               cp herdr/target/release/herdr target/release/ 2>/dev/null || true
+
+              # The .deb layout is [package.metadata.deb] in Cargo.toml — the one
+              # source of truth for the asset list and the control file. The
+              # release build above refreshed res/herdr, so --no-build is safe;
+              # --deb-version keeps the package version on the release tag.
+              cargo install cargo-deb
+              version="${GITHUB_REF_NAME#v}"
+              cargo deb --no-build --deb-version "${version}" \
+                -o "/workspace/zenix_${version}_${{ matrix.suffix }}_amd64.deb"
             '
-
-      - name: Package (.deb)
-        run: |
-          version="${GITHUB_REF_NAME#v}"
-          suffix="${{ matrix.suffix }}"
-          BINDIR="target/release"
-
-          D="zenix-deb/zenix_${version}_${suffix}_amd64"
-          mkdir -p "${D}/DEBIAN" "${D}/usr/bin" "${D}/usr/share/applications" \
-                   "${D}/usr/share/icons/hicolor/512x512/apps" \
-                   "${D}/usr/share/doc/zenix" \
-                   "${D}/usr/share/zenix/fonts" "${D}/usr/share/zenix/themes"
-
-          cp "${BINDIR}/zenix" "${D}/usr/bin/"
-          test -f "${BINDIR}/herdr" && cp "${BINDIR}/herdr" "${D}/usr/share/zenix/"
-
-          cp res/zenix.desktop "${D}/usr/share/applications/"
-          cp res/zenix.png     "${D}/usr/share/icons/hicolor/512x512/apps/"
-          cp assets/fonts/*.ttf   "${D}/usr/share/zenix/fonts/"
-          cp assets/themes/*.json "${D}/usr/share/zenix/themes/"
-          cp README.md "${D}/usr/share/doc/zenix/"
-          test -f LICENSE && cp LICENSE "${D}/usr/share/doc/zenix/" || true
-
-          INSTALLED_SIZE="$(du -sk "${D}" | cut -f1)"
-
-          > "${D}/DEBIAN/control"
-          echo "Package: zenix"                                 >> "${D}/DEBIAN/control"
-          echo "Version: ${version}"                            >> "${D}/DEBIAN/control"
-          echo "Maintainer: re2zero <yangwu@uniontech.com>"     >> "${D}/DEBIAN/control"
-          echo "Description: A cross-platform GPUI frontend for herdr terminal workspace manager" >> "${D}/DEBIAN/control"
-          echo " zenix is an extensible terminal workspace manager designed for AI coding agents." >> "${D}/DEBIAN/control"
-          echo " It provides workspace, tab, and pane management with a client-server"            >> "${D}/DEBIAN/control"
-          echo " architecture, plus system monitoring and plugin support."                         >> "${D}/DEBIAN/control"
-          echo "Section: utils"                      >> "${D}/DEBIAN/control"
-          echo "Priority: optional"                  >> "${D}/DEBIAN/control"
-          echo "Architecture: amd64"                 >> "${D}/DEBIAN/control"
-          echo "Installed-Size: ${INSTALLED_SIZE}"   >> "${D}/DEBIAN/control"
-          echo "Depends: libxcb1, libxkbcommon0, libxkbcommon-x11-0, libfreetype6, libfontconfig1, libwayland-client0, libegl1, libgl1" >> "${D}/DEBIAN/control"
-
-          dpkg-deb --build -Zgzip --root-owner-group \
-            "zenix-deb/zenix_${version}_${suffix}_amd64" \
-            "zenix_${version}_${suffix}_amd64.deb"
 
       - name: Build AppImage
         run: |
@@ -245,15 +217,27 @@ jobs:
               mkdir -p "${APPDIR}/usr/bin" \
                        "${APPDIR}/usr/share/applications" \
                        "${APPDIR}/usr/share/icons/hicolor/512x512/apps" \
-                       "${APPDIR}/usr/share/zenix/fonts" \
-                       "${APPDIR}/usr/share/zenix/themes"
+                       "${APPDIR}/usr/share/zenix" \
+                       "${APPDIR}/usr/share/doc/zenix/herdr" \
+                       "${APPDIR}/usr/share/doc/zenix/herdr-client" \
+                       "${APPDIR}/usr/share/doc/zenix/herdr-protocol"
 
               cp "${BINDIR}/zenix" "${APPDIR}/usr/bin/"
               test -f "${BINDIR}/herdr" && cp "${BINDIR}/herdr" "${APPDIR}/usr/share/zenix/"
               cp res/zenix.desktop "${APPDIR}/usr/share/applications/"
               cp res/zenix.png     "${APPDIR}/usr/share/icons/hicolor/512x512/apps/"
-              cp assets/fonts/*.ttf   "${APPDIR}/usr/share/zenix/fonts/"
-              cp assets/themes/*.json "${APPDIR}/usr/share/zenix/themes/"
+
+              # Same inventory as [package.metadata.deb]: license texts, no fonts
+              # and no themes — the Lilex faces are compiled into the binary and
+              # nothing reads assets/themes/.
+              cp LICENSE "${APPDIR}/usr/share/doc/zenix/copyright"
+              cp THIRD-PARTY.md "${APPDIR}/usr/share/doc/zenix/"
+              cp assets/fonts/OFL.txt "${APPDIR}/usr/share/doc/zenix/Lilex-OFL.txt"
+              cp herdr/LICENSE "${APPDIR}/usr/share/doc/zenix/herdr/LICENSE"
+              cp vendor/herdr-client/LICENSE-APACHE vendor/herdr-client/NOTICE.md \
+                "${APPDIR}/usr/share/doc/zenix/herdr-client/"
+              cp vendor/herdr-protocol/LICENSE-APACHE vendor/herdr-protocol/NOTICE.md \
+                "${APPDIR}/usr/share/doc/zenix/herdr-protocol/"
 
               cp res/zenix.png "${APPDIR}/zenix.png"
 
@@ -286,6 +270,14 @@ jobs:
               src_files="target/release/zenix"
               test -f target/release/herdr && src_files="$src_files target/release/herdr"
               src_files="$src_files res/zenix.desktop res/zenix.png"
+              # License texts, same inventory as [package.metadata.deb]. The spec
+              # has to install these into %{_docdir}/zenix/ for them to ship.
+              src_files="$src_files THIRD-PARTY.md assets/fonts/OFL.txt"
+              src_files="$src_files vendor/herdr-client/LICENSE-APACHE vendor/herdr-client/NOTICE.md"
+              src_files="$src_files vendor/herdr-protocol/LICENSE-APACHE vendor/herdr-protocol/NOTICE.md"
+              # Fonts and themes are still here only because zenix.spec installs
+              # them; the spec must drop those install lines (and the %files
+              # entries) before this list can match Cargo.toml.
               src_files="$src_files assets/fonts/ assets/themes/"
               test -f README.md && src_files="$src_files README.md"
               test -f LICENSE && src_files="$src_files LICENSE"
@@ -356,9 +348,10 @@ jobs:
               mkdir -p "${P}/usr/bin" \
                        "${P}/usr/share/applications" \
                        "${P}/usr/share/icons/hicolor/512x512/apps" \
-                       "${P}/usr/share/doc/zenix" \
-                       "${P}/usr/share/zenix/fonts" \
-                       "${P}/usr/share/zenix/themes"
+                       "${P}/usr/share/zenix" \
+                       "${P}/usr/share/doc/zenix/herdr" \
+                       "${P}/usr/share/doc/zenix/herdr-client" \
+                       "${P}/usr/share/doc/zenix/herdr-protocol"
 
               cp target/release/zenix "${P}/usr/bin/"
               if [ -f target/release/herdr ]; then
@@ -367,12 +360,19 @@ jobs:
 
               cp res/zenix.desktop "${P}/usr/share/applications/"
               cp res/zenix.png     "${P}/usr/share/icons/hicolor/512x512/apps/"
-              cp assets/fonts/*.ttf   "${P}/usr/share/zenix/fonts/"
-              cp assets/themes/*.json "${P}/usr/share/zenix/themes/"
+
+              # Same inventory as [package.metadata.deb]: license texts, no fonts
+              # and no themes — the Lilex faces are compiled into the binary and
+              # nothing reads assets/themes/.
               cp README.md "${P}/usr/share/doc/zenix/"
-              if [ -f LICENSE ]; then
-                cp LICENSE "${P}/usr/share/doc/zenix/"
-              fi
+              cp LICENSE "${P}/usr/share/doc/zenix/copyright"
+              cp THIRD-PARTY.md "${P}/usr/share/doc/zenix/"
+              cp assets/fonts/OFL.txt "${P}/usr/share/doc/zenix/Lilex-OFL.txt"
+              cp herdr/LICENSE "${P}/usr/share/doc/zenix/herdr/LICENSE"
+              cp vendor/herdr-client/LICENSE-APACHE vendor/herdr-client/NOTICE.md \
+                "${P}/usr/share/doc/zenix/herdr-client/"
+              cp vendor/herdr-protocol/LICENSE-APACHE vendor/herdr-protocol/NOTICE.md \
+                "${P}/usr/share/doc/zenix/herdr-protocol/"
 
               INSTALLED_SIZE="$(du -sk "${P}" | cut -f1)"
 

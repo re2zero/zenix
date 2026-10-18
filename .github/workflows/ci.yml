@@ -53,9 +53,10 @@ jobs:
             libgl1-mesa-dev
 
       - run: cargo check --workspace
-      # `-A dead_code` is for the keeper modules that are not wired up yet
-      # (the settings surfaces MCP, skills, agents and system monitoring used to
-      # have). Every other lint is an error, so drop the flag once that dead code
-      # is either connected or removed.
+      # `-A dead_code` is for the keeper modules that are still not wired up:
+      # skills, the agent detector and the system-info collector. The settings
+      # surfaces and the MCP orchestrator are mounted through the registry now,
+      # so they no longer contribute. Every other lint is an error, so drop the
+      # flag once that dead code is either connected or removed.
       - run: cargo clippy --workspace --all-targets -- -D warnings -A dead_code
       - run: cargo test --workspace

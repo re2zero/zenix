@@ -11,8 +11,12 @@
 #   # then adjust pkgver and source below
 #
 # Required packages (install before building):
-#   sudo pacman -S --needed base-devel rust libxcb \
+#   sudo pacman -S --needed base-devel rust zig git libxcb \
 #     libxkbcommon fontconfig freetype2 expat wayland libglvnd
+#
+# herdr (the submodule, built by build.rs) pins Zig 0.16.0 exactly — 0.17 is
+# rejected by its build.zig.zon, so the packaged zig may not be enough. If the
+# installed version differs, pass the toolchain with ZIG=/path/to/zig-0.16.0/zig.
 
 pkgname=zenix
 pkgver=0.1.0
@@ -32,6 +36,9 @@ depends=(
 makedepends=(
   'cargo'
   'git'
+  # build.rs builds the herdr submodule, and herdr 0.9.3 requires Zig 0.16.0
+  # exactly (0.17 is rejected by build.zig.zon).
+  'zig'
 )
 install=zenix.install
 source=(
@@ -79,23 +86,16 @@ package() {
   install -Dm644 "README.md" "${pkgdir}/usr/share/doc/zenix/README.md"
   install -Dm644 "LICENSE"  "${pkgdir}/usr/share/doc/zenix/LICENSE"
 
-  # Fonts
-  install -Dm644 "assets/fonts/Lilex-Regular.ttf" \
-    "${pkgdir}/usr/share/zenix/fonts/Lilex-Regular.ttf"
-  install -Dm644 "assets/fonts/Lilex-Bold.ttf" \
-    "${pkgdir}/usr/share/zenix/fonts/Lilex-Bold.ttf"
-  install -Dm644 "assets/fonts/Lilex-Italic.ttf" \
-    "${pkgdir}/usr/share/zenix/fonts/Lilex-Italic.ttf"
-  install -Dm644 "assets/fonts/Lilex-BoldItalic.ttf" \
-    "${pkgdir}/usr/share/zenix/fonts/Lilex-BoldItalic.ttf"
-
-  # Themes
-  install -Dm644 "assets/themes/gruvbox.json" \
-    "${pkgdir}/usr/share/zenix/themes/gruvbox.json"
-  install -Dm644 "assets/themes/solarized.json" \
-    "${pkgdir}/usr/share/zenix/themes/solarized.json"
-  install -Dm644 "assets/themes/tokyonight.json" \
-    "${pkgdir}/usr/share/zenix/themes/tokyonight.json"
-  install -Dm644 "assets/themes/matrix.json" \
-    "${pkgdir}/usr/share/zenix/themes/matrix.json"
+  # License texts — same inventory as [package.metadata.deb] in Cargo.toml.
+  # The Lilex faces are compiled into the binary, so no font files ship, but
+  # OFL-1.1 still requires the license text to travel with the font.
+  install -Dm644 "THIRD-PARTY.md" "${pkgdir}/usr/share/doc/zenix/THIRD-PARTY.md"
+  install -Dm644 "assets/fonts/OFL.txt" "${pkgdir}/usr/share/doc/zenix/Lilex-OFL.txt"
+  install -Dm644 "herdr/LICENSE" "${pkgdir}/usr/share/doc/zenix/herdr/LICENSE"
+  for crate in herdr-client herdr-protocol; do
+    install -Dm644 "vendor/${crate}/LICENSE-APACHE" \
+      "${pkgdir}/usr/share/doc/zenix/${crate}/LICENSE-APACHE"
+    install -Dm644 "vendor/${crate}/NOTICE.md" \
+      "${pkgdir}/usr/share/doc/zenix/${crate}/NOTICE.md"
+  done
 }
