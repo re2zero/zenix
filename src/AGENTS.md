@@ -3,13 +3,14 @@
 ## OVERVIEW
 Core GPUI application for zenix desktop frontend. All UI, state, IPC, and system integration.
 
-The UI is being rebuilt on **gpui-kit 0.7.3**: M1 deleted the old GPUI/PTY UI, M3 rebuilt native pane rendering, M4 built the workspace shell (`src/shell/`) on top of it, M5 made the client's settings real (`src/config/` + `src/shell/settings.rs`), M6 added the right-hand AI chat panel (`src/shell/chat.rs`, mounted through the registry's aside slot), M8a hosted the daemon's plugins (`src/plugins/`, the command palette), M8b mounts the UI a plugin declares for this client (`src/plugins/ui_manifest.rs` → registry contributions, data in `src/plugins/ui_data.rs`, drawn by `src/plugins/views.rs`), M8c opens the plugin surface outwards: every plugin action is an MCP tool (`src/mcp/plugin_tools.rs`) and a plugin directory is read, with its hazards, before it is linked (`src/plugins/trust.rs` + `trust_view.rs`), and M9 adds the post-rewrite capabilities: a project's layout as a file (`src/layout/`), the daemon's event stream beside the plugin hooks it fires (`src/events/`, the sidebar's `plugin-events` block), and the orchestration cockpit — the running agents as a fleet with their transitions (`src/fleet/`, drawn by `src/shell/cockpit.rs` under the chat panel). See `../.relay/PLAN.md` (local, gitignored) for the milestone plan.
+The UI is being rebuilt on **gpui-kit 0.7.3**: M1 deleted the old GPUI/PTY UI, M3 rebuilt native pane rendering, M4 built the workspace shell (`src/shell/`) on top of it, M5 made the client's settings real (`src/config/` + `src/shell/settings.rs`), M6 added the right-hand AI chat panel (`src/shell/chat.rs`, mounted through the registry's aside slot), M8a hosted the daemon's plugins (`src/plugins/`, the command palette), M8b mounts the UI a plugin declares for this client (`src/plugins/ui_manifest.rs` → registry contributions, data in `src/plugins/ui_data.rs`, drawn by `src/plugins/views.rs`), M8c opens the plugin surface outwards: every plugin action is an MCP tool (`src/mcp/plugin_tools.rs`) and a plugin directory is read, with its hazards, before it is linked (`src/plugins/trust.rs` + `trust_view.rs`), and M9 adds the post-rewrite capabilities: a project's layout as a file (`src/layout/`), the daemon's event stream beside the plugin hooks it fires (`src/events/`, the sidebar's `plugin-events` block), and the orchestration cockpit — the running agents as a fleet with their transitions (`src/fleet/`, drawn by `src/shell/cockpit.rs` under the chat panel) — plus the reverse MCP bridge: `zenix mcp-agent` serves exactly one tool over stdio (`src/mcp/agent_bridge.rs`, dispatched from `src/cli.rs`) so an agent with no shell can hand a prompt to another agent. See `../.relay/PLAN.md` (local, gitignored) for the milestone plan.
 
 ## STRUCTURE
 ```
 src/
 ├── main.rs            # Entry point: fonts, config init, keymap, window, ShellView
 ├── lib.rs             # Public SDK for plugins/sub-apps
+├── cli.rs             # The binary's non-window verbs (`zenix mcp-agent`, `--help`)
 ├── bin/zenix-probe.rs # Daemon endpoint smoke gate (Welcome+Snapshot+Surface)
 ├── util.rs            # Shared helpers (timestamp_now)
 ├── shell/             # Workspace shell (M4)
@@ -51,6 +52,7 @@ src/
 │   ├── mod.rs         # The orchestrator entry and its socket; the config-management half is gone
 │   ├── handler.rs     # The orchestrator's tools, plus every plugin action (M8c)
 │   ├── plugin_tools.rs# A plugin action as an MCP tool: naming, context, outcome
+│   ├── agent_bridge.rs# The reverse bridge: `zenix mcp-agent`, one tool, stdio (M9)
 │   └── sse.rs         # The unix-socket listener an agent connects to
 ├── config_adapters/   # Per-agent config adapters
 ├── i18n.rs            # rust-i18n wiring (strings in locales/zenix.yml)
@@ -71,6 +73,7 @@ src/
 | Plugin host | plugins/{host,api,model}.rs | `plugin.*` over the JSON API lane; reads are on demand, nothing is pushed |
 | Plugin-declared UI | plugins/{ui_manifest,ui_data,views}.rs | `zenix-ui.toml` → registry contributions, fed by a command's stdout JSON |
 | Plugin actions over MCP | mcp/plugin_tools.rs | `plugin.action.list` → tools, `invoke` → the log ring, stdout and exit code (M8c) |
+| Reverse MCP bridge | cli.rs, mcp/agent_bridge.rs | `zenix mcp-agent`: stdio MCP, exactly one tool (`agent_send`), no window and no daemon dependency beyond the API socket |
 | Pre-link trust review | plugins/trust.rs, plugins/trust_view.rs | Manifest → argv list + hazards; `plugin.link` only after it is read |
 | Plugin API surface | lib.rs | Public exports only |
 | Daemon smoke gate | bin/zenix-probe.rs | `cargo run --bin zenix-probe` |

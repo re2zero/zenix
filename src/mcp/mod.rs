@@ -4,10 +4,13 @@
 //! The config-management half (scan/read/add/edit/remove/toggle/test across the
 //! per-agent Claude-format configs and zenix's own NDJSON store) is gone: no
 //! settings page mounts an MCP panel through the contribution registry, so that
-//! half had no consumer. What is left is the path the shell actually runs.
+//! half had no consumer. What is left is the path the shell actually runs, plus
+//! the reverse bridge a separate process serves.
 //!
-//! Consumer: `src/shell/mod.rs` holds `start_orchestrator`'s return value, and
+//! Consumers: `src/shell/mod.rs` holds `start_orchestrator`'s return value, and
 //! that path runs through `server` → `handler` → `sse`/`plugin_tools`/`types`.
+//! `src/cli.rs` runs `agent_bridge` as `zenix mcp-agent`, which is the one place
+//! an external agent gets a tool from zenix.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -47,6 +50,7 @@ pub fn start_orchestrator(workspace_id: String) -> Option<server::McpOrchestrati
     ))
 }
 
+pub mod agent_bridge;
 pub mod handler;
 pub mod plugin_tools;
 pub mod server;

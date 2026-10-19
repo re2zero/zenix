@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::herdr::api::{ApiClient, decode_field, required_field};
+use crate::herdr::api::{ApiClient, DEFAULT_TIMEOUT, decode_field, required_field};
 
 /// The API-lane client, under the name the orchestration side has always used.
 pub type ApiEndpoint = ApiClient;
@@ -142,7 +142,40 @@ impl ApiEndpoint {
 
     /// Submit a prompt to an agent, identified by its name or its pane.
     pub fn prompt_agent(&self, target: &str, text: &str) -> Result<AgentInfo, EndpointError> {
-        let result = self.call("agent.prompt", json!({"target": target, "text": text}))?;
+        self.prompt_within(target, text, None, DEFAULT_TIMEOUT)
+    }
+
+    /// Submit a prompt and have the daemon hold the reply until the agent
+    /// reaches one of `until` — `idle`, `working`, `blocked` or `done`. The
+    /// daemon also enforces `timeout_ms`; the caller's deadline is that budget
+    /// plus slack, so the daemon's own `timeout` answer wins the race.
+    pub fn prompt_agent_and_wait(
+        &self,
+        target: &str,
+        text: &str,
+        until: &[&str],
+        timeout_ms: u64,
+    ) -> Result<AgentInfo, EndpointError> {
+        self.prompt_within(
+            target,
+            text,
+            Some(json!({"until": until, "timeout_ms": timeout_ms})),
+            Duration::from_millis(timeout_ms) + WAIT_SLACK,
+        )
+    }
+
+    fn prompt_within(
+        &self,
+        target: &str,
+        text: &str,
+        wait: Option<serde_json::Value>,
+        within: Duration,
+    ) -> Result<AgentInfo, EndpointError> {
+        let mut params = json!({"target": target, "text": text});
+        if let Some(wait) = wait {
+            params["wait"] = wait;
+        }
+        let result = self.call_within("agent.prompt", params, within)?;
         required_field(&result, "agent")
     }
 

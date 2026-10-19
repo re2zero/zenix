@@ -22,6 +22,7 @@ pub static TOKIO_HANDLE: OnceLock<tokio::runtime::Handle> = OnceLock::new();
 
 pub mod ai;
 pub mod api_provider;
+pub mod cli;
 pub mod client;
 pub mod config;
 pub mod config_adapters;
@@ -60,6 +61,12 @@ fn register_fonts(cx: &App) {
 /// Start the client: tracing, the tokio runtime, the config directory, the
 /// single-instance lock, then the GPUI application and its first window.
 pub fn run() {
+    // A verb on the command line means this process is a tool, not a window:
+    // it runs before anything about a desktop exists (`zenix mcp-agent`).
+    if let Some(code) = cli::dispatch() {
+        std::process::exit(code);
+    }
+
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
