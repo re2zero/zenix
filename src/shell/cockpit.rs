@@ -15,6 +15,7 @@
 //! orchestrator's job (`crate::ai::tools`, and the MCP tools built on them), and
 //! this block only ever watches, focuses and reads.
 
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{Theme, h_flex, v_flex};
 use gpui_kit::*;
 use herdr_client::protocol::ClientShellAgent;
@@ -33,10 +34,17 @@ pub(crate) const ASIDE: &[Builtin] = &[Builtin {
 /// How tall the block is. The fleet is bounded by the panel, not by the window:
 /// a long roster scrolls inside the block rather than pushing the chat panel
 /// out of the way.
-const HEIGHT: f32 = 320.;
+const HEIGHT: f32 = 340.;
 
 /// Transitions one agent's row names before the timeline is cut off.
 const HISTORY: usize = 2;
+
+/// Rows of the roster, and tail cards, the block draws. A fleet larger than this
+/// is counted in the header rather than pushed out of the block: the panel is a
+/// glance at what is happening, and the block has a fixed height it cannot grow
+/// past without taking the chat panel's room.
+const ROSTER_SHOWN: usize = 5;
+const TAILS_SHOWN: usize = 2;
 
 /// How much of a tail line a comparison card shows, in characters.
 const TAIL_COLUMNS: usize = 96;
@@ -46,17 +54,22 @@ fn render(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyElement {
     let Some(snapshot) = invocation.snapshot else {
         return div().into_any_element();
     };
+    // The block scrolls: a fleet of six with a comparison open is taller than
+    // the room it is given. `overflow_y_scrollbar` wraps the column in
+    // gpui-component's `Scrollable`, which owns the handle (per window, keyed by
+    // this id) and the wheel — tracking a handle of our own here would leave the
+    // wheel driving a different one.
     let mut column = v_flex()
         .id("cockpit")
         .flex_none()
         .max_h(px(HEIGHT))
         .w_full()
-        .overflow_hidden()
         .px_1()
         .py_1()
         .gap_0p5()
         .border_t_1()
         .border_color(theme.border)
+        .overflow_y_scrollbar()
         .child(head(invocation));
     if snapshot.agents.is_empty() {
         column = column.child(line(&t("fleet.empty"), theme.muted_foreground));
@@ -77,6 +90,7 @@ fn render(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyElement {
             blocked
                 .into_iter()
                 .chain(rest)
+                .take(ROSTER_SHOWN)
                 .enumerate()
                 .map(|(index, agent)| agent_row(index, agent, fleet, timeline, invocation)),
         );
@@ -98,12 +112,20 @@ fn head(invocation: &Invocation) -> AnyElement {
     let compare = dispatch.clone();
     let clear = dispatch;
     let summary = invocation.snapshot.map_or_else(String::new, |snapshot| {
-        rust_i18n::t!(
-            "fleet.summary",
-            agents = snapshot.agents.len(),
-            blocked = invocation.fleet.count("blocked")
+        let hidden = snapshot.agents.len().saturating_sub(ROSTER_SHOWN);
+        let more = if hidden > 0 {
+            format!(" +{hidden}")
+        } else {
+            String::new()
+        };
+        format!(
+            "{}{more}",
+            rust_i18n::t!(
+                "fleet.summary",
+                agents = snapshot.agents.len(),
+                blocked = invocation.fleet.count("blocked")
+            )
         )
-        .to_string()
     });
     h_flex()
         .w_full()
@@ -229,7 +251,7 @@ fn tails<'a>(
         .gap_1()
         .border_t_1()
         .border_color(theme.border);
-    for agent in agents {
+    for agent in agents.take(TAILS_SHOWN) {
         let Some(tail) = invocation.tails.get(&agent.pane_id) else {
             continue;
         };
