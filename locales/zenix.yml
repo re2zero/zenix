@@ -246,6 +246,29 @@ layout:
     en: "restored as tab %{tab}"
     zh-CN: "已恢复为标签 %{tab}"
 
+# The orchestration cockpit: the running agents as a fleet. `summary` counts what
+# the daemon reports now; the rows add what only this client watched — how long a
+# status has held, and what it came from.
+fleet:
+  title:
+    en: "Cockpit"
+    zh-CN: "编排驾驶舱"
+  summary:
+    en: "%{agents} agents · %{blocked} blocked"
+    zh-CN: "%{agents} 个 Agent · %{blocked} 个阻塞"
+  compare:
+    en: "compare"
+    zh-CN: "对比"
+  clear:
+    en: "clear"
+    zh-CN: "清空"
+  empty:
+    en: "No agents in flight."
+    zh-CN: "当前没有在运行的 Agent。"
+  tail_empty:
+    en: "(no output yet)"
+    zh-CN: "（暂无输出）"
+
 # The command directory. This section is keyed by each command's own id, which is
 # what `CommandInfo::label` resolves against, so a key that does not match an id
 # is a row that shows its key. `view.settings` repeats `settings.title` because
@@ -353,3 +376,10 @@ command:
     restore:
       en: "Restore Layout"
       zh-CN: "恢复布局"
+  fleet:
+    compare:
+      en: "Compare Agent Output"
+      zh-CN: "对比 Agent 输出"
+    clear:
+      en: "Clear the Cockpit Timeline"
+      zh-CN: "清空驾驶舱时间线"

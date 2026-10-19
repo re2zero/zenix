@@ -24,7 +24,7 @@
 //! subscription is a connection the daemon keeps writing on, so it hands the
 //! reader back instead of a decoded reply. Nothing else here knows about it.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -159,19 +159,15 @@ impl ApiClient {
         // No read timeout: a subscription is idle until the daemon has something
         // to say, and a stream that gave up after thirty seconds of quiet would
         // report a working daemon as gone.
-        let mut reader = BufReader::new(stream);
-        let mut line = String::new();
-        match reader.read_line(&mut line) {
-            Ok(0) => return Err(ApiError::NoReply),
-            Ok(_) => {}
-            Err(source) => return Err(io(source)),
-        }
-        let acknowledged = parse_reply(&line)?;
-        accept_subscription(&acknowledged)?;
-        Ok(ApiStream {
+        let mut subscription = ApiStream {
             path: self.socket.clone(),
-            reader,
-        })
+            stream,
+            pending: Vec::new(),
+        };
+        let first = subscription.next_line()?.ok_or(ApiError::NoReply)?;
+        let acknowledged = parse_reply(&first)?;
+        accept_subscription(&acknowledged)?;
+        Ok(subscription)
     }
 }
 
@@ -186,11 +182,25 @@ fn accept_subscription(result: &Value) -> Result<(), ApiError> {
     }
 }
 
+/// What a poll of a subscription produced.
+#[derive(Debug)]
+pub enum Line {
+    /// One line the daemon wrote.
+    Line(String),
+    /// Nothing arrived within the poll's deadline. The stream is still open.
+    Idle,
+    /// The daemon closed the connection.
+    Closed,
+}
+
 /// A subscription the daemon is still writing on.
 #[derive(Debug)]
 pub struct ApiStream {
     path: PathBuf,
-    reader: BufReader<UnixStream>,
+    stream: UnixStream,
+    /// Bytes read but not yet a whole line: a line can arrive in pieces, and a
+    /// poll that gives up half way through one must not lose it.
+    pending: Vec<u8>,
 }
 
 impl ApiStream {
@@ -198,14 +208,55 @@ impl ApiStream {
     /// connection, which is how a subscription ends: it stopped, or it dropped
     /// this subscriber for falling behind its retained history.
     pub fn next_line(&mut self) -> Result<Option<String>, ApiError> {
-        let mut line = String::new();
-        match self.reader.read_line(&mut line) {
-            Ok(0) => Ok(None),
-            Ok(_) => Ok(Some(line)),
-            Err(source) => Err(ApiError::Io {
-                path: self.path.clone(),
-                source,
-            }),
+        loop {
+            match self.poll_within(None)? {
+                Line::Line(line) => return Ok(Some(line)),
+                Line::Closed => return Ok(None),
+                // Without a deadline the read only returns for one of the two
+                // answers above.
+                Line::Idle => {}
+            }
+        }
+    }
+
+    /// The next line, or [`Line::Idle`] when `timeout` passes first. A
+    /// subscription whose set of interests changes — one connection cannot be
+    /// renegotiated — uses this to notice, close and subscribe again.
+    pub fn next_line_within(&mut self, timeout: Duration) -> Result<Line, ApiError> {
+        self.poll_within(Some(timeout))
+    }
+
+    fn poll_within(&mut self, timeout: Option<Duration>) -> Result<Line, ApiError> {
+        loop {
+            if let Some(end) = self.pending.iter().position(|byte| *byte == b'\n') {
+                let line: Vec<u8> = self.pending.drain(..=end).collect();
+                return Ok(Line::Line(String::from_utf8_lossy(&line).into_owned()));
+            }
+            self.stream
+                .set_read_timeout(timeout)
+                .map_err(|source| ApiError::Io {
+                    path: self.path.clone(),
+                    source,
+                })?;
+            let mut chunk = [0u8; 8192];
+            match self.stream.read(&mut chunk) {
+                Ok(0) => return Ok(Line::Closed),
+                Ok(read) => self.pending.extend_from_slice(&chunk[..read]),
+                Err(source)
+                    if matches!(
+                        source.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    ) =>
+                {
+                    return Ok(Line::Idle);
+                }
+                Err(source) => {
+                    return Err(ApiError::Io {
+                        path: self.path.clone(),
+                        source,
+                    });
+                }
+            }
         }
     }
 }

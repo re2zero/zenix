@@ -3,7 +3,7 @@
 ## OVERVIEW
 Core GPUI application for zenix desktop frontend. All UI, state, IPC, and system integration.
 
-The UI is being rebuilt on **gpui-kit 0.7.3**: M1 deleted the old GPUI/PTY UI, M3 rebuilt native pane rendering, M4 built the workspace shell (`src/shell/`) on top of it, M5 made the client's settings real (`src/config/` + `src/shell/settings.rs`), M6 added the right-hand AI chat panel (`src/shell/chat.rs`, mounted through the registry's aside slot), M8a hosted the daemon's plugins (`src/plugins/`, the command palette), M8b mounts the UI a plugin declares for this client (`src/plugins/ui_manifest.rs` → registry contributions, data in `src/plugins/ui_data.rs`, drawn by `src/plugins/views.rs`), and M8c opens the plugin surface outwards: every plugin action is an MCP tool (`src/mcp/plugin_tools.rs`) and a plugin directory is read, with its hazards, before it is linked (`src/plugins/trust.rs` + `trust_view.rs`). See `../.relay/PLAN.md` (local, gitignored) for the milestone plan.
+The UI is being rebuilt on **gpui-kit 0.7.3**: M1 deleted the old GPUI/PTY UI, M3 rebuilt native pane rendering, M4 built the workspace shell (`src/shell/`) on top of it, M5 made the client's settings real (`src/config/` + `src/shell/settings.rs`), M6 added the right-hand AI chat panel (`src/shell/chat.rs`, mounted through the registry's aside slot), M8a hosted the daemon's plugins (`src/plugins/`, the command palette), M8b mounts the UI a plugin declares for this client (`src/plugins/ui_manifest.rs` → registry contributions, data in `src/plugins/ui_data.rs`, drawn by `src/plugins/views.rs`), M8c opens the plugin surface outwards: every plugin action is an MCP tool (`src/mcp/plugin_tools.rs`) and a plugin directory is read, with its hazards, before it is linked (`src/plugins/trust.rs` + `trust_view.rs`), and M9 adds the post-rewrite capabilities: a project's layout as a file (`src/layout/`), the daemon's event stream beside the plugin hooks it fires (`src/events/`, the sidebar's `plugin-events` block), and the orchestration cockpit — the running agents as a fleet with their transitions (`src/fleet/`, drawn by `src/shell/cockpit.rs` under the chat panel). See `../.relay/PLAN.md` (local, gitignored) for the milestone plan.
 
 ## STRUCTURE
 ```
@@ -20,7 +20,10 @@ src/
 │   ├── panels.rs      # Built-in contributions (workspace panel, status segments)
 │   ├── settings.rs    # Built-in settings pages, mounted from the registry
 │   ├── chat.rs        # The right-hand panel's block: turns, tool cards, session store (M6)
+│   ├── cockpit.rs     # The cockpit block: the fleet, its transitions, the tail comparison (M9)
+│   ├── palette.rs     # The command palette: the directory + the daemon's plugin actions
 │   └── panel_resize.rs# A panel's edge: drag, reset, and what to save
+├── fleet/             # The cockpit's data: per-agent status transitions over the API lane (M9)
 ├── plugins/           # herdr plugin host (M8)
 │   ├── model.rs       # The daemon's plugin vocabulary, as plugin.* reports it
 │   ├── api.rs         # The plugin.* methods, one call each, over the JSON API lane
@@ -63,6 +66,8 @@ src/
 | UI contributions | shell/registry.rs, shell/panels.rs, shell/settings.rs | Panels, status segments and settings pages mount through the registry |
 | Client settings | config/mod.rs | Schema, schema diagnostics, and the config global |
 | AI chat panel | shell/chat.rs | Turns over `crate::ai`, tool cards, sessions in `ai/zenix-ai.db` |
+| Orchestration cockpit | shell/cockpit.rs, fleet/mod.rs | Fleet + transitions + tail comparison; data comes from per-pane `pane.agent_status_changed` subscriptions |
+| Daemon event stream | events/mod.rs, plugins/panels.rs | One session-wide subscription, drawn beside the plugin hooks (`plugin-events`) |
 | Plugin host | plugins/{host,api,model}.rs | `plugin.*` over the JSON API lane; reads are on demand, nothing is pushed |
 | Plugin-declared UI | plugins/{ui_manifest,ui_data,views}.rs | `zenix-ui.toml` → registry contributions, fed by a command's stdout JSON |
 | Plugin actions over MCP | mcp/plugin_tools.rs | `plugin.action.list` → tools, `invoke` → the log ring, stdout and exit code (M8c) |
@@ -131,6 +136,14 @@ src/
 - **Nothing is linked before its commands have been read** (`plugins/trust.rs`): linking hands herdr a
   directory whose commands run as the user. The review shows every argv the manifest declares plus
   the hazards worth stopping on; it reads one file and runs nothing.
+- **The cockpit follows the fleet one connection at a time** (`fleet/mod.rs`): `events.subscribe`
+  cannot be renegotiated, so a fleet that gained or lost an agent is followed by dropping that
+  connection and subscribing to the new pane set, which is why the worker polls its own watch
+  between reads (`ApiStream::next_line_within`, the one poll-shaped reader on that lane). The
+  per-pane stream also spells its kind with dots (`pane.agent_status_changed`) where the
+  session-wide one writes underscores (`pane_created`), and it replays nothing: a status that has
+  not moved since the client started watching has no transition and no start time, and the panel
+  says so instead of inventing one.
 - **No local PTY**: daemon panes are the only terminal source
 
 ## ANTI-PATTERNS

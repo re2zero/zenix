@@ -12,6 +12,7 @@
 //! stay upstream.
 
 pub(crate) mod chat;
+pub(crate) mod cockpit;
 pub(crate) mod commands;
 pub(crate) mod keymap;
 pub(crate) mod palette;
@@ -28,8 +29,10 @@ use gpui_kit::component::{ActiveTheme, ThemeMode, h_flex, v_flex};
 use gpui_kit::*;
 use herdr_client::protocol::{ClientShellSnapshot, ClientShellTab};
 
+use crate::ai::endpoint::{ApiEndpoint, ReadSource};
 use crate::config::{self, ASIDE_WIDTH_DEFAULT, ConfigStore, SIDEBAR_WIDTH_DEFAULT};
 use crate::events::{EventState, Stream};
+use crate::fleet::{FleetState, TAIL_ROWS, TAIL_SHOWN, Tail, Tails, tail_lines};
 use crate::herdr::Connection;
 use crate::herdr::api::ApiClient;
 use crate::layout::{self, LayoutState};
@@ -96,6 +99,13 @@ pub(crate) struct ShellView {
     /// reads the socket; a paint clones its ring rather than locking it.
     event_stream: Stream,
     events: EventState,
+    /// What each running agent is doing, and the transitions it went through:
+    /// one subscription per agent pane, opened and dropped as the fleet grows
+    /// and shrinks.
+    fleet_stream: crate::fleet::Stream,
+    fleet: FleetState,
+    /// The tails the cockpit last read, by pane. Read on demand, not pushed.
+    tails: Tails,
     /// The prefix has been typed and the next keystroke is its chord.
     prefix_armed: bool,
     /// The terminal's last drawn revision, so a paint that changed nothing
@@ -111,6 +121,8 @@ pub(crate) struct ShellView {
     _ui_data_pulses: Task<()>,
     /// The same, for the daemon's event stream.
     _event_pulses: Task<()>,
+    /// The same, for the fleet's status changes.
+    _fleet_pulses: Task<()>,
     /// The in-process MCP orchestrator agents connect to. Held (not read) so it
     /// lives exactly as long as the window: dropping the shell stops it.
     _orchestrator: Option<crate::mcp::server::McpOrchestrationServer>,
@@ -130,6 +142,23 @@ impl ShellView {
                 .and_then(layout_cwd)
                 .map(|cwd| cwd.to_owned());
             let drawn = revision != shell.drawn;
+            // The cockpit follows the fleet: the daemon pushes snapshots, so the
+            // agent list a new agent appears in is the same push that says which
+            // panes to listen to. A set that did not move costs nothing.
+            let panes: Vec<String> = terminal
+                .read(cx)
+                .live()
+                .snapshot
+                .as_deref()
+                .map(|snapshot| {
+                    snapshot
+                        .agents
+                        .iter()
+                        .map(|agent| agent.pane_id.clone())
+                        .collect()
+                })
+                .unwrap_or_default();
+            shell.fleet_stream.watch(panes);
             // A scan is a handful of directory checks and one small file, so it
             // runs when the focused pane's cwd moves and not on every revision.
             let mut scanned = false;
@@ -158,6 +187,8 @@ impl ShellView {
         // shell paints from rather than reads on demand.
         let (event_stream, event_pulses) = Stream::start();
         let event_pulses = Self::follow_events(cx, event_pulses);
+        let (fleet_stream, fleet_pulses) = crate::fleet::Stream::start();
+        let fleet_pulses = Self::follow_fleet(cx, fleet_pulses);
         let mut sidebar = SIDEBAR;
         sidebar.restore(config::get(cx).layout.sidebar_width);
         let mut aside = ASIDE;
@@ -186,6 +217,9 @@ impl ShellView {
             layout: LayoutState::default(),
             event_stream,
             events: EventState::default(),
+            fleet_stream,
+            fleet: FleetState::default(),
+            tails: Tails::new(),
             prefix_armed: false,
             drawn: 0,
             _observe: observe,
@@ -194,6 +228,7 @@ impl ShellView {
             _plugin_pulses: plugin_pulses,
             _ui_data_pulses: ui_data_pulses,
             _event_pulses: event_pulses,
+            _fleet_pulses: fleet_pulses,
             _orchestrator: orchestrator,
         };
         shell.sync_terminal_theme(cx);
@@ -319,6 +354,82 @@ impl ShellView {
         cx.notify();
     }
 
+    /// Repaint when an agent's status moved. The transitions are read from the
+    /// stream's own cache, which is the only copy of them there is.
+    fn follow_fleet(cx: &mut Context<Self>, pulses: crossbeam_channel::Receiver<()>) -> Task<()> {
+        cx.spawn(async move |shell, cx| {
+            loop {
+                let pulses = pulses.clone();
+                let alive = cx
+                    .background_executor()
+                    .spawn(async move { pulses.recv().is_ok() })
+                    .await;
+                if !alive {
+                    break;
+                }
+                let alive = shell
+                    .update(cx, |shell, cx| {
+                        shell.fleet = shell.fleet_stream.state();
+                        cx.notify();
+                    })
+                    .is_ok();
+                if !alive {
+                    break;
+                }
+            }
+        })
+    }
+
+    /// Read every agent's tail, so the fleet can be compared rather than
+    /// visited. The reads are a blocking call each on the API lane, so they run
+    /// off the UI thread; the panel shows what came back until it is asked
+    /// again.
+    fn compare_fleet(&mut self, cx: &mut Context<Self>) {
+        let Some(snapshot) = self.terminal.read(cx).live().snapshot.clone() else {
+            return;
+        };
+        let panes: Vec<String> = snapshot
+            .agents
+            .iter()
+            .map(|agent| agent.pane_id.clone())
+            .collect();
+        if panes.is_empty() {
+            return;
+        }
+        let endpoint = ApiEndpoint::local();
+        cx.spawn(async move |shell, cx| {
+            let tails = cx
+                .background_executor()
+                .spawn(async move {
+                    let now = crate::events::now_unix_ms();
+                    let mut tails = Tails::new();
+                    for pane_id in panes {
+                        let tail = match endpoint.read_pane(&pane_id, ReadSource::Recent, TAIL_ROWS)
+                        {
+                            Ok(read) => Tail {
+                                at_unix_ms: now,
+                                lines: tail_lines(&read.text, TAIL_SHOWN),
+                                error: None,
+                            },
+                            Err(error) => Tail {
+                                at_unix_ms: now,
+                                lines: Vec::new(),
+                                error: Some(error.to_string()),
+                            },
+                        };
+                        tails.insert(pane_id, tail);
+                    }
+                    tails
+                })
+                .await;
+            let _ = shell.update(cx, |shell, cx| {
+                shell.tails = tails;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     /// Ask the reader for the data these declarations name. `force` re-reads
     /// every one of them, which is what asking for a refresh means; otherwise
     /// only what has no answer yet is read.
@@ -422,6 +533,10 @@ impl ShellView {
             // makes a new tab.
             Command::SaveLayout => self.save_layout(cx),
             Command::RestoreLayout => self.restore_layout(cx),
+            // The cockpit's two local commands: read every tail, or drop the
+            // timeline read so far.
+            Command::CompareFleet => self.compare_fleet(cx),
+            Command::ClearFleet => self.clear_fleet(cx),
             // Every other command is the daemon's. A command marked local with
             // no arm above would silently do nothing, so say so in tests.
             command => {
@@ -628,6 +743,10 @@ impl ShellView {
             }
             ShellRequest::SaveLayout => self.save_layout(cx),
             ShellRequest::RestoreLayout => self.restore_layout(cx),
+            ShellRequest::CompareFleet => self.compare_fleet(cx),
+            // Clearing is local, like the events ring's: the subscription keeps
+            // running and the next status change arrives into an empty list.
+            ShellRequest::ClearFleet => self.clear_fleet(cx),
             // Clearing is local: the subscription keeps running, and the next
             // event arrives into an empty ring.
             ShellRequest::ClearEvents => {
@@ -708,6 +827,16 @@ impl ShellView {
             });
         })
         .detach();
+    }
+
+    /// Forget the transitions read so far. The subscriptions are untouched: the
+    /// next status change still arrives, which is what makes this a view rather
+    /// than a stop.
+    fn clear_fleet(&mut self, cx: &mut Context<Self>) {
+        self.fleet_stream.clear();
+        self.fleet = self.fleet_stream.state();
+        self.tails.clear();
+        cx.notify();
     }
 
     /// Whether an overlay of the shell's holds the keyboard right now. Each one
@@ -867,7 +996,9 @@ impl Render for ShellView {
                 | ShellRequest::ClosePluginTrust
                 | ShellRequest::SaveLayout
                 | ShellRequest::RestoreLayout
-                | ShellRequest::ClearEvents) => {
+                | ShellRequest::ClearEvents
+                | ShellRequest::CompareFleet
+                | ShellRequest::ClearFleet) => {
                     entity.update(cx, |shell, cx| {
                         shell.dispatch(request, window, cx);
                         cx.notify();
@@ -887,6 +1018,8 @@ impl Render for ShellView {
             ui_data: &self.ui_data,
             layout: &self.layout,
             events: &self.events,
+            fleet: &self.fleet,
+            tails: &self.tails,
             theme: &theme,
             dispatch: &dispatch,
         };

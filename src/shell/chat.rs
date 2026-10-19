@@ -389,7 +389,12 @@ impl Render for ChatPanel {
         }
 
         let mut column = v_flex()
-            .size_full()
+            // The panel's own height is what the cockpit below it leaves: the
+            // chat is the panel's main block, so it takes the remaining room
+            // rather than filling the whole panel and pushing the cockpit out.
+            .flex_1()
+            .min_h_0()
+            .w_full()
             .bg(theme.sidebar)
             .text_color(theme.foreground)
             .child(header(self, &theme, cx));

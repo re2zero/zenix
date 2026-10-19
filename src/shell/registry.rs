@@ -16,6 +16,7 @@ use herdr_client::protocol::{ClientShellSnapshot, PaneSurfaceFrame};
 
 use super::commands::Command;
 use crate::events::EventState;
+use crate::fleet::{FleetState, Tails};
 use crate::herdr::ConnectionStatus;
 use crate::layout::LayoutState;
 use crate::plugins::host::PluginState;
@@ -149,6 +150,11 @@ pub(crate) enum ShellRequest {
     RestoreLayout,
     /// Drop the events read so far. The subscription itself keeps running.
     ClearEvents,
+    /// Read the tail of every running agent's pane, for the cockpit's
+    /// side-by-side view.
+    CompareFleet,
+    /// Drop the fleet's transitions. The subscriptions themselves keep running.
+    ClearFleet,
 }
 
 /// A request's way back into the shell. Shared rather than borrowed because
@@ -179,6 +185,12 @@ pub(crate) struct Invocation<'a> {
     /// What the daemon has announced, newest first. Arrives on its own, unlike
     /// the plugin registry, so this is painted from a stream.
     pub(crate) events: &'a EventState,
+    /// What each running agent is doing, and the transitions it went through,
+    /// as far as this client has watched. Painted from a stream like `events`.
+    pub(crate) fleet: &'a FleetState,
+    /// The tails the cockpit last read, by pane. Read on demand, so this is a
+    /// snapshot of the last ask rather than a live view.
+    pub(crate) tails: &'a Tails,
     pub(crate) theme: &'a Theme,
     pub(crate) dispatch: &'a Dispatch,
 }
@@ -207,6 +219,9 @@ impl Registry {
             body: ContributionBody::SidebarItem(item.clone()),
         }));
         let mut aside = builtins(super::chat::ASIDE);
+        // The cockpit sits under the chat panel: the conversation is what the
+        // panel is opened for, and the fleet is what it is read against.
+        aside.extend(builtins(super::cockpit::ASIDE));
         aside.extend(ui.panels.iter().map(|panel| Contribution {
             id: panel.qualified_id(),
             body: ContributionBody::Panel(panel.clone()),

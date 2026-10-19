@@ -59,6 +59,10 @@ pub(crate) enum Command {
     SaveLayout,
     /// Local: restore the project's template as a new tab.
     RestoreLayout,
+    /// Local: read the tail of every agent's pane, for the cockpit.
+    CompareFleet,
+    /// Local: drop the fleet's transitions.
+    ClearFleet,
 }
 
 impl Command {
@@ -78,6 +82,8 @@ impl Command {
                 | Command::ClosePopup
                 | Command::SaveLayout
                 | Command::RestoreLayout
+                | Command::CompareFleet
+                | Command::ClearFleet
         )
     }
 }
@@ -312,6 +318,21 @@ pub(crate) const COMMANDS: &[CommandInfo] = &[
         direct: &[],
         prefixed: &[],
     },
+    // The cockpit's two commands. Its block sits beside the chat panel, so
+    // nothing binds these to a chord; the palette and the block's own buttons
+    // are the ways in.
+    CommandInfo {
+        command: Command::CompareFleet,
+        id: "fleet.compare",
+        direct: &[],
+        prefixed: &[],
+    },
+    CommandInfo {
+        command: Command::ClearFleet,
+        id: "fleet.clear",
+        direct: &[],
+        prefixed: &[],
+    },
 ];
 
 /// The daemon method a command becomes, or `None` when the shell runs it
@@ -454,7 +475,9 @@ pub(crate) fn request(command: Command, snapshot: &ClientShellSnapshot) -> Optio
         | Command::LinkPlugin
         | Command::ClosePopup
         | Command::SaveLayout
-        | Command::RestoreLayout => return None,
+        | Command::RestoreLayout
+        | Command::CompareFleet
+        | Command::ClearFleet => return None,
     })
 }
 
@@ -537,7 +560,9 @@ mod tests {
                 "plugins.link",
                 "view.close-popup",
                 "layout.save",
-                "layout.restore"
+                "layout.restore",
+                "fleet.compare",
+                "fleet.clear"
             ]
         );
         for info in COMMANDS {
