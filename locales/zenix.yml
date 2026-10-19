@@ -117,6 +117,9 @@ general:
   refresh:
     en: "Refresh"
     zh-CN: "刷新"
+  clear:
+    en: "Clear"
+    zh-CN: "清空"
 
 ai:
   config_empty:
@@ -174,6 +177,14 @@ shell:
     logs:
       en: "Plugin logs"
       zh-CN: "插件日志"
+    events:
+      en: "Events"
+      zh-CN: "事件"
+    # Shown against a plugin that hooks an event the daemon has announced since
+    # this client started, but has no run for in its log ring yet.
+    events-not-run:
+      en: "no run yet"
+      zh-CN: "尚未执行"
     commands:
       en: "commands"
       zh-CN: "命令"

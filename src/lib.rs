@@ -25,6 +25,7 @@ pub mod api_provider;
 pub mod client;
 pub mod config;
 pub mod config_adapters;
+pub mod events;
 pub mod herdr;
 pub mod i18n;
 pub mod layout;

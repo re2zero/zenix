@@ -101,6 +101,16 @@ impl PluginHost {
         let _ = self.commands.send(Request::RefreshLogs);
     }
 
+    /// Whether any installed plugin runs something for `event`. The event stream
+    /// asks this the moment one arrives, so the log ring is re-read while the
+    /// run it started is still the newest thing in it.
+    pub(crate) fn hooks_on(&self, event: &str) -> bool {
+        lock(&self.cache)
+            .plugins
+            .iter()
+            .any(|plugin| plugin.hooks_on(event))
+    }
+
     /// Link a plugin directory, enabled. The daemon reads the manifest; this
     /// side only names the directory, and the registry is re-read afterwards
     /// because the daemon pushes no change for a link.

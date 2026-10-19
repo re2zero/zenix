@@ -15,6 +15,7 @@ use super::model::{
     Availability, Context, InstalledPlugin, LogStatus, ManifestPane, OwnedPane, PluginAction,
     PluginCommandLog,
 };
+use crate::events::{self, Event};
 use crate::shell::registry::{Builtin, Invocation, ShellRequest};
 
 /// The sidebar's plugin blocks, mounted below the shell's own.
@@ -27,12 +28,20 @@ pub(crate) const PANELS: &[Builtin] = &[
         id: "plugin-logs",
         render: render_logs,
     },
+    Builtin {
+        id: "plugin-events",
+        render: render_events,
+    },
 ];
 
 /// How many log entries the sidebar shows. The daemon keeps a 200-entry ring
 /// for the whole session; the tail is what a glance needs, and the full ring
 /// belongs to a log surface of its own.
 const LOGS_SHOWN: usize = 5;
+
+/// How many events the sidebar shows. The stream keeps more ([`crate::events::RING`]);
+/// this is the part that fits beside the panels.
+const EVENTS_SHOWN: usize = 8;
 
 /// What is linked: each plugin, the actions it offers here, and the panes it
 /// declared. A click runs an action, or opens a pane, with the context the
@@ -104,6 +113,114 @@ fn render_logs(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyEleme
             .map(|(index, log)| log_row(index, log, invocation)),
     );
     column.into_any_element()
+}
+
+/// The daemon's event stream, and the hook chain each event starts.
+///
+/// This is the plugin author's debug surface. What a hook fires on, and what the
+/// daemon ran when it did, are two separate answers — the manifest's
+/// declarations are in the registry, the runs are in the log ring — and neither
+/// of them says what actually happened, in what order. Beside a streamed event,
+/// the plugins hooked on that very kind and the newest run the ring holds for
+/// them are what make the chain readable.
+fn render_events(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyElement {
+    let theme = invocation.theme;
+    let state = invocation.events;
+    if state.events.is_empty() && state.error.is_none() {
+        // Nothing has happened yet and the stream is healthy: a client nobody
+        // has touched has no chain to show.
+        return div().into_any_element();
+    }
+    let mut column = v_flex().w_full().px_1().py_1().gap_0p5().child(header(
+        "plugin-events-header",
+        &crate::i18n::t("shell.plugins.events"),
+        &crate::i18n::t("general.clear"),
+        ShellRequest::ClearEvents,
+        invocation,
+    ));
+    if let Some(error) = state.error.as_deref() {
+        column = column.child(line(error, theme.danger));
+    }
+    let now = events::now_unix_ms();
+    column = column.children(
+        state
+            .events
+            .iter()
+            .take(EVENTS_SHOWN)
+            .enumerate()
+            .map(|(index, event)| event_row(index, event, now, invocation)),
+    );
+    column.into_any_element()
+}
+
+/// One event: when it arrived, what it was, and what it was about — then, under
+/// it, the plugins that hook this kind and how their last run for it ended.
+fn event_row(index: usize, event: &Event, now: u64, invocation: &Invocation) -> AnyElement {
+    let theme = invocation.theme;
+    let mut row = v_flex()
+        .id(("plugin-event", index))
+        .w_full()
+        .px_1()
+        .py_0p5()
+        .gap_0p5()
+        .child(
+            h_flex()
+                .w_full()
+                .gap_1()
+                .items_center()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(events::age(now, event.at_unix_ms)),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.sidebar_foreground)
+                        .child(event.kind.clone()),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex_1()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(event.detail.clone()),
+                ),
+        );
+    row = row.children(
+        invocation
+            .plugins
+            .plugins
+            .iter()
+            .filter(|plugin| plugin.hooks_on(&event.kind))
+            .map(|plugin| {
+                line(
+                    &chain(plugin, &event.kind, invocation.plugins),
+                    theme.muted_foreground,
+                )
+            }),
+    );
+    row.into_any_element()
+}
+
+/// A hooked plugin and the outcome of its newest run for this event, as one
+/// line. `startup` is the daemon's name for a hook that no event triggers, so it
+/// never matches one of these.
+fn chain(plugin: &InstalledPlugin, event: &str, state: &PluginState) -> String {
+    let run = state
+        .logs
+        .iter()
+        .find(|log| log.plugin_id == plugin.plugin_id && log.event.as_deref() == Some(event));
+    match run {
+        Some(log) => format!("→ {} · {}", plugin.plugin_id, log.outcome()),
+        None => format!(
+            "→ {} · {}",
+            plugin.plugin_id,
+            crate::i18n::t("shell.plugins.events-not-run")
+        ),
+    }
 }
 
 /// One plugin: its name, where it came from, and what the daemon said about it.
@@ -444,7 +561,7 @@ mod tests {
     use super::*;
     use std::prelude::v1::test;
 
-    use crate::plugins::model::Placement;
+    use crate::plugins::model::{ManifestEventHook, Placement};
 
     fn plugin(id: &str) -> InstalledPlugin {
         InstalledPlugin {
@@ -459,6 +576,7 @@ mod tests {
                 title: "Project board".into(),
                 placement: Placement::Overlay,
             }],
+            events: Vec::new(),
             warnings: Vec::new(),
         }
     }
@@ -559,6 +677,51 @@ mod tests {
         assert_eq!(live.len(), 1);
         assert_eq!(live[0].pane_id, "w1:pA");
         assert!(live_plugin_panes(&state, None).is_empty());
+    }
+
+    /// The chain is one line: the plugin that hooks an event, and how its newest
+    /// run *for that event* ended. A run for another event must not be borrowed
+    /// to fill the line in — that would show an outcome that this event did not
+    /// cause.
+    #[test]
+    fn a_hooked_event_shows_the_outcome_of_its_own_newest_run() {
+        let mut hooked = plugin("a");
+        hooked.events = vec![ManifestEventHook {
+            on: "pane.exited".into(),
+        }];
+        let state = PluginState {
+            logs: vec![
+                log("a", Some("pane.exited"), LogStatus::Succeeded, Some(0)),
+                log("a", Some("pane.created"), LogStatus::Failed, Some(3)),
+            ],
+            ..PluginState::default()
+        };
+        assert!(chain(&hooked, "pane.exited", &state).contains("exit 0"));
+        let never_ran = chain(&hooked, "tab.created", &state);
+        assert!(never_ran.starts_with("→ a · "), "{never_ran}");
+        assert!(!never_ran.contains("exit"), "{never_ran}");
+    }
+
+    fn log(
+        plugin_id: &str,
+        event: Option<&str>,
+        status: LogStatus,
+        exit_code: Option<i32>,
+    ) -> PluginCommandLog {
+        PluginCommandLog {
+            log_id: "plugin-log-1".into(),
+            plugin_id: plugin_id.into(),
+            action_id: None,
+            event: event.map(str::to_owned),
+            command: vec!["true".into()],
+            status,
+            started_unix_ms: 1,
+            finished_unix_ms: Some(2),
+            exit_code,
+            stdout: None,
+            stderr: None,
+            error: None,
+        }
     }
 
     fn snapshot_with_pane(pane_id: &str) -> herdr_client::protocol::ClientShellSnapshot {

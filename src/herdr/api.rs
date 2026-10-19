@@ -19,6 +19,10 @@
 //! Everything here is synchronous and one-shot: a call connects, writes a line,
 //! reads a line and closes. There is no shared connection state to guard, which
 //! is why a caller can hold this by value and call it from a synchronous path.
+//!
+//! [`ApiClient::subscribe`] is the one method that does not close: a
+//! subscription is a connection the daemon keeps writing on, so it hands the
+//! reader back instead of a decoded reply. Nothing else here knows about it.
 
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
@@ -126,6 +130,82 @@ impl ApiClient {
             Ok(0) => Err(ApiError::NoReply),
             Ok(_) => parse_reply(&line),
             Err(source) => Err(io(source)),
+        }
+    }
+
+    /// Ask for a subscription and read the daemon's acknowledgement. The
+    /// connection stays open after that and carries event lines rather than
+    /// replies, which is why this hands back a reader: the daemon writes one
+    /// more reply only to refuse the subscription, and that refusal comes back
+    /// as an error here.
+    pub fn subscribe(&self, params: Value) -> Result<ApiStream, ApiError> {
+        let mut stream = UnixStream::connect(&self.socket).map_err(|source| ApiError::Connect {
+            path: self.socket.clone(),
+            source,
+        })?;
+        let io = |source: std::io::Error| ApiError::Io {
+            path: self.socket.clone(),
+            source,
+        };
+        stream
+            .set_write_timeout(Some(DEFAULT_TIMEOUT))
+            .map_err(io)?;
+        stream
+            .write_all(request_line("events.subscribe", params).as_bytes())
+            .map_err(io)?;
+        stream.write_all(b"\n").map_err(io)?;
+        stream.flush().map_err(io)?;
+
+        // No read timeout: a subscription is idle until the daemon has something
+        // to say, and a stream that gave up after thirty seconds of quiet would
+        // report a working daemon as gone.
+        let mut reader = BufReader::new(stream);
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => return Err(ApiError::NoReply),
+            Ok(_) => {}
+            Err(source) => return Err(io(source)),
+        }
+        let acknowledged = parse_reply(&line)?;
+        accept_subscription(&acknowledged)?;
+        Ok(ApiStream {
+            path: self.socket.clone(),
+            reader,
+        })
+    }
+}
+
+/// A subscription is only started once the daemon says so. Anything else on
+/// that first line means this is not the stream it was asked to be.
+fn accept_subscription(result: &Value) -> Result<(), ApiError> {
+    match result.get("type").and_then(Value::as_str) {
+        Some("subscription_started") => Ok(()),
+        other => Err(ApiError::Protocol(format!(
+            "the daemon answered {other:?} to a subscription"
+        ))),
+    }
+}
+
+/// A subscription the daemon is still writing on.
+#[derive(Debug)]
+pub struct ApiStream {
+    path: PathBuf,
+    reader: BufReader<UnixStream>,
+}
+
+impl ApiStream {
+    /// The next line the daemon wrote. `None` is the daemon closing the
+    /// connection, which is how a subscription ends: it stopped, or it dropped
+    /// this subscriber for falling behind its retained history.
+    pub fn next_line(&mut self) -> Result<Option<String>, ApiError> {
+        let mut line = String::new();
+        match self.reader.read_line(&mut line) {
+            Ok(0) => Ok(None),
+            Ok(_) => Ok(Some(line)),
+            Err(source) => Err(ApiError::Io {
+                path: self.path.clone(),
+                source,
+            }),
         }
     }
 }
@@ -266,6 +346,14 @@ mod tests {
     fn a_missing_required_field_is_a_protocol_error() {
         let error = required_field::<Value>(&json!({}), "plugins").expect_err("a protocol error");
         assert!(matches!(error, ApiError::Protocol(_)));
+    }
+
+    #[test]
+    fn only_a_started_subscription_opens_a_stream() {
+        let started = json!({"type": "subscription_started"});
+        assert!(accept_subscription(&started).is_ok());
+        let other = json!({"type": "pong"});
+        assert!(accept_subscription(&other).is_err());
     }
 
     #[test]

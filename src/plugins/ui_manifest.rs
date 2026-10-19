@@ -939,6 +939,7 @@ id = "ok"
             description: None,
             enabled,
             panes: Vec::new(),
+            events: Vec::new(),
             warnings: Vec::new(),
         }
     }

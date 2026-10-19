@@ -26,11 +26,35 @@ pub(crate) struct InstalledPlugin {
     pub(crate) enabled: bool,
     #[serde(default)]
     pub(crate) panes: Vec<ManifestPane>,
+    /// The manifest's `[[events]]` hooks: what the daemon runs when one of these
+    /// events happens, and nothing else in the reply says which events an
+    /// installed plugin is listening for.
+    #[serde(default)]
+    pub(crate) events: Vec<ManifestEventHook>,
     /// What the daemon found wrong at link or registry load: an undeclared
     /// platform list, an unknown event name. Non-fatal, and the only signal a
     /// user gets about either.
     #[serde(default)]
     pub(crate) warnings: Vec<String>,
+}
+
+impl InstalledPlugin {
+    /// Whether this plugin runs something for `event`. The name is the daemon's
+    /// dot name, which is what a manifest writes in `on` and what the log ring
+    /// records against the run; a disabled plugin hooks nothing, because the
+    /// daemon would not run it.
+    pub(crate) fn hooks_on(&self, event: &str) -> bool {
+        self.enabled && self.events.iter().any(|hook| hook.on == event)
+    }
+}
+
+/// One `[[events]]` hook: the event it fires on. The daemon also reports the
+/// command it would run, and this client does not read it: what a hook *would*
+/// run is the trust review's subject before the plugin is linked, and what it
+/// *did* run is in the log ring beside this.
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct ManifestEventHook {
+    pub(crate) on: String,
 }
 
 /// One pane a plugin declares. Opening it is `plugin.pane.open`, and the
@@ -403,6 +427,41 @@ mod tests {
         assert!(plugin.warnings.is_empty());
         assert!(plugin.enabled);
         assert_eq!(plugin.plugin_root, "/tmp/plugin");
+    }
+
+    #[test]
+    fn a_plugin_decodes_the_event_hooks_its_manifest_declares() {
+        let plugin: InstalledPlugin = serde_json::from_value(serde_json::json!({
+            "plugin_id": "zenix.m8probe",
+            "name": "Zenix M8 Probe",
+            "version": "0.1.0",
+            "manifest_path": "/tmp/plugin/herdr-plugin.toml",
+            "plugin_root": "/tmp/plugin",
+            "enabled": true,
+            "events": [{"on": "pane.exited", "command": ["sh", "hook.sh"]}],
+        }))
+        .expect("decodes a plugin that hooks an event");
+        assert_eq!(plugin.events.len(), 1);
+        assert_eq!(plugin.events[0].on, "pane.exited");
+        assert!(plugin.hooks_on("pane.exited"));
+        assert!(!plugin.hooks_on("pane.created"));
+    }
+
+    /// The daemon runs a disabled plugin's hooks for nobody, so a row that
+    /// claimed one would be naming a hook that never fires.
+    #[test]
+    fn a_disabled_plugin_hooks_nothing() {
+        let plugin: InstalledPlugin = serde_json::from_value(serde_json::json!({
+            "plugin_id": "zenix.m8probe",
+            "name": "Zenix M8 Probe",
+            "version": "0.1.0",
+            "manifest_path": "/tmp/plugin/herdr-plugin.toml",
+            "plugin_root": "/tmp/plugin",
+            "enabled": false,
+            "events": [{"on": "pane.exited", "command": ["sh", "hook.sh"]}],
+        }))
+        .expect("decodes a disabled plugin");
+        assert!(!plugin.hooks_on("pane.exited"));
     }
 
     #[test]

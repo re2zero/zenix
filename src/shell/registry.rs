@@ -15,6 +15,7 @@ use gpui_kit::*;
 use herdr_client::protocol::{ClientShellSnapshot, PaneSurfaceFrame};
 
 use super::commands::Command;
+use crate::events::EventState;
 use crate::herdr::ConnectionStatus;
 use crate::layout::LayoutState;
 use crate::plugins::host::PluginState;
@@ -146,6 +147,8 @@ pub(crate) enum ShellRequest {
     SaveLayout,
     /// Restore the project's template as a new tab in the focused workspace.
     RestoreLayout,
+    /// Drop the events read so far. The subscription itself keeps running.
+    ClearEvents,
 }
 
 /// A request's way back into the shell. Shared rather than borrowed because
@@ -173,6 +176,9 @@ pub(crate) struct Invocation<'a> {
     pub(crate) ui_data: &'a UiData,
     /// The project the focused pane's cwd belongs to, and the template found in it.
     pub(crate) layout: &'a LayoutState,
+    /// What the daemon has announced, newest first. Arrives on its own, unlike
+    /// the plugin registry, so this is painted from a stream.
+    pub(crate) events: &'a EventState,
     pub(crate) theme: &'a Theme,
     pub(crate) dispatch: &'a Dispatch,
 }

@@ -29,6 +29,7 @@ use gpui_kit::*;
 use herdr_client::protocol::{ClientShellSnapshot, ClientShellTab};
 
 use crate::config::{self, ASIDE_WIDTH_DEFAULT, ConfigStore, SIDEBAR_WIDTH_DEFAULT};
+use crate::events::{EventState, Stream};
 use crate::herdr::Connection;
 use crate::herdr::api::ApiClient;
 use crate::layout::{self, LayoutState};
@@ -91,6 +92,10 @@ pub(crate) struct ShellView {
     /// The project the focused pane belongs to and the layout template found in
     /// it. The walk and the read happen when the cwd moves, not every frame.
     layout: LayoutState,
+    /// The daemon's event stream, and the last of it this shell read. The worker
+    /// reads the socket; a paint clones its ring rather than locking it.
+    event_stream: Stream,
+    events: EventState,
     /// The prefix has been typed and the next keystroke is its chord.
     prefix_armed: bool,
     /// The terminal's last drawn revision, so a paint that changed nothing
@@ -104,6 +109,8 @@ pub(crate) struct ShellView {
     _plugin_pulses: Task<()>,
     /// The same, for the data a declaration's command printed.
     _ui_data_pulses: Task<()>,
+    /// The same, for the daemon's event stream.
+    _event_pulses: Task<()>,
     /// The in-process MCP orchestrator agents connect to. Held (not read) so it
     /// lives exactly as long as the window: dropping the shell stops it.
     _orchestrator: Option<crate::mcp::server::McpOrchestrationServer>,
@@ -147,6 +154,10 @@ impl ShellView {
         let plugin_pulses = Self::follow_plugins(cx, plugin_pulses);
         let (ui_data_host, ui_data_pulses) = UiDataHost::start();
         let ui_data_pulses = Self::follow_ui_data(cx, ui_data_pulses);
+        // The daemon's events arrive on their own, so this is the one stream the
+        // shell paints from rather than reads on demand.
+        let (event_stream, event_pulses) = Stream::start();
+        let event_pulses = Self::follow_events(cx, event_pulses);
         let mut sidebar = SIDEBAR;
         sidebar.restore(config::get(cx).layout.sidebar_width);
         let mut aside = ASIDE;
@@ -173,6 +184,8 @@ impl ShellView {
             ui_data_host,
             ui_data: UiData::default(),
             layout: LayoutState::default(),
+            event_stream,
+            events: EventState::default(),
             prefix_armed: false,
             drawn: 0,
             _observe: observe,
@@ -180,6 +193,7 @@ impl ShellView {
             _config: config,
             _plugin_pulses: plugin_pulses,
             _ui_data_pulses: ui_data_pulses,
+            _event_pulses: event_pulses,
             _orchestrator: orchestrator,
         };
         shell.sync_terminal_theme(cx);
@@ -269,6 +283,40 @@ impl ShellView {
                 }
             }
         })
+    }
+
+    /// Repaint when the daemon announced something. The events themselves are
+    /// read from the stream's ring, which is the only copy of them there is.
+    fn follow_events(cx: &mut Context<Self>, pulses: crossbeam_channel::Receiver<()>) -> Task<()> {
+        cx.spawn(async move |shell, cx| {
+            loop {
+                let pulses = pulses.clone();
+                let alive = cx
+                    .background_executor()
+                    .spawn(async move { pulses.recv().is_ok() })
+                    .await;
+                if !alive {
+                    break;
+                }
+                if shell.update(cx, |shell, cx| shell.read_events(cx)).is_err() {
+                    break;
+                }
+            }
+        })
+    }
+
+    /// Take what the stream has read and paint it. An event a plugin hooks is
+    /// the one moment the log ring has to be read again: the daemon has just run
+    /// something for it, and the ring's own fallback tick is a slow way to find
+    /// out what happened.
+    fn read_events(&mut self, cx: &mut Context<Self>) {
+        self.events = self.event_stream.state();
+        if let Some(event) = self.events.events.front()
+            && self.plugins.hooks_on(&event.kind)
+        {
+            self.plugins.refresh_logs();
+        }
+        cx.notify();
     }
 
     /// Ask the reader for the data these declarations name. `force` re-reads
@@ -580,6 +628,13 @@ impl ShellView {
             }
             ShellRequest::SaveLayout => self.save_layout(cx),
             ShellRequest::RestoreLayout => self.restore_layout(cx),
+            // Clearing is local: the subscription keeps running, and the next
+            // event arrives into an empty ring.
+            ShellRequest::ClearEvents => {
+                self.event_stream.clear();
+                self.events = self.event_stream.state();
+                cx.notify();
+            }
         }
     }
 
@@ -811,7 +866,8 @@ impl Render for ShellView {
                 | ShellRequest::LinkPlugin(_)
                 | ShellRequest::ClosePluginTrust
                 | ShellRequest::SaveLayout
-                | ShellRequest::RestoreLayout) => {
+                | ShellRequest::RestoreLayout
+                | ShellRequest::ClearEvents) => {
                     entity.update(cx, |shell, cx| {
                         shell.dispatch(request, window, cx);
                         cx.notify();
@@ -830,6 +886,7 @@ impl Render for ShellView {
             plugins: &plugins,
             ui_data: &self.ui_data,
             layout: &self.layout,
+            events: &self.events,
             theme: &theme,
             dispatch: &dispatch,
         };
