@@ -5,6 +5,7 @@
 //! Selection, links and accessibility live upstream; they return with the
 //! features that need them.
 
+pub(crate) mod cards;
 pub(crate) mod contrast;
 pub(crate) mod error;
 pub(crate) mod input;

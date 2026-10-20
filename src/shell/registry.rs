@@ -86,8 +86,6 @@ pub(crate) enum ContributionBody {
     Panel(Arc<PanelSpec>),
     /// A sidebar line that opens one of those panels.
     SidebarItem(Arc<SidebarItemSpec>),
-    /// A status-bar segment formatted from a declaration's data.
-    StatusItem(Arc<StatusItemSpec>),
 }
 
 /// A sidebar block, as a constant: what the shell mounts before any plugin is
@@ -99,11 +97,83 @@ pub(crate) struct SidebarBlock {
     pub(crate) render: fn(&Invocation<'_>, &mut Window, &mut App) -> AnyElement,
 }
 
-/// A status-bar segment, as a constant. Segments are not view-scoped: the bar
-/// is one row, always visible.
+/// A status-bar segment, as a constant: what the shell mounts before any
+/// plugin is read. Segments are not view-scoped: the bar is one row, always
+/// visible.
 pub(crate) struct Builtin {
     pub(crate) id: &'static str,
     pub(crate) render: fn(&Invocation<'_>, &mut Window, &mut App) -> AnyElement,
+}
+
+/// Which end of the status bar a segment sits at. A segment that reports what
+/// the session is (connection, counts, plugins, agents) opens the bar; one that
+/// reports what the client thinks (diagnostics, refusal, branch, key prefix)
+/// closes it, past the free space (PLAN.md §M11a).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum StatusAlign {
+    Start,
+    End,
+}
+
+/// One status-bar segment the bar can lay out: where it goes, and how it is
+/// built. `None` is a segment with nothing to say right now — the bar skips it,
+/// padding and divider included, so a quiet segment leaves no gap behind.
+pub(crate) struct StatusSegment {
+    pub(crate) id: &'static str,
+    pub(crate) align: StatusAlign,
+    pub(crate) render: fn(&Invocation<'_>, &mut Window, &mut App) -> Option<AnyElement>,
+}
+
+/// One segment the bar mounts, the shell's own or a plugin's.
+pub(crate) struct StatusContribution {
+    id: String,
+    align: StatusAlign,
+    body: StatusBody,
+}
+
+enum StatusBody {
+    Builtin(&'static StatusSegment),
+    Plugin(Arc<StatusItemSpec>),
+}
+
+impl StatusContribution {
+    fn builtin(segment: &'static StatusSegment) -> Self {
+        Self {
+            id: segment.id.to_owned(),
+            align: segment.align,
+            body: StatusBody::Builtin(segment),
+        }
+    }
+
+    /// A plugin's segment reports what the plugin is doing, which is part of
+    /// the session the bar opens with.
+    fn plugin(spec: &Arc<StatusItemSpec>) -> Self {
+        Self {
+            id: spec.qualified_id(),
+            align: StatusAlign::Start,
+            body: StatusBody::Plugin(spec.clone()),
+        }
+    }
+
+    pub(crate) fn id(&self) -> &str {
+        &self.id
+    }
+
+    pub(crate) fn align(&self) -> StatusAlign {
+        self.align
+    }
+
+    pub(crate) fn render(
+        &self,
+        invocation: &Invocation<'_>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> Option<AnyElement> {
+        match &self.body {
+            StatusBody::Builtin(segment) => (segment.render)(invocation, window, cx),
+            StatusBody::Plugin(spec) => Some(views::status_item(spec, invocation, window, cx)),
+        }
+    }
 }
 
 impl Contribution {
@@ -138,7 +208,6 @@ impl Contribution {
             ContributionBody::SidebarItem(spec) => {
                 views::sidebar_item(spec, invocation, window, cx)
             }
-            ContributionBody::StatusItem(spec) => views::status_item(spec, invocation, window, cx),
         }
     }
 }
@@ -267,7 +336,7 @@ pub(crate) struct Invocation<'a> {
 pub(crate) struct Registry {
     panels: Vec<Contribution>,
     aside: Vec<Contribution>,
-    status: Vec<Contribution>,
+    status: Vec<StatusContribution>,
     settings: &'static [SettingsSection],
 }
 
@@ -299,12 +368,11 @@ impl Registry {
             view: SidebarView::Workspaces,
             body: ContributionBody::Panel(panel.clone()),
         }));
-        let mut status = builtins(super::panels::STATUS_SEGMENTS);
-        status.extend(ui.status_items.iter().map(|item| Contribution {
-            id: item.qualified_id(),
-            view: SidebarView::Workspaces,
-            body: ContributionBody::StatusItem(item.clone()),
-        }));
+        let mut status: Vec<StatusContribution> = super::panels::STATUS_SEGMENTS
+            .iter()
+            .map(StatusContribution::builtin)
+            .collect();
+        status.extend(ui.status_items.iter().map(StatusContribution::plugin));
         Self {
             panels,
             aside,
@@ -326,8 +394,9 @@ impl Registry {
         &self.aside
     }
 
-    /// The status bar's segments, left to right.
-    pub(crate) fn status_segments(&self) -> &[Contribution] {
+    /// The status bar's segments, left to right. The bar splits them at
+    /// [`StatusAlign`], so this is the composition order on each side.
+    pub(crate) fn status_segments(&self) -> &[StatusContribution] {
         &self.status
     }
 
@@ -376,17 +445,22 @@ mod tests {
     fn built_in_contribution_ids_are_unique_within_their_slot() {
         let registry = registry();
         let panels = sidebar(&registry);
-        for slot in [
-            panels.as_slice(),
-            registry.aside_panels(),
-            registry.status_segments(),
-        ] {
+        for slot in [panels.as_slice(), registry.aside_panels()] {
             let mut ids: Vec<&str> = slot.iter().map(|item| item.id.as_str()).collect();
             let total = ids.len();
             ids.sort_unstable();
             ids.dedup();
             assert_eq!(ids.len(), total);
         }
+        let mut ids: Vec<&str> = registry
+            .status_segments()
+            .iter()
+            .map(StatusContribution::id)
+            .collect();
+        let total = ids.len();
+        ids.sort_unstable();
+        ids.dedup();
+        assert_eq!(ids.len(), total, "status segment ids are unique");
         let mut ids: Vec<&str> = registry
             .settings_sections()
             .iter()
@@ -451,7 +525,7 @@ format = "{count} WIP"
         let status: Vec<&str> = registry
             .status_segments()
             .iter()
-            .map(|item| item.id.as_str())
+            .map(StatusContribution::id)
             .collect();
         // The plugin's own row lands behind the host's blocks in the view the
         // host lives in, never in front of them.

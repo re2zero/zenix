@@ -14,6 +14,9 @@ use gpui_kit::*;
 // `when_some` and its siblings ride in on this trait, which the glob above does
 // not bring along.
 use gpui_kit::prelude::FluentBuilder as _;
+// The chrome's accent, which a focused pane's card takes: the terminal palette
+// has no accent of its own that matches the shell around it.
+use gpui_kit::component::ActiveTheme as _;
 use herdr_client::ConnectOptions;
 use herdr_client::ConnectTarget;
 use herdr_client::protocol::{
@@ -21,6 +24,7 @@ use herdr_client::protocol::{
 };
 
 use crate::herdr::{Connection, LiveState, decode};
+use crate::terminal::cards;
 use crate::terminal::painter::TerminalPainter;
 use crate::terminal::regions::{Look, Regions};
 use crate::terminal::split_drag::SplitDrag;
@@ -709,151 +713,239 @@ impl Render for TerminalView {
                     // press: a handle nobody can see is a handle nobody uses.
                     .when_some(self.split_cursor, |grid, cursor| grid.cursor(cursor))
                     .child(
+                        // Every card keeps this much background from the pane
+                        // area's edges, so the grid is laid out in what is
+                        // left: the padding is on the grid's own box, which is
+                        // what the viewport, the region views and every hit
+                        // test measure from. It is painted as the same channel
+                        // the gutters are, so a card sits on one surface
+                        // whether it is the only pane or one of four.
                         div()
-                            .relative()
                             .size_full()
-                            // The cached per-pane views paint the cells; the
-                            // canvas below them owns input, the whole-grid
-                            // fallback, and the IME composition.
-                            .children(regions)
+                            .p(px(cards::INSET))
+                            .bg(rgb(theme.surface))
                             .child(
-                                canvas(
-                                    move |bounds, window, cx| {
-                                        let cell_width = prepaint_painter.borrow_mut().cell_width(
-                                            &prepaint_font,
-                                            window,
-                                            cx,
-                                        );
-                                        if view_bounds.get() != bounds {
-                                            view_bounds.set(bounds);
-                                        }
-                                        // The number the painter lays cells out
-                                        // with is the one every hit test and
-                                        // region view must use, so it is kept
-                                        // for the frames after this one.
-                                        cell.set(cell_width);
-                                        let options = ConnectOptions {
-                                            surface_size: viewport(
-                                                bounds.size.width.to_f64() as f32,
-                                                bounds.size.height.to_f64() as f32,
-                                                cell_width,
-                                                CELL_HEIGHT,
-                                            ),
-                                            cell_width_px: cell_width.round().max(1.) as u32,
-                                            cell_height_px: CELL_HEIGHT.round() as u32,
-                                        };
-                                        if sent_options.get() != Some(options)
-                                            && connection.resize(options)
-                                        {
-                                            sent_options.set(Some(options));
-                                        }
-                                        cell_width
-                                    },
-                                    move |bounds, cell_width, window, cx| {
-                                        window.handle_input(
-                                            &focus,
-                                            ViewInputHandler::new(bounds, entity.clone()),
-                                            cx,
-                                        );
-                                        let Some(surface) = live.surface.clone() else {
-                                            return;
-                                        };
-                                        let mut painter = paint_painter.borrow_mut();
-                                        painter.set_appearance(
-                                            FONT_SIZE,
-                                            CELL_HEIGHT,
-                                            theme.clone(),
-                                        );
-                                        if whole {
-                                            painter.paint_frame(
-                                                &surface.frame,
-                                                bounds.origin,
-                                                Some(bounds.size),
-                                                cell_width,
-                                                &paint_font,
-                                                &[],
-                                                &surface.panes,
-                                                None,
-                                                None,
-                                                window,
-                                                cx,
-                                            );
-                                        }
-                                        // The daemon's popup carries its own grid and is
-                                        // not a pane of the composite one, so it paints
-                                        // as a floating layer over the cells, below the
-                                        // IME composition that closes this closure.
-                                        // `input_area` is its rectangle — input lands and
-                                        // the IME clips there — so the paint reuses that
-                                        // geometry rather than centring the popup a second
-                                        // time. The daemon's `width`/`height` only describe
-                                        // the size it asked for; the grid painted is the
-                                        // one the popup reports.
-                                        if let Some(popup) =
-                                            surface.popup.as_deref().filter(|popup| {
-                                                popup.frame.width > 0 && popup.frame.height > 0
-                                            })
-                                        {
-                                            let rect = input_area(
-                                                Some(&surface),
-                                                bounds,
-                                                cell_width,
-                                                CELL_HEIGHT,
-                                            );
-                                            // In paint order: an opaque backdrop, so no
-                                            // pane cell reads through; the popup's own
-                                            // cells; then a one-pixel border the cells
-                                            // would otherwise cover. Each quad and layer
-                                            // takes an order above what it overlaps, so
-                                            // this sequence is what stacks them.
-                                            window.paint_quad(fill(rect, rgb(theme.background)));
-                                            painter.paint_frame(
-                                                &popup.frame,
-                                                rect.origin,
-                                                Some(rect.size),
-                                                cell_width,
-                                                &paint_font,
-                                                &[],
-                                                &[],
-                                                None,
-                                                None,
-                                                window,
-                                                cx,
-                                            );
-                                            window.paint_quad(outline(
-                                                rect,
-                                                rgb(theme.muted),
-                                                BorderStyle::Solid,
-                                            ));
-                                        }
-                                        // Painted after the frame so the composition
-                                        // sits above the cells and the cursor.
-                                        if !marked.is_empty() {
-                                            painter.paint_composition(
-                                                &marked,
-                                                input_cursor_bounds(
-                                                    Some(&surface),
+                                div()
+                                    .relative()
+                                    .size_full()
+                                    // The cached per-pane views paint the cells;
+                                    // the canvas below them owns input, the
+                                    // whole-grid fallback, and the IME
+                                    // composition.
+                                    .children(regions)
+                                    .child(
+                                        canvas(
+                                            move |bounds, window, cx| {
+                                                let cell_width = prepaint_painter
+                                                    .borrow_mut()
+                                                    .cell_width(&prepaint_font, window, cx);
+                                                if view_bounds.get() != bounds {
+                                                    view_bounds.set(bounds);
+                                                }
+                                                // The number the painter lays cells out
+                                                // with is the one every hit test and
+                                                // region view must use, so it is kept
+                                                // for the frames after this one.
+                                                cell.set(cell_width);
+                                                let options = ConnectOptions {
+                                                    surface_size: viewport(
+                                                        bounds.size.width.to_f64() as f32,
+                                                        bounds.size.height.to_f64() as f32,
+                                                        cell_width,
+                                                        CELL_HEIGHT,
+                                                    ),
+                                                    cell_width_px: cell_width.round().max(1.)
+                                                        as u32,
+                                                    cell_height_px: CELL_HEIGHT.round() as u32,
+                                                };
+                                                if sent_options.get() != Some(options)
+                                                    && connection.resize(options)
+                                                {
+                                                    sent_options.set(Some(options));
+                                                }
+                                                cell_width
+                                            },
+                                            move |bounds, cell_width, window, cx| {
+                                                window.handle_input(
+                                                    &focus,
+                                                    ViewInputHandler::new(bounds, entity.clone()),
+                                                    cx,
+                                                );
+                                                let Some(surface) = live.surface.clone() else {
+                                                    return;
+                                                };
+                                                let mut painter = paint_painter.borrow_mut();
+                                                painter.set_appearance(
+                                                    FONT_SIZE,
+                                                    CELL_HEIGHT,
+                                                    theme.clone(),
+                                                );
+                                                if whole {
+                                                    painter.paint_frame(
+                                                        &surface.frame,
+                                                        bounds.origin,
+                                                        Some(bounds.size),
+                                                        cell_width,
+                                                        &paint_font,
+                                                        &[],
+                                                        &surface.panes,
+                                                        None,
+                                                        None,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                }
+                                                // Over the cells, under the popup: the
+                                                // pane cards are chrome the client owns,
+                                                // and they paint over cells the daemon
+                                                // spent on borders.
+                                                paint_cards(
+                                                    &surface,
                                                     bounds.origin,
                                                     cell_width,
-                                                    CELL_HEIGHT,
-                                                )
-                                                .origin,
-                                                input_area(
-                                                    Some(&surface),
-                                                    bounds,
-                                                    cell_width,
-                                                    CELL_HEIGHT,
-                                                ),
-                                                &paint_font,
-                                                window,
-                                            );
-                                        }
-                                    },
-                                )
-                                .size_full(),
+                                                    &theme,
+                                                    cx,
+                                                    window,
+                                                );
+                                                // The daemon's popup carries its own grid and is
+                                                // not a pane of the composite one, so it paints
+                                                // as a floating layer over the cells, below the
+                                                // IME composition that closes this closure.
+                                                // `input_area` is its rectangle — input lands and
+                                                // the IME clips there — so the paint reuses that
+                                                // geometry rather than centring the popup a second
+                                                // time. The daemon's `width`/`height` only describe
+                                                // the size it asked for; the grid painted is the
+                                                // one the popup reports.
+                                                if let Some(popup) =
+                                                    surface.popup.as_deref().filter(|popup| {
+                                                        popup.frame.width > 0
+                                                            && popup.frame.height > 0
+                                                    })
+                                                {
+                                                    let rect = input_area(
+                                                        Some(&surface),
+                                                        bounds,
+                                                        cell_width,
+                                                        CELL_HEIGHT,
+                                                    );
+                                                    // In paint order: an opaque backdrop, so no
+                                                    // pane cell reads through; the popup's own
+                                                    // cells; then a one-pixel border the cells
+                                                    // would otherwise cover. Each quad and layer
+                                                    // takes an order above what it overlaps, so
+                                                    // this sequence is what stacks them.
+                                                    window.paint_quad(fill(
+                                                        rect,
+                                                        rgb(theme.background),
+                                                    ));
+                                                    painter.paint_frame(
+                                                        &popup.frame,
+                                                        rect.origin,
+                                                        Some(rect.size),
+                                                        cell_width,
+                                                        &paint_font,
+                                                        &[],
+                                                        &[],
+                                                        None,
+                                                        None,
+                                                        window,
+                                                        cx,
+                                                    );
+                                                    window.paint_quad(outline(
+                                                        rect,
+                                                        rgb(theme.muted),
+                                                        BorderStyle::Solid,
+                                                    ));
+                                                }
+                                                // Painted after the frame so the composition
+                                                // sits above the cells and the cursor.
+                                                if !marked.is_empty() {
+                                                    painter.paint_composition(
+                                                        &marked,
+                                                        input_cursor_bounds(
+                                                            Some(&surface),
+                                                            bounds.origin,
+                                                            cell_width,
+                                                            CELL_HEIGHT,
+                                                        )
+                                                        .origin,
+                                                        input_area(
+                                                            Some(&surface),
+                                                            bounds,
+                                                            cell_width,
+                                                            CELL_HEIGHT,
+                                                        ),
+                                                        &paint_font,
+                                                        window,
+                                                    );
+                                                }
+                                            },
+                                        )
+                                        .size_full(),
+                                    ),
                             ),
                     ),
             )
+    }
+}
+
+/// One gap per pane, painted over the cells the daemon spent on borders, then
+/// one stroked rectangle per pane. The focused pane takes the chrome's accent,
+/// so the grid itself says which pane input reaches.
+///
+/// This paints only chrome: `cards::bands` is the border-and-gutter cells of a
+/// pane's rectangle, never a cell the pane's application wrote.
+fn paint_cards(
+    surface: &PaneSurfaceFrame,
+    origin: Point<Pixels>,
+    cell_width: f32,
+    theme: &Theme,
+    cx: &App,
+    window: &mut Window,
+) {
+    let cells = |rect: herdr_client::protocol::SurfaceRect| {
+        Bounds::new(
+            origin
+                + point(
+                    px(f32::from(rect.x) * cell_width),
+                    px(f32::from(rect.y) * CELL_HEIGHT),
+                ),
+            size(
+                px(f32::from(rect.width) * cell_width),
+                px(f32::from(rect.height) * CELL_HEIGHT),
+            ),
+        )
+    };
+    for pane in &surface.panes {
+        for band in cards::bands(pane)
+            .into_iter()
+            .filter(|band| band.width > 0 && band.height > 0)
+        {
+            // The gap is the palette's own panel tone: a card then sits a step
+            // above the channel between cards instead of level with it.
+            window.paint_quad(fill(cells(band), rgb(theme.surface)));
+        }
+    }
+    // A pane edge reads as an edge, not as a choice: the focused one takes the
+    // chrome's primary, the rest sit a step away from the channel.
+    let idle: Hsla = rgb(crate::terminal::theme::mix(
+        theme.background,
+        theme.foreground,
+        22,
+    ))
+    .into();
+    let focused = cx.theme().primary;
+    for pane in &surface.panes {
+        let bounds = cells(cards::content(pane)).dilate(px(1.));
+        window.paint_quad(quad(
+            bounds,
+            px(cards::RADIUS),
+            transparent_black(),
+            px(1.),
+            if pane.focused { focused } else { idle },
+            BorderStyle::Solid,
+        ));
     }
 }
 

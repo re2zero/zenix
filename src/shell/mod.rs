@@ -26,7 +26,8 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui_kit::component::{ActiveTheme, Icon, ThemeMode, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Icon, Theme, ThemeMode, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use herdr_client::protocol::{ClientShellSnapshot, ClientShellTab};
 
@@ -48,10 +49,14 @@ use commands::{COMMANDS, Command};
 use keymap::{Keymap, RunCommand};
 use palette::{Entry, Key as PaletteKey, Palette};
 use panel_resize::{ASIDE, AsideDrag, Edge, PanelWidth, SIDEBAR, SidebarDrag};
-use registry::{Dispatch, Invocation, Registry, ShellRequest, SidebarView};
+use registry::{
+    Dispatch, Invocation, Registry, ShellRequest, SidebarView, StatusAlign, StatusContribution,
+};
 
 const TITLE_BAR_HEIGHT: f32 = 34.;
 const TAB_STRIP_HEIGHT: f32 = 28.;
+/// The status bar's height: one row of 11px text with room for its dividers.
+const STATUS_BAR_HEIGHT: f32 = 26.;
 /// The activity rail: one column of view buttons, left of the sidebar.
 const RAIL_WIDTH: f32 = 44.;
 
@@ -1174,24 +1179,12 @@ impl Render for ShellView {
             .on_action(cx.listener(Self::run_command))
             .child(title_bar(&invocation, sidebar_visible))
             .child(body)
-            .child(
-                h_flex()
-                    .flex_none()
-                    .w_full()
-                    .px_2()
-                    .py_0p5()
-                    .gap_3()
-                    .items_center()
-                    .bg(theme.status_bar)
-                    .border_t_1()
-                    .border_color(theme.status_bar_border)
-                    .children(
-                        self.registry
-                            .status_segments()
-                            .iter()
-                            .map(|segment| segment.render(&invocation, window, cx)),
-                    ),
-            );
+            .child(status_bar(
+                self.registry.status_segments(),
+                &invocation,
+                window,
+                cx,
+            ));
         if self.palette.is_open() {
             let entries = self.palette_entries(cx);
             root = root.child(palette::overlay(
@@ -1225,6 +1218,84 @@ impl Render for ShellView {
         }
         root
     }
+}
+
+/// The status bar: the facts about the session open it, the client's own state
+/// closes it, and the free space between keeps the two apart. A segment with
+/// nothing to say mounts nothing — its padding and divider go with it — so the
+/// bar never shows a divider around an empty cell.
+fn status_bar(
+    segments: &[StatusContribution],
+    invocation: &Invocation<'_>,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let theme = invocation.theme;
+    let bar = h_flex()
+        .flex_none()
+        .w_full()
+        .h(px(STATUS_BAR_HEIGHT))
+        .overflow_hidden()
+        .items_center()
+        .bg(theme.status_bar)
+        .border_t_1()
+        .border_color(theme.status_bar_border);
+    let bar = status_side(
+        bar,
+        segments,
+        StatusAlign::Start,
+        invocation,
+        window,
+        cx,
+        theme,
+    );
+    // The bar's free space: everything after it is the client's own state.
+    let bar = bar.child(div().flex_1());
+    let bar = status_side(
+        bar,
+        segments,
+        StatusAlign::End,
+        invocation,
+        window,
+        cx,
+        theme,
+    );
+    bar.into_any_element()
+}
+
+/// One side of the bar, left to right in registry order.
+fn status_side(
+    mut bar: Div,
+    segments: &[StatusContribution],
+    align: StatusAlign,
+    invocation: &Invocation<'_>,
+    window: &mut Window,
+    cx: &mut App,
+    theme: &Theme,
+) -> Div {
+    let mut first = true;
+    for segment in segments.iter().filter(|item| item.align() == align) {
+        if let Some(element) = segment.render(invocation, window, cx) {
+            bar = bar.child(status_segment(element, first, theme));
+            first = false;
+        }
+    }
+    bar
+}
+
+/// One segment, with the divider that separates it from the segment before it
+/// on the same side of the bar.
+fn status_segment(element: AnyElement, first: bool, theme: &Theme) -> AnyElement {
+    h_flex()
+        .h_full()
+        .flex_none()
+        .items_center()
+        .px_2()
+        .when(!first, |row| {
+            row.border_l_1().border_color(theme.status_bar_border)
+        })
+        .child(element)
+        .into_any_element()
 }
 
 /// The activity rail: one button per sidebar view, the current one picked out.

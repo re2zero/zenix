@@ -14,7 +14,9 @@ use herdr_client::protocol::{
     AgentStatus, ClientShellAgent, ClientShellSnapshot, ClientShellWorkspace,
 };
 
-use super::registry::{Builtin, Invocation, ShellRequest, SidebarBlock, SidebarView};
+use super::registry::{
+    Invocation, ShellRequest, SidebarBlock, SidebarView, StatusAlign, StatusSegment,
+};
 use super::reorder::{self, WorkspaceDrag};
 use crate::herdr::ConnectionStatus;
 use crate::i18n::t;
@@ -40,27 +42,48 @@ pub(crate) const PANELS: &[SidebarBlock] = &[
     },
 ];
 
-/// The status bar's segments, left to right.
-pub(crate) const STATUS_SEGMENTS: &[Builtin] = &[
-    Builtin {
+/// The status bar's segments, per side and left to right (PLAN.md §M11a): what
+/// the session is opens the bar, what the client thinks closes it.
+pub(crate) const STATUS_SEGMENTS: &[StatusSegment] = &[
+    StatusSegment {
         id: "connection",
+        align: StatusAlign::Start,
         render: render_connection,
     },
-    Builtin {
-        id: "config",
-        render: render_config,
+    StatusSegment {
+        id: "counts",
+        align: StatusAlign::Start,
+        render: render_counts,
     },
-    Builtin {
+    StatusSegment {
         id: "grid",
+        align: StatusAlign::Start,
         render: render_grid,
     },
-    Builtin {
-        id: "prefix",
-        render: render_prefix,
+    StatusSegment {
+        id: "agents",
+        align: StatusAlign::Start,
+        render: render_agent_counts,
     },
-    Builtin {
+    StatusSegment {
+        id: "config",
+        align: StatusAlign::End,
+        render: render_config,
+    },
+    StatusSegment {
         id: "rejection",
+        align: StatusAlign::End,
         render: render_rejection,
+    },
+    StatusSegment {
+        id: "branch",
+        align: StatusAlign::End,
+        render: render_branch,
+    },
+    StatusSegment {
+        id: "prefix",
+        align: StatusAlign::End,
+        render: render_prefix,
     },
 ];
 
@@ -461,7 +484,7 @@ fn layout_detail(template: &Template) -> String {
     }
 }
 
-fn render_connection(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyElement {
+fn render_connection(invocation: &Invocation, _: &mut Window, _: &mut App) -> Option<AnyElement> {
     let theme = invocation.theme;
     let (label, color) = match (invocation.status, invocation.status_error) {
         (ConnectionStatus::Disconnected, Some(error)) => (
@@ -479,69 +502,163 @@ fn render_connection(invocation: &Invocation, _: &mut Window, _: &mut App) -> An
         }
         (ConnectionStatus::Connected, _) => (t("status.connected"), theme.success),
     };
-    div()
-        .text_xs()
-        .text_color(color)
-        .child(label)
-        .into_any_element()
+    Some(
+        h_flex()
+            .gap_1p5()
+            .items_center()
+            .child(div().size(px(6.)).rounded_full().bg(color))
+            .child(div().text_xs().text_color(color).child(label))
+            .into_any_element(),
+    )
+}
+
+/// What the session holds, the way the prototype reads it: a count per thing
+/// the daemon publishes, so the bar says how big the session is without opening
+/// a panel.
+fn render_counts(invocation: &Invocation, _: &mut Window, _: &mut App) -> Option<AnyElement> {
+    let theme = invocation.theme;
+    let snapshot = invocation.snapshot?;
+    let label = rust_i18n::t!(
+        "status.counts",
+        workspaces = counted(
+            snapshot.workspaces.len(),
+            "status.count.ws",
+            "status.count.ws"
+        ),
+        tabs = counted(
+            snapshot.tabs.len(),
+            "status.count.tab_one",
+            "status.count.tab_many"
+        ),
+        panes = counted(
+            snapshot.panes.len(),
+            "status.count.pane_one",
+            "status.count.pane_many"
+        ),
+    )
+    .to_string();
+    Some(
+        div()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(label)
+            .into_any_element(),
+    )
+}
+
+/// A count and its unit. rust-i18n 4 has no plural forms, so the singular is a
+/// key of its own and the choice is made here.
+fn counted(count: usize, one: &str, many: &str) -> String {
+    rust_i18n::t!(if count == 1 { one } else { many }, count = count).to_string()
 }
 
 /// The config file's problems, so a hand-edited value that had no effect is
 /// visible without opening the settings surface. The Config page of the
 /// settings panel lists them one by one.
-fn render_config(_: &Invocation, _: &mut Window, cx: &mut App) -> AnyElement {
+fn render_config(_: &Invocation, _: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let theme = cx.theme().clone();
     let diagnostics = crate::config::diagnostics(cx);
     if diagnostics.is_empty() {
-        return div().into_any_element();
+        return None;
     }
     let color = if diagnostics.iter().any(|item| item.is_blocking()) {
         theme.danger
     } else {
         theme.warning
     };
-    div()
-        .text_xs()
-        .text_color(color)
-        .child(
-            rust_i18n::t!("settings.config.problems_short", count = diagnostics.len()).to_string(),
-        )
-        .into_any_element()
+    Some(
+        div()
+            .text_xs()
+            .text_color(color)
+            .child(
+                rust_i18n::t!("settings.config.problems_short", count = diagnostics.len())
+                    .to_string(),
+            )
+            .into_any_element(),
+    )
 }
 
-fn render_grid(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyElement {
+fn render_grid(invocation: &Invocation, _: &mut Window, _: &mut App) -> Option<AnyElement> {
     let theme = invocation.theme;
-    let label = invocation
-        .surface
-        .as_ref()
-        .map(|surface| format!("{}x{} cells", surface.frame.width, surface.frame.height))
-        .unwrap_or_default();
-    div()
-        .text_xs()
-        .text_color(theme.muted_foreground)
-        .child(label)
-        .into_any_element()
+    let surface = invocation.surface?;
+    Some(
+        div()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(format!(
+                "{}x{} cells",
+                surface.frame.width, surface.frame.height
+            ))
+            .into_any_element(),
+    )
+}
+
+/// What the agents the fleet stream is watching are doing. The counts come
+/// from the same transitions the cockpit draws, so the bar and the fleet panel
+/// cannot disagree; a client that has watched no status yet says nothing.
+fn render_agent_counts(invocation: &Invocation, _: &mut Window, _: &mut App) -> Option<AnyElement> {
+    let theme = invocation.theme;
+    if invocation.fleet.current.is_empty() {
+        return None;
+    }
+    let running = invocation.fleet.count("running");
+    let blocked = invocation.fleet.count("blocked");
+    Some(
+        h_flex()
+            .gap_1p5()
+            .items_center()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(rust_i18n::t!("status.agents", running = running, blocked = blocked).to_string())
+            .into_any_element(),
+    )
 }
 
 /// Why the daemon refused the last command, so a command that needs a
 /// confirmation it cannot ask for is not simply dropped.
-fn render_rejection(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyElement {
+fn render_rejection(invocation: &Invocation, _: &mut Window, _: &mut App) -> Option<AnyElement> {
     let theme = invocation.theme;
-    match invocation.rejection {
-        Some(reason) => div()
+    let reason = invocation.rejection?;
+    Some(
+        div()
             .text_xs()
             .text_color(theme.danger)
             .child(reason.to_owned())
             .into_any_element(),
-        None => div().into_any_element(),
-    }
+    )
+}
+
+/// The focused workspace's branch, so the bar names the checkout the grid is
+/// working in without repeating the sidebar's whole detail line.
+fn render_branch(invocation: &Invocation, _: &mut Window, _: &mut App) -> Option<AnyElement> {
+    let theme = invocation.theme;
+    let branch = focused_branch(invocation.snapshot?)?;
+    Some(
+        div()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(branch.to_owned())
+            .into_any_element(),
+    )
+}
+
+/// The focused workspace's branch. A workspace that is not a checkout has none,
+/// and neither has a snapshot with no focused workspace.
+fn focused_branch(snapshot: &ClientShellSnapshot) -> Option<&str> {
+    let id = snapshot.focused_workspace_id.as_deref()?;
+    snapshot
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.workspace_id == id)
+        .and_then(|workspace| workspace.branch.as_deref())
 }
 
 /// The armed prefix, so a chord's first key is visible while it waits.
-fn render_prefix(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyElement {
+fn render_prefix(invocation: &Invocation, _: &mut Window, _: &mut App) -> Option<AnyElement> {
     let theme = invocation.theme;
-    match invocation.prefix {
-        Some(label) => div()
+    let label = invocation.prefix?;
+    Some(
+        div()
             .px_1()
             .rounded_sm()
             .text_xs()
@@ -549,8 +666,7 @@ fn render_prefix(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyEle
             .text_color(theme.accent_foreground)
             .child(label.to_owned())
             .into_any_element(),
-        None => div().into_any_element(),
-    }
+    )
 }
 
 #[cfg(test)]
@@ -567,6 +683,30 @@ mod tests {
         let snapshot = snapshot_with_panes();
         let workspace = &snapshot.workspaces[0];
         assert_eq!(workspace_detail(&snapshot, workspace), "/tmp/work · main");
+    }
+
+    #[test]
+    fn the_status_bar_names_the_focused_workspaces_branch() {
+        assert_eq!(focused_branch(&snapshot_with_panes()), Some("main"));
+        // A workspace that is not a checkout has no branch to name, so the
+        // segment stays off the bar rather than showing an empty cell.
+        let mut snapshot = snapshot_with_panes();
+        snapshot.workspaces[0].branch = None;
+        assert_eq!(focused_branch(&snapshot), None);
+        snapshot.focused_workspace_id = None;
+        assert_eq!(focused_branch(&snapshot), None);
+    }
+
+    #[test]
+    fn a_status_count_inflects_its_unit() {
+        assert_eq!(
+            counted(1, "status.count.tab_one", "status.count.tab_many"),
+            "1 tab"
+        );
+        assert_eq!(
+            counted(3, "status.count.tab_one", "status.count.tab_many"),
+            "3 tabs"
+        );
     }
 
     #[test]

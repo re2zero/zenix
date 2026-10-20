@@ -28,6 +28,33 @@ status:
   no_reason:
     en: "disconnected"
     zh-CN: "已断开"
+  # What the session holds. The counts are the daemon's own lists, so the bar
+  # cannot disagree with the sidebar about how many workspaces there are.
+  # rust-i18n has no plural forms: the singular is a key of its own, chosen in
+  # `panels::counted`, and `ws` is short enough not to inflect.
+  counts:
+    en: "%{workspaces} · %{tabs} · %{panes}"
+    zh-CN: "%{workspaces} · %{tabs} · %{panes}"
+  count:
+    ws:
+      en: "%{count} ws"
+      zh-CN: "%{count} 工作区"
+    tab_one:
+      en: "%{count} tab"
+      zh-CN: "%{count} 标签"
+    tab_many:
+      en: "%{count} tabs"
+      zh-CN: "%{count} 标签"
+    pane_one:
+      en: "%{count} pane"
+      zh-CN: "%{count} 面板"
+    pane_many:
+      en: "%{count} panes"
+      zh-CN: "%{count} 面板"
+  # The fleet stream's counts, the same statuses the cockpit draws.
+  agents:
+    en: "%{running} running · %{blocked} blocked"
+    zh-CN: "%{running} 运行中 · %{blocked} 等待输入"
 
 settings:
   title:
