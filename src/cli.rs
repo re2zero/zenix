@@ -11,6 +11,7 @@ zenix — terminal workspace manager
 Usage:
   zenix            Open (or attach to) the window
   zenix mcp-agent  Serve the one-tool MCP bridge on stdin/stdout
+  zenix --version  Print the version
   zenix --help     This text
 
 `zenix mcp-agent` is an MCP server for agent CLIs that speak MCP but have no
@@ -32,6 +33,10 @@ pub fn dispatch() -> Option<i32> {
             print!("{USAGE}");
             Some(0)
         }
+        "-V" | "--version" => {
+            println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+            Some(0)
+        }
         _ => None,
     }
 }
@@ -44,5 +49,12 @@ mod tests {
     fn the_usage_names_the_one_verb_a_client_launches() {
         assert!(USAGE.contains("zenix mcp-agent"));
         assert!(USAGE.contains("\"args\": [\"mcp-agent\"]"));
+    }
+
+    /// `--version` reads the manifest's own version, so there is no second
+    /// string that could drift from what the package is built as.
+    #[test]
+    fn the_usage_documents_the_version_verb() {
+        assert!(USAGE.contains("zenix --version"));
     }
 }
