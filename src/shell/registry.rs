@@ -27,6 +27,41 @@ use crate::plugins::ui_manifest::{
 };
 use crate::plugins::views;
 
+/// One sidebar view: what the activity rail switches between. Every sidebar
+/// block names the view it belongs to, so the rail decides what is on screen
+/// and no block is always-visible (PLAN.md §M11a).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum SidebarView {
+    Workspaces,
+    Agents,
+    Plugins,
+    Events,
+    Layout,
+}
+
+impl SidebarView {
+    /// The rail's buttons, top to bottom.
+    pub(crate) const ALL: [Self; 5] = [
+        Self::Workspaces,
+        Self::Agents,
+        Self::Plugins,
+        Self::Events,
+        Self::Layout,
+    ];
+
+    /// The button's glyph, inline so the rail needs no asset registration:
+    /// `stroke="currentColor"` takes the button's own colour.
+    pub(crate) fn icon(self) -> &'static [u8] {
+        match self {
+            Self::Workspaces => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg>"#,
+            Self::Agents => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 13h.01M15 13h.01"/></svg>"#,
+            Self::Plugins => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h3a2 2 0 0 1 2 2v1.5a1.5 1.5 0 1 0 3 0V6h1a2 2 0 0 1 2 2v3h-1.5a1.5 1.5 0 1 0 0 3H20v3a2 2 0 0 1-2 2h-3v-1.5a1.5 1.5 0 1 0-3 0V19H9a2 2 0 0 1-2-2v-3H5.5a1.5 1.5 0 1 1 0-3H7V6a2 2 0 0 1 2-2Z"/></svg>"#,
+            Self::Events => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.5-6 4 12 2.5-6h5"/></svg>"#,
+            Self::Layout => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M12 9v11"/></svg>"#,
+        }
+    }
+}
+
 /// One thing the shell mounts in a slot: a sidebar block, a block of the
 /// right-hand panel, a status-bar segment, and later an MCP tool.
 #[derive(Clone)]
@@ -34,6 +69,9 @@ pub(crate) struct Contribution {
     /// Stable id, unique within its slot. A built-in's is a constant; a
     /// plugin's is the idempotent key of its declaration.
     pub(crate) id: String,
+    /// Which sidebar view it belongs to. Only meaningful in the sidebar slot;
+    /// the other slots carry a view and never read it.
+    pub(crate) view: SidebarView,
     /// What it is made of. The shell's own blocks and a plugin's declarations
     /// differ only here, never in how they are mounted or dispatched.
     pub(crate) body: ContributionBody,
@@ -52,17 +90,35 @@ pub(crate) enum ContributionBody {
     StatusItem(Arc<StatusItemSpec>),
 }
 
-/// A built-in block, as a constant: what the shell mounts before any plugin is
-/// read.
+/// A sidebar block, as a constant: what the shell mounts before any plugin is
+/// read. A block names its view because the rail, not the block, decides what
+/// is on screen.
+pub(crate) struct SidebarBlock {
+    pub(crate) id: &'static str,
+    pub(crate) view: SidebarView,
+    pub(crate) render: fn(&Invocation<'_>, &mut Window, &mut App) -> AnyElement,
+}
+
+/// A status-bar segment, as a constant. Segments are not view-scoped: the bar
+/// is one row, always visible.
 pub(crate) struct Builtin {
     pub(crate) id: &'static str,
     pub(crate) render: fn(&Invocation<'_>, &mut Window, &mut App) -> AnyElement,
 }
 
 impl Contribution {
+    fn sidebar_block(block: &'static SidebarBlock) -> Self {
+        Self {
+            id: block.id.to_owned(),
+            view: block.view,
+            body: ContributionBody::Builtin(block.render),
+        }
+    }
+
     fn builtin(block: &'static Builtin) -> Self {
         Self {
             id: block.id.to_owned(),
+            view: SidebarView::Workspaces,
             body: ContributionBody::Builtin(block.render),
         }
     }
@@ -103,6 +159,9 @@ pub(crate) struct SettingsSection {
 /// dispatches a request has to own it for as long as the frame's tree lives.
 #[derive(Clone)]
 pub(crate) enum ShellRequest {
+    /// Bring one sidebar view to the front. The shell's own state, so the
+    /// daemon never hears it.
+    ShowView(SidebarView),
     /// A command from the directory.
     Command(Command),
     /// Bring a workspace to the front.
@@ -218,13 +277,16 @@ impl Registry {
     /// daemon lists them. Rebuilt whenever the plugin registry is re-read,
     /// because a plugin's contributions appear and vanish with the plugin.
     pub(crate) fn new(ui: &UiContributions) -> Self {
-        let mut panels = builtins(super::panels::PANELS);
+        let mut panels = sidebar_blocks(super::panels::PANELS);
         // The plugin host's own blocks are the shell's blocks: they report what
         // is installed and what it ran, and they mount before anything a plugin
         // declares about itself.
-        panels.extend(builtins(crate::plugins::panels::PANELS));
+        panels.extend(sidebar_blocks(crate::plugins::panels::PANELS));
         panels.extend(ui.sidebar_items.iter().map(|item| Contribution {
             id: item.qualified_id(),
+            // A plugin's sidebar item belongs to the plugin view: the shell's
+            // own views are about the daemon, this one is about what was added.
+            view: SidebarView::Plugins,
             body: ContributionBody::SidebarItem(item.clone()),
         }));
         let mut aside = builtins(super::chat::ASIDE);
@@ -233,11 +295,14 @@ impl Registry {
         aside.extend(builtins(super::cockpit::ASIDE));
         aside.extend(ui.panels.iter().map(|panel| Contribution {
             id: panel.qualified_id(),
+            // Not a sidebar slot: the field is unread there.
+            view: SidebarView::Workspaces,
             body: ContributionBody::Panel(panel.clone()),
         }));
         let mut status = builtins(super::panels::STATUS_SEGMENTS);
         status.extend(ui.status_items.iter().map(|item| Contribution {
             id: item.qualified_id(),
+            view: SidebarView::Workspaces,
             body: ContributionBody::StatusItem(item.clone()),
         }));
         Self {
@@ -248,9 +313,11 @@ impl Registry {
         }
     }
 
-    /// The sidebar's blocks, top to bottom.
-    pub(crate) fn panels(&self) -> &[Contribution] {
-        &self.panels
+    /// The sidebar's blocks, top to bottom, for one view. Filtering here is
+    /// what lets the rail own the sidebar's composition: the shell's render
+    /// never decides which block is visible.
+    pub(crate) fn panels_in(&self, view: SidebarView) -> impl Iterator<Item = &Contribution> {
+        self.panels.iter().filter(move |panel| panel.view == view)
     }
 
     /// The right-hand panel's blocks, top to bottom. Unlike the sidebar's,
@@ -268,6 +335,10 @@ impl Registry {
     pub(crate) fn settings_sections(&self) -> &'static [SettingsSection] {
         self.settings
     }
+}
+
+fn sidebar_blocks(blocks: &'static [SidebarBlock]) -> Vec<Contribution> {
+    blocks.iter().map(Contribution::sidebar_block).collect()
 }
 
 fn builtins(blocks: &'static [Builtin]) -> Vec<Contribution> {
@@ -291,11 +362,22 @@ mod tests {
         ))
     }
 
+    /// Every sidebar block the registry holds, in rail order: the slots are
+    /// view-scoped now, so a test that wants "the sidebar" has to name which.
+    fn sidebar(registry: &Registry) -> Vec<Contribution> {
+        SidebarView::ALL
+            .iter()
+            .flat_map(|view| registry.panels_in(*view))
+            .cloned()
+            .collect()
+    }
+
     #[test]
     fn built_in_contribution_ids_are_unique_within_their_slot() {
         let registry = registry();
+        let panels = sidebar(&registry);
         for slot in [
-            registry.panels(),
+            panels.as_slice(),
             registry.aside_panels(),
             registry.status_segments(),
         ] {
@@ -316,10 +398,17 @@ mod tests {
         assert_eq!(ids.len(), total, "settings section ids are unique");
     }
 
+    /// The rail switches between views, so a view with no block would be a
+    /// button that shows an empty sidebar.
     #[test]
-    fn the_shell_mounts_at_least_one_panel_and_one_status_segment() {
+    fn every_sidebar_view_has_at_least_one_block() {
         let registry = registry();
-        assert!(!registry.panels().is_empty());
+        for view in SidebarView::ALL {
+            assert!(
+                registry.panels_in(view).next().is_some(),
+                "{view:?} has no block"
+            );
+        }
         assert!(!registry.aside_panels().is_empty());
         assert!(!registry.status_segments().is_empty());
     }
@@ -350,9 +439,8 @@ id = "wip"
 format = "{count} WIP"
 "#,
         );
-        let sidebar: Vec<&str> = registry
-            .panels()
-            .iter()
+        let plugins_view: Vec<&str> = registry
+            .panels_in(SidebarView::Plugins)
             .map(|item| item.id.as_str())
             .collect();
         let aside: Vec<&str> = registry
@@ -365,20 +453,36 @@ format = "{count} WIP"
             .iter()
             .map(|item| item.id.as_str())
             .collect();
-        assert_eq!(sidebar.last().copied(), Some("a.b:sidebar:board"));
+        // The plugin's own row lands behind the host's blocks in the view the
+        // host lives in, never in front of them.
+        assert_eq!(plugins_view.last().copied(), Some("a.b:sidebar:board"));
+        assert_eq!(plugins_view.first().copied(), Some("plugins"));
         assert_eq!(aside.last().copied(), Some("a.b:panel:board"));
         assert_eq!(status.last().copied(), Some("a.b:status:wip"));
-        // The shell's own blocks stay in front of them, the plugin host's among
-        // them: a plugin's own row must not push the host's blocks out.
-        assert_eq!(sidebar.first().copied(), Some("workspaces"));
+        // Each view opens with the shell's own block for it.
+        assert_eq!(
+            registry
+                .panels_in(SidebarView::Workspaces)
+                .next()
+                .map(|item| item.id.as_str()),
+            Some("workspaces")
+        );
+        assert_eq!(
+            registry
+                .panels_in(SidebarView::Agents)
+                .next()
+                .map(|item| item.id.as_str()),
+            Some("agents")
+        );
+        assert_eq!(
+            registry
+                .panels_in(SidebarView::Events)
+                .next()
+                .map(|item| item.id.as_str()),
+            Some("plugin-events")
+        );
         assert_eq!(aside.first().copied(), Some("chat"));
         assert_eq!(status.first().copied(), Some("connection"));
-        let ids: Vec<&str> = registry
-            .panels()
-            .iter()
-            .map(|item| item.id.as_str())
-            .collect();
-        assert!(ids.contains(&"plugins"), "{ids:?}");
-        assert!(ids.contains(&"plugin-logs"), "{ids:?}");
+        assert!(plugins_view.contains(&"plugin-logs"), "{plugins_view:?}");
     }
 }

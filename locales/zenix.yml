@@ -195,6 +195,18 @@ shell:
     no_data:
       en: "no data"
       zh-CN: "无数据"
+    # A rail view with nothing to show still names itself: an empty column
+    # would read as a broken view rather than an empty one.
+    empty:
+      agents:
+        en: "No agents running"
+        zh-CN: "没有运行中的智能体"
+      plugins:
+        en: "No plugins linked"
+        zh-CN: "尚未链接插件"
+      events:
+        en: "Nothing has happened yet"
+        zh-CN: "尚无事件"
   trust:
     title:
       en: "Link a plugin — what it would run"

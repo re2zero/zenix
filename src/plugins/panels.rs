@@ -16,20 +16,25 @@ use super::model::{
     PluginCommandLog,
 };
 use crate::events::{self, Event};
-use crate::shell::registry::{Builtin, Invocation, ShellRequest};
+use crate::shell::registry::{Invocation, ShellRequest, SidebarBlock, SidebarView};
 
-/// The sidebar's plugin blocks, mounted below the shell's own.
-pub(crate) const PANELS: &[Builtin] = &[
-    Builtin {
+/// The sidebar's plugin blocks, each naming the rail view it belongs to. The
+/// plugin host lives in the plugin view; the event stream beside it is the
+/// events view's block.
+pub(crate) const PANELS: &[SidebarBlock] = &[
+    SidebarBlock {
         id: "plugins",
+        view: SidebarView::Plugins,
         render: render_plugins,
     },
-    Builtin {
+    SidebarBlock {
         id: "plugin-logs",
+        view: SidebarView::Plugins,
         render: render_logs,
     },
-    Builtin {
+    SidebarBlock {
         id: "plugin-events",
+        view: SidebarView::Events,
         render: render_events,
     },
 ];
@@ -50,7 +55,11 @@ fn render_plugins(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyEl
     let theme = invocation.theme;
     let state = invocation.plugins;
     if state.plugins.is_empty() && state.error.is_none() {
-        return div().into_any_element();
+        return crate::shell::panels::empty_view(
+            crate::i18n::t("shell.plugins.title"),
+            crate::i18n::t("shell.views.empty.plugins"),
+            theme,
+        );
     }
     let availability = Availability::of(invocation.snapshot);
     let mut column = v_flex().w_full().px_1().py_1().gap_0p5().child(header(
@@ -127,9 +136,13 @@ fn render_events(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyEle
     let theme = invocation.theme;
     let state = invocation.events;
     if state.events.is_empty() && state.error.is_none() {
-        // Nothing has happened yet and the stream is healthy: a client nobody
-        // has touched has no chain to show.
-        return div().into_any_element();
+        // Nothing has happened yet and the stream is healthy: the view still
+        // says so, because the rail can put it in front of the user.
+        return crate::shell::panels::empty_view(
+            crate::i18n::t("shell.plugins.events"),
+            crate::i18n::t("shell.views.empty.events"),
+            theme,
+        );
     }
     let mut column = v_flex().w_full().px_1().py_1().gap_0p5().child(header(
         "plugin-events-header",

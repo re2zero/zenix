@@ -26,7 +26,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui_kit::component::{ActiveTheme, ThemeMode, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Icon, ThemeMode, h_flex, v_flex};
 use gpui_kit::*;
 use herdr_client::protocol::{ClientShellSnapshot, ClientShellTab};
 
@@ -48,15 +48,20 @@ use commands::{COMMANDS, Command};
 use keymap::{Keymap, RunCommand};
 use palette::{Entry, Key as PaletteKey, Palette};
 use panel_resize::{ASIDE, AsideDrag, Edge, PanelWidth, SIDEBAR, SidebarDrag};
-use registry::{Dispatch, Invocation, Registry, ShellRequest};
+use registry::{Dispatch, Invocation, Registry, ShellRequest, SidebarView};
 
 const TITLE_BAR_HEIGHT: f32 = 34.;
 const TAB_STRIP_HEIGHT: f32 = 28.;
+/// The activity rail: one column of view buttons, left of the sidebar.
+const RAIL_WIDTH: f32 = 44.;
 
 pub(crate) struct ShellView {
     terminal: Entity<TerminalView>,
     connection: Connection,
     registry: Registry,
+    /// Which sidebar view is in front. The rail changes it; the daemon has no
+    /// opinion about what the client is looking at, so it is the shell's own.
+    rail: SidebarView,
     keymap: Keymap,
     /// How wide the sidebar is drawn. Local like its visibility, but saved to
     /// the config when a drag ends, and restored from it when the settings
@@ -205,6 +210,7 @@ impl ShellView {
             terminal,
             connection,
             registry: Registry::new(&plugins.state().ui),
+            rail: SidebarView::Workspaces,
             keymap: Keymap::default(),
             sidebar,
             sidebar_dragging: false,
@@ -700,6 +706,12 @@ impl ShellView {
     /// contribution's click arrive here, so the two cannot behave differently.
     fn dispatch(&mut self, request: ShellRequest, window: &mut Window, cx: &mut Context<Self>) {
         match request {
+            // The rail is the shell's own surface: showing another view moves
+            // nothing on the daemon, it only changes what the sidebar mounts.
+            ShellRequest::ShowView(view) => {
+                self.rail = view;
+                cx.notify();
+            }
             ShellRequest::FocusWorkspace(workspace_id) => {
                 self.connection.focus_workspace(&workspace_id)
             }
@@ -1021,7 +1033,8 @@ impl Render for ShellView {
                 // A plugin request leaves through the host, which owns the API
                 // lane; the dispatch is the shell's, so the two paths cannot
                 // part ways.
-                request @ (ShellRequest::MoveTab { .. }
+                request @ (ShellRequest::ShowView(_)
+                | ShellRequest::MoveTab { .. }
                 | ShellRequest::MoveWorkspace { .. }
                 | ShellRequest::PluginAction { .. }
                 | ShellRequest::OpenPluginPane { .. }
@@ -1070,6 +1083,9 @@ impl Render for ShellView {
             .sidebar
             .width(window.viewport_size().width.to_f64() as f32);
         let mut body = div().flex().flex_row().flex_1().min_h_0().w_full();
+        // The rail owns the sidebar's composition, so it comes first and the
+        // sidebar below mounts only the view it names.
+        body = body.child(rail(self.rail, &invocation));
         if sidebar_visible {
             body = body.child(
                 v_flex()
@@ -1095,8 +1111,7 @@ impl Render for ShellView {
                     ))
                     .children(
                         self.registry
-                            .panels()
-                            .iter()
+                            .panels_in(self.rail)
                             .map(|panel| panel.render(&invocation, window, cx)),
                     ),
             );
@@ -1210,6 +1225,53 @@ impl Render for ShellView {
         }
         root
     }
+}
+
+/// The activity rail: one button per sidebar view, the current one picked out.
+/// A click is a local request — the daemon has no opinion about what the client
+/// is looking at.
+fn rail(current: SidebarView, invocation: &Invocation) -> AnyElement {
+    let theme = invocation.theme;
+    v_flex()
+        .w(px(RAIL_WIDTH))
+        .h_full()
+        .flex_none()
+        .items_center()
+        .py_1()
+        .gap_0p5()
+        .bg(theme.sidebar)
+        .border_r_1()
+        .border_color(theme.sidebar_border)
+        .children(SidebarView::ALL.iter().map(|view| {
+            let view = *view;
+            let selected = view == current;
+            let dispatch = invocation.dispatch.clone();
+            div()
+                .id(("rail", view as usize))
+                .w(px(30.))
+                .h(px(30.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_md()
+                .cursor_pointer()
+                .bg(if selected {
+                    theme.sidebar_accent
+                } else {
+                    theme.sidebar
+                })
+                .text_color(if selected {
+                    theme.sidebar_primary
+                } else {
+                    theme.muted_foreground
+                })
+                .hover(|style| style.bg(theme.sidebar_accent))
+                .on_click(move |_, window, cx| {
+                    dispatch(ShellRequest::ShowView(view), window, cx);
+                })
+                .child(Icon::default().data(view.icon()).w(px(16.)).h(px(16.)))
+        }))
+        .into_any_element()
 }
 
 /// The cwd the layout block speaks for: the focused pane's, preferring the cwd the

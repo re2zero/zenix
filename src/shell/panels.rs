@@ -14,25 +14,28 @@ use herdr_client::protocol::{
     AgentStatus, ClientShellAgent, ClientShellSnapshot, ClientShellWorkspace,
 };
 
-use super::registry::{Builtin, Invocation, ShellRequest};
+use super::registry::{Builtin, Invocation, ShellRequest, SidebarBlock, SidebarView};
 use super::reorder::{self, WorkspaceDrag};
 use crate::herdr::ConnectionStatus;
 use crate::i18n::t;
 use crate::layout::{DIR, FILE_NAME, LayoutState, Template};
 use crate::plugins::panels::{header, line};
 
-/// The sidebar's blocks, top to bottom.
-pub(crate) const PANELS: &[Builtin] = &[
-    Builtin {
+/// The sidebar's blocks, each naming the rail view it belongs to.
+pub(crate) const PANELS: &[SidebarBlock] = &[
+    SidebarBlock {
         id: "workspaces",
+        view: SidebarView::Workspaces,
         render: render_workspaces,
     },
-    Builtin {
+    SidebarBlock {
         id: "agents",
+        view: SidebarView::Agents,
         render: render_agents,
     },
-    Builtin {
+    SidebarBlock {
         id: "layout",
+        view: SidebarView::Layout,
         render: render_layout,
     },
 ];
@@ -60,6 +63,30 @@ pub(crate) const STATUS_SEGMENTS: &[Builtin] = &[
         render: render_rejection,
     },
 ];
+
+/// A view with nothing to show still names itself: the rail can switch to an
+/// empty view, and a blank column reads as a broken one rather than an empty
+/// one. Shared with the plugin host's blocks for the same reason.
+pub(crate) fn empty_view(title: String, body: String, theme: &Theme) -> AnyElement {
+    v_flex()
+        .w_full()
+        .px_2()
+        .py_1()
+        .gap_1()
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(title),
+        )
+        .child(
+            div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(body),
+        )
+        .into_any_element()
+}
 
 /// Every workspace the daemon knows, the focused one picked out. Selection is
 /// not a local field: it is the `focused` flag the snapshot carries.
@@ -224,11 +251,19 @@ fn status_dot(status: AgentStatus, theme: &Theme) -> impl IntoElement {
 fn render_agents(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyElement {
     let theme = invocation.theme;
     let Some(snapshot) = invocation.snapshot else {
-        return div().into_any_element();
+        return empty_view(
+            t("ai.agent.monitor_title"),
+            t("shell.views.empty.agents"),
+            theme,
+        );
     };
     let agents = ordered_agents(snapshot);
     if agents.is_empty() {
-        return div().into_any_element();
+        return empty_view(
+            t("ai.agent.monitor_title"),
+            t("shell.views.empty.agents"),
+            theme,
+        );
     }
     let column = v_flex()
         .w_full()
