@@ -109,6 +109,15 @@ pub(crate) enum ShellRequest {
     FocusWorkspace(String),
     /// Bring a tab to the front.
     FocusTab(String),
+    /// Move a tab to a gap in its workspace's order, as `tab.move` counts it:
+    /// with the moving tab still in place.
+    MoveTab { tab_id: String, insert_index: usize },
+    /// Move a workspace to a gap in the sidebar's order, as `workspace.move`
+    /// counts it: with the moving workspace still in place.
+    MoveWorkspace {
+        workspace_id: String,
+        insert_index: usize,
+    },
     /// Focus a pane, which also brings its workspace and tab forward.
     FocusPane(String),
     /// Run one plugin action. `source` names where the click came from, which

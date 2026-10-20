@@ -15,6 +15,7 @@ use herdr_client::protocol::{
 };
 
 use super::registry::{Builtin, Invocation, ShellRequest};
+use super::reorder::{self, WorkspaceDrag};
 use crate::herdr::ConnectionStatus;
 use crate::i18n::t;
 use crate::layout::{DIR, FILE_NAME, LayoutState, Template};
@@ -72,7 +73,9 @@ fn render_workspaces(invocation: &Invocation, _: &mut Window, _: &mut App) -> An
             .text_color(theme.muted_foreground)
             .child(t("shell.workspaces")),
     );
+    let mut count = 0;
     if let Some(snapshot) = invocation.snapshot {
+        count = snapshot.workspaces.len();
         column = column.children(
             snapshot
                 .workspaces
@@ -81,7 +84,23 @@ fn render_workspaces(invocation: &Invocation, _: &mut Window, _: &mut App) -> An
                 .map(|(index, workspace)| workspace_row(index, workspace, snapshot, invocation)),
         );
     }
-    column.into_any_element()
+    // The column is the gap after the last row: a drop no row claimed lands
+    // here and appends, which is how a workspace reaches the end.
+    let dispatch = invocation.dispatch.clone();
+    column
+        .on_drop(move |drag: &WorkspaceDrag, window, cx| {
+            if let Some(insert_index) = reorder::gap_at_end(drag.from, count) {
+                dispatch(
+                    ShellRequest::MoveWorkspace {
+                        workspace_id: drag.workspace_id.clone(),
+                        insert_index,
+                    },
+                    window,
+                    cx,
+                );
+            }
+        })
+        .into_any_element()
 }
 
 fn workspace_row(
@@ -92,6 +111,7 @@ fn workspace_row(
 ) -> AnyElement {
     let theme = invocation.theme;
     let dispatch = invocation.dispatch.clone();
+    let drop = invocation.dispatch.clone();
     let workspace_id = workspace.workspace_id.clone();
     let selected = workspace.focused;
     let name = workspace.label.clone();
@@ -111,6 +131,27 @@ fn workspace_row(
                 window,
                 cx,
             );
+        })
+        // A row carried onto another lands in the gap before it; the gaps
+        // around its own place change nothing.
+        .on_drag(
+            WorkspaceDrag {
+                workspace_id: workspace.workspace_id.clone(),
+                from: index,
+            },
+            |_, _, _, cx| cx.new(|_| EmptyView),
+        )
+        .on_drop(move |drag: &WorkspaceDrag, window, cx| {
+            if let Some(insert_index) = reorder::gap_before(drag.from, index) {
+                drop(
+                    ShellRequest::MoveWorkspace {
+                        workspace_id: drag.workspace_id.clone(),
+                        insert_index,
+                    },
+                    window,
+                    cx,
+                );
+            }
         })
         .child(status_dot(workspace.agent_status, theme))
         .child(

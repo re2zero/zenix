@@ -19,6 +19,7 @@ pub(crate) mod palette;
 pub(crate) mod panel_resize;
 pub(crate) mod panels;
 pub(crate) mod registry;
+pub(crate) mod reorder;
 pub(crate) mod settings;
 
 use std::path::Path;
@@ -106,6 +107,10 @@ pub(crate) struct ShellView {
     fleet: FleetState,
     /// The tails the cockpit last read, by pane. Read on demand, not pushed.
     tails: Tails,
+    /// Why the last reorder on the API lane failed. The endpoint lane reports
+    /// its own refusals into the snapshot; `workspace.move` only exists on the
+    /// API lane, so its failure needs somewhere to be said.
+    move_error: Option<String>,
     /// The prefix has been typed and the next keystroke is its chord.
     prefix_armed: bool,
     /// The terminal's last drawn revision, so a paint that changed nothing
@@ -220,6 +225,7 @@ impl ShellView {
             fleet_stream,
             fleet: FleetState::default(),
             tails: Tails::new(),
+            move_error: None,
             prefix_armed: false,
             drawn: 0,
             _observe: observe,
@@ -404,6 +410,40 @@ impl ShellView {
                 .await;
             let _ = shell.update(cx, |shell, cx| {
                 shell.tails = tails;
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Move a workspace on the API lane. The endpoint protocol the grid paints
+    /// through carries `workspace.move_block` but not `workspace.move`, and the
+    /// sidebar's order is the daemon's, so the request goes where the method
+    /// is. A refusal is kept for the status bar: a drag that silently did
+    /// nothing would look like a gesture the shell dropped.
+    fn move_workspace(
+        &mut self,
+        workspace_id: String,
+        insert_index: usize,
+        cx: &mut Context<Self>,
+    ) {
+        let api = ApiClient::local();
+        self.move_error = None;
+        cx.spawn(async move |shell, cx| {
+            let outcome = cx
+                .background_executor()
+                .spawn(async move {
+                    api.call(
+                        "workspace.move",
+                        serde_json::json!({
+                            "workspace_id": workspace_id,
+                            "insert_index": insert_index,
+                        }),
+                    )
+                })
+                .await;
+            let _ = shell.update(cx, |shell, cx| {
+                shell.move_error = outcome.err().map(|error| error.to_string());
                 cx.notify();
             });
         })
@@ -664,6 +704,23 @@ impl ShellView {
                 self.connection.focus_workspace(&workspace_id)
             }
             ShellRequest::FocusTab(tab_id) => self.connection.focus_tab(&tab_id),
+            // A drag lands on a gap; the daemon owns the order, so the request
+            // is the same `tab.move` the move chords send.
+            ShellRequest::MoveTab {
+                tab_id,
+                insert_index,
+            } => {
+                self.connection.request(
+                    herdr_client::Method::TabMove,
+                    serde_json::json!({"tab_id": tab_id, "insert_index": insert_index}),
+                );
+            }
+            // `workspace.move` is not on the endpoint protocol; the API lane is
+            // where the method exists.
+            ShellRequest::MoveWorkspace {
+                workspace_id,
+                insert_index,
+            } => self.move_workspace(workspace_id, insert_index, cx),
             ShellRequest::FocusPane(pane_id) => self.connection.focus_pane(&pane_id),
             // A local command is the shell's own, so it goes back through
             // [`Self::run`]: a palette row and a chord must end in the same
@@ -964,7 +1021,9 @@ impl Render for ShellView {
                 // A plugin request leaves through the host, which owns the API
                 // lane; the dispatch is the shell's, so the two paths cannot
                 // part ways.
-                request @ (ShellRequest::PluginAction { .. }
+                request @ (ShellRequest::MoveTab { .. }
+                | ShellRequest::MoveWorkspace { .. }
+                | ShellRequest::PluginAction { .. }
                 | ShellRequest::OpenPluginPane { .. }
                 | ShellRequest::ClosePluginPane(_)
                 | ShellRequest::ShowPluginPanels
@@ -992,7 +1051,7 @@ impl Render for ShellView {
             surface: live.surface.as_deref(),
             status: live.status,
             status_error: error.as_deref(),
-            rejection: live.rejected.as_deref(),
+            rejection: self.move_error.as_deref().or(live.rejected.as_deref()),
             prefix: prefix.as_deref(),
             plugins: &plugins,
             ui_data: &self.ui_data,
@@ -1278,16 +1337,38 @@ fn tab_strip(invocation: &Invocation) -> AnyElement {
         .bg(theme.tab_bar)
         .border_b_1()
         .border_color(theme.border);
-    strip = strip.children(tabs.into_iter().map(|tab| tab_button(tab, invocation)));
+    let count = tabs.len();
+    let dispatch = invocation.dispatch.clone();
+    strip = strip
+        .children(
+            tabs.into_iter()
+                .enumerate()
+                .map(|(index, tab)| tab_button(tab, index, invocation)),
+        )
+        // The strip is the gap after the last tab: a drop that no tab claimed
+        // lands here and appends.
+        .on_drop(move |drag: &reorder::TabDrag, window, cx| {
+            if let Some(insert_index) = reorder::gap_at_end(drag.from, count) {
+                dispatch(
+                    ShellRequest::MoveTab {
+                        tab_id: drag.tab_id.clone(),
+                        insert_index,
+                    },
+                    window,
+                    cx,
+                );
+            }
+        });
     strip
         .child(toggle_button("new-tab", "+", Command::NewTab, invocation))
         .into_any_element()
 }
 
-fn tab_button(tab: &ClientShellTab, invocation: &Invocation) -> AnyElement {
+fn tab_button(tab: &ClientShellTab, index: usize, invocation: &Invocation) -> AnyElement {
     let theme = invocation.theme;
     let open = invocation.dispatch.clone();
     let close = invocation.dispatch.clone();
+    let drop = invocation.dispatch.clone();
     let tab_id = tab.tab_id.clone();
     let label = if tab.zoomed {
         format!("{} ^", tab.label)
@@ -1314,6 +1395,28 @@ fn tab_button(tab: &ClientShellTab, invocation: &Invocation) -> AnyElement {
         .cursor_pointer()
         .on_click(move |_, window, cx| {
             open(ShellRequest::FocusTab(tab_id.clone()), window, cx);
+        })
+        // A tab carried onto another lands in the gap before it; the two gaps
+        // around its own place change nothing and keep the drop from reaching
+        // the strip's end gap.
+        .on_drag(
+            reorder::TabDrag {
+                tab_id: tab.tab_id.clone(),
+                from: index,
+            },
+            |_, _, _, cx| cx.new(|_| EmptyView),
+        )
+        .on_drop(move |drag: &reorder::TabDrag, window, cx| {
+            if let Some(insert_index) = reorder::gap_before(drag.from, index) {
+                drop(
+                    ShellRequest::MoveTab {
+                        tab_id: drag.tab_id.clone(),
+                        insert_index,
+                    },
+                    window,
+                    cx,
+                );
+            }
         })
         .child(div().text_sm().child(label))
         .child(
