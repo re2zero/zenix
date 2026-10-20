@@ -329,12 +329,12 @@ input, select { font: inherit; color: inherit; }
 .splitter.v { top: 8px; bottom: 8px; width: 9px; cursor: col-resize; }
 .splitter.h { height: 9px; right: 8px; cursor: row-resize; }
 .splitter::after {
-  content: ""; border-radius: 2px;
-  background: color-mix(in srgb, var(--border) 75%, transparent);
+  content: ""; border-radius: 1px;
+  background: color-mix(in srgb, var(--border) 45%, transparent);
   transition: background .12s, box-shadow .12s;
 }
-.splitter.v::after { width: 2px; height: 100%; }
-.splitter.h::after { height: 2px; width: 100%; }
+.splitter.v::after { width: 1px; height: 100%; }
+.splitter.h::after { height: 1px; width: 100%; }
 .splitter:hover::after, .splitter.drag::after {
   background: var(--accent);
   box-shadow: 0 0 6px color-mix(in srgb, var(--accent) 45%, transparent);
@@ -1204,7 +1204,9 @@ function renderPanes() {
     "</div></div>" +
     '<div class="pane-body">' + p.body + "</div></section>"
   ).join("") + (panes.length === 3 ? splitterHtml() : "");
-  requestAnimationFrame(positionSplitters);
+  // Reading layout right after the write is fine: the handles are absolutely
+  // positioned, so measuring here cannot move the panes.
+  positionSplitters();
 }
 
 function splitterHtml() {
@@ -1980,7 +1982,7 @@ let splitDrag = null;
 function resetSplit(axis) {
   const host = $("panes");
   host.style.removeProperty(axis === "v" ? "--split-x" : "--split-y");
-  requestAnimationFrame(positionSplitters);
+  positionSplitters();
 }
 
 document.addEventListener("mousedown", (e) => {
@@ -2024,6 +2026,8 @@ document.addEventListener("mousemove", (e) => {
   const next = Math.max(drag.side === "sidebar" ? 200 : 280, Math.min(drag.side === "sidebar" ? 420 : 560, drag.startW + delta));
   const target = drag.side === "sidebar" ? $("sidebar") : $("aside");
   target.style.width = next + "px";
+  // The grid is behind the panel being dragged, so its gutters move with it.
+  positionSplitters();
 });
 function releaseDrags() {
   if (splitDrag) {
@@ -2064,6 +2068,13 @@ setInterval(() => {
 }, 5200);
 
 render();
+
+// The gutters sit on a fractional grid: any change in the grid's width — a
+// panel drag, the aside toggling, a window resize — moves their pixel
+// positions, so watch the box rather than trusting the call sites.
+if (typeof ResizeObserver !== "undefined") {
+  new ResizeObserver(positionSplitters).observe($("panes"));
+}
 </script>
 </body>
 </html>
