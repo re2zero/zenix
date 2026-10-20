@@ -9,17 +9,18 @@
    Names mirror gpui-component's Theme tokens one-for-one, so a region drawn
    here has a single Rust field to move to. Values are the prototype's own. */
 :root {
-  --background: #0e1014;
+  --background: #0b0d11;
+  --card: #14171d;
   --foreground: #d5dae2;
-  --muted: #171b21;
+  --muted: #12161c;
   --muted-foreground: #7b8492;
-  --border: #232830;
+  --border: #242a33;
   --accent: #5cc8d7;
   --accent-foreground: #071519;
   --primary: #58a6ff;
   --primary-foreground: #04101f;
-  --sidebar: #11141a;
-  --sidebar-border: #1f242c;
+  --sidebar: #0e1116;
+  --sidebar-border: #1e232b;
   --sidebar-foreground: #b7bec9;
   --sidebar-accent: #1a1f27;
   --sidebar-accent-foreground: #eef3f9;
@@ -54,16 +55,17 @@
 
 html[data-theme="light"] {
   color-scheme: light;
-  --background: #fbfbfa;
+  --background: #f7f7f5;
+  --card: #ffffff;
   --foreground: #23272e;
   --muted: #f0f0ee;
   --muted-foreground: #6b7280;
-  --border: #e0e0dd;
+  --border: #e2e2df;
   --accent: #0e8f9e;
   --accent-foreground: #ffffff;
   --primary: #1a6fd4;
   --primary-foreground: #ffffff;
-  --sidebar: #f4f4f2;
+  --sidebar: #f2f2f0;
   --sidebar-border: #e2e2df;
   --sidebar-foreground: #3d434c;
   --sidebar-accent: #e9e9e5;
@@ -255,7 +257,7 @@ input, select { font: inherit; color: inherit; }
 .row {
   position: relative;
   display: flex; align-items: center; gap: 7px;
-  min-height: 26px; padding: 3px 6px; border-radius: 4px;
+  min-height: 28px; padding: 4px 7px; border-radius: 6px;
   color: var(--sidebar-foreground); cursor: default;
 }
 .row:hover { background: var(--sidebar-accent); color: var(--sidebar-accent-foreground); }
@@ -284,25 +286,25 @@ input, select { font: inherit; color: inherit; }
 /* ── main area ───────────────────────────────────────────────────────────── */
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--background); }
 .tabstrip {
-  height: var(--tab-h); flex: none;
-  display: flex; align-items: stretch; gap: 1px;
-  background: var(--tab-bar);
+  height: calc(var(--tab-h) + 4px); flex: none;
+  display: flex; align-items: center; gap: 4px;
+  background: var(--background);
   border-bottom: 1px solid var(--border);
-  padding: 0 6px;
+  padding: 0 8px;
   overflow-x: auto; overflow-y: hidden;
 }
 .tabstrip::-webkit-scrollbar { height: 0; }
 .tab {
   display: flex; align-items: center; gap: 7px;
-  padding: 0 8px 0 10px; margin-top: 5px;
-  max-width: 240px; min-width: 92px;
-  border: 1px solid transparent; border-bottom: 0;
-  border-radius: var(--r) var(--r) 0 0;
+  height: 26px; padding: 0 7px 0 9px;
+  max-width: 240px; min-width: 88px;
+  border: 1px solid transparent;
+  border-radius: 6px;
   color: var(--tab-foreground); font-size: 12px;
-  background: var(--tab);
+  background: transparent;
 }
-.tab:hover { color: var(--tab-active-foreground); }
-.tab.on { background: var(--tab-active); color: var(--tab-active-foreground); border-color: var(--border); }
+.tab:hover { color: var(--tab-active-foreground); background: var(--muted); }
+.tab.on { background: var(--card); color: var(--tab-active-foreground); border-color: var(--border); }
 .tab .t-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .tab .t-panes { font: 9.5px/1 var(--mono); color: var(--muted-foreground); border: 1px solid var(--border); border-radius: 3px; padding: 1px 3px; }
 .tab .t-close { width: 15px; height: 15px; display: grid; place-items: center; border-radius: 3px; color: var(--muted-foreground); opacity: 0; }
@@ -313,29 +315,32 @@ input, select { font: inherit; color: inherit; }
 
 .panes {
   flex: 1; min-height: 0;
-  display: grid; gap: 1px;
-  background: var(--border);
-  padding: 1px;
+  display: grid; gap: 8px;
+  background: var(--background);
+  padding: 8px;
 }
 .panes[data-panes="1"] { grid-template-columns: 1fr; grid-template-rows: 1fr; }
 .panes[data-panes="3"] { grid-template-columns: 1.55fr 1fr; grid-template-rows: 1fr 1fr; }
 .panes[data-panes="3"] > .pane:first-child { grid-row: 1 / 3; }
 .pane {
   display: flex; flex-direction: column; min-width: 0; min-height: 0;
-  background: var(--background);
-  outline: 1px solid transparent; outline-offset: -1px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
 }
-.pane.focused { outline-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.pane:hover { border-color: color-mix(in srgb, var(--muted-foreground) 45%, var(--border)); }
+.pane.focused { border-color: color-mix(in srgb, var(--accent) 70%, var(--border)); }
 .pane.focused .pane-title { color: var(--foreground); }
 .pane-bar {
-  height: 27px; flex: none;
+  height: 30px; flex: none;
   display: flex; align-items: center; gap: 7px;
-  padding: 0 6px 0 9px;
-  background: var(--muted);
-  border-bottom: 1px solid var(--border);
+  padding: 0 6px 0 11px;
+  background: transparent;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 65%, transparent);
   font-size: 11px;
 }
-.pane.focused .pane-bar { background: color-mix(in srgb, var(--accent) 8%, var(--muted)); }
+.pane.focused .pane-bar { background: color-mix(in srgb, var(--accent) 5%, transparent); }
 .pane-title { color: var(--muted-foreground); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pane-bar .grow { flex: 1; }
 .pane-bar .p-actions { display: flex; gap: 1px; opacity: .55; }
@@ -347,6 +352,39 @@ input, select { font: inherit; color: inherit; }
   white-space: pre-wrap; word-break: break-word;
 }
 .pane-body.tight { padding: 6px 8px; font-size: 11px; }
+
+/* empty state: what a tab shows before it has a pane */
+.empty {
+  flex: 1; min-height: 0; display: grid; place-items: center;
+  padding: 32px 24px; overflow-y: auto;
+}
+.empty-inner { width: min(560px, 100%); }
+.empty-mark {
+  width: 40px; height: 40px; border-radius: 11px; margin-bottom: 14px;
+  background: linear-gradient(140deg, var(--accent), var(--primary));
+  display: grid; place-items: center; color: #06151a;
+}
+.empty h3 { margin: 0 0 4px; font-size: 17px; font-weight: 600; letter-spacing: -.01em; }
+.empty p { margin: 0 0 16px; font-size: 12.5px; color: var(--muted-foreground); }
+.empty-input {
+  display: flex; align-items: center; gap: 9px;
+  height: 44px; padding: 0 12px; margin-bottom: 14px;
+  border: 1px solid var(--border); border-radius: 12px;
+  background: var(--card); color: var(--muted-foreground);
+  font-size: 13px;
+}
+.empty-input:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); color: var(--foreground); }
+.empty-input .grow { flex: 1; text-align: left; }
+.empty-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.empty-card {
+  display: block; text-align: left;
+  padding: 10px 12px; border: 1px solid var(--border); border-radius: 9px;
+  background: var(--card); color: var(--foreground);
+}
+.empty-card:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); background: color-mix(in srgb, var(--accent) 5%, var(--card)); }
+.empty-card .t { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 550; }
+.empty-card .d { margin-top: 2px; font-size: 11px; color: var(--muted-foreground); }
+.empty-hint { margin-top: 16px; font-size: 11px; color: var(--muted-foreground); }
 
 .term-line { display: block; min-height: 1.62em; }
 .t-dim { color: var(--muted-foreground); }
@@ -406,10 +444,10 @@ input, select { font: inherit; color: inherit; }
 .aside-body { flex: 1; min-height: 0; overflow-y: auto; padding: 10px; }
 .aside-body.chat { display: flex; flex-direction: column; overflow: hidden; }
 .chat-scroll { flex: 1; min-height: 0; overflow-y: auto; padding-right: 2px; }
-.chat-compose { flex: none; padding-top: 8px; border-top: 1px solid var(--sidebar-border); margin-top: 8px; }
+.chat-compose { flex: none; padding-top: 6px; margin-top: 6px; }
 
 /* chat */
-.msg { margin-bottom: 12px; }
+.msg { margin-bottom: 14px; }
 .msg .who { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font-size: 10.5px; color: var(--muted-foreground); }
 .msg .who .av { width: 16px; height: 16px; border-radius: 4px; display: grid; place-items: center; font: 600 9px/1 var(--mono); }
 .msg.user .av { background: var(--list-active); color: var(--foreground); }
@@ -417,20 +455,20 @@ input, select { font: inherit; color: inherit; }
 .msg .text { font-size: 12.5px; line-height: 1.55; }
 .msg .text code { font: 11px/1 var(--mono); background: var(--muted); border: 1px solid var(--border); border-radius: 3px; padding: 1px 4px; }
 .msg .tools { margin-top: 6px; }
-.composer { margin-top: 4px; border: 1px solid var(--border); border-radius: 14px; background: var(--background); padding: 9px 9px 7px; }
+.composer { margin-top: 4px; border: 1px solid var(--border); border-radius: 16px; background: var(--card); padding: 9px 9px 8px; }
 .composer:focus-within { border-color: color-mix(in srgb, var(--accent) 50%, var(--border)); }
 .composer textarea {
-  display: block; width: 100%; height: 52px; resize: none;
+  display: block; width: 100%; height: 56px; resize: none;
   background: none; border: 0; outline: 0; padding: 0 2px;
   font: 13px/1.5 var(--ui); color: inherit;
 }
-.composer .c-bar { display: flex; align-items: center; gap: 4px; margin-top: 6px; }
+.composer .c-bar { display: flex; align-items: center; gap: 4px; margin-top: 4px; }
 .composer .c-bar .grow { flex: 1; }
-.chat-ctx {
-  display: flex; align-items: center; gap: 6px;
-  padding: 0 2px 6px; font: 10.5px/1.4 var(--mono); color: var(--muted-foreground);
+.composer-ctx {
+  display: flex; align-items: center; gap: 5px;
+  padding: 0 2px 6px; font: 10px/1.4 var(--mono); color: var(--muted-foreground);
 }
-.chat-ctx .grow { flex: 1; }
+.composer-ctx .grow { flex: 1; }
 .icon-round {
   width: 26px; height: 26px; border-radius: 50%; flex: none;
   border: 1px solid var(--border);
@@ -521,6 +559,7 @@ input, select { font: inherit; color: inherit; }
   background: var(--status-bar);
   border-top: 1px solid var(--status-bar-border);
   font-size: 11px; color: var(--muted-foreground);
+  padding-right: 6px;
   overflow: hidden;
 }
 .seg { display: flex; align-items: center; gap: 6px; padding: 0 9px; white-space: nowrap; }
@@ -738,7 +777,7 @@ const ICONS = {
   plugins: '<path d="M9 4h3a2 2 0 0 1 2 2v1.5a1.5 1.5 0 1 0 3 0V6h1a2 2 0 0 1 2 2v3h-1.5a1.5 1.5 0 1 0 0 3H20v3a2 2 0 0 1-2 2h-3v-1.5a1.5 1.5 0 1 0-3 0V19H9a2 2 0 0 1-2-2v-3H5.5a1.5 1.5 0 1 1 0-3H7V6a2 2 0 0 1 2-2Z"/>',
   events: '<path d="M3 12h4l2.5-6 4 12 2.5-6h5"/>',
   layout: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M12 9v11"/>',
-  settings: '<circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"/>',
+  settings: '<circle cx="12" cy="12" r="8.6"/><circle cx="12" cy="12" r="3.2"/><path d="M12 3.4v2.2M12 18.4v2.2M3.4 12h2.2M18.4 12h2.2"/>',
   spec: '<circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.6 2.6 0 1 1 3.4 2.5c-.6.2-.9.8-.9 1.4v.6M12 17h.01"/>',
   search: '<circle cx="11" cy="11" r="6"/><path d="m20 20-4.3-4.3"/>',
   arrowUp: '<path d="M12 19V5M6 11l6-6 6 6"/>',
@@ -974,8 +1013,6 @@ function wsView() {
       '<span class="label">' + esc(w.label) + "</span>" +
       '<span class="trail"><span class="sub">' + w.tabs + "</span>" +
       (w.agents ? '<span class="st running"><span class="d"></span></span>' : "") + "</span></div>" +
-      '<div class="row nested" style="min-height:20px;padding-top:0;padding-bottom:2px">' +
-      '<span class="sub" style="opacity:.85">' + esc(w.branch) + "</span></div>" +
       nested;
   }).join("");
   return '<div class="sec">' +
@@ -1098,7 +1135,7 @@ function renderTabs() {
     '<button class="tab ' + (state.tab === t.id ? "on" : "") + '" data-act="tab" data-tab="' + t.id + '">' +
     (t.agent ? '<span class="st ' + t.agent + '"><span class="d"></span></span>' : "") +
     '<span class="t-label">' + esc(t.label) + "</span>" +
-    '<span class="t-panes">' + t.panes + "</span>" +
+    (t.panes ? '<span class="t-panes">' + t.panes + "</span>" : "") +
     '<span class="t-close" data-act="close-tab" data-tab="' + t.id + '">' + icon("close", 11) + "</span>" +
     "</button>"
   ).join("");
@@ -1132,6 +1169,11 @@ const PANE_HTML = {
 function renderPanes() {
   const panes = PANE_HTML[state.tab] || PANE_HTML.t1;
   const host = $("panes");
+  if (!panes.length) {
+    host.dataset.panes = "1";
+    host.innerHTML = emptyView();
+    return;
+  }
   host.dataset.panes = String(panes.length);
   host.innerHTML = panes.map((p, i) =>
     '<section class="pane ' + (i === 0 ? "focused" : "") + '" data-act="focus-pane">' +
@@ -1147,18 +1189,48 @@ function renderPanes() {
   ).join("");
 }
 
+function emptyView() {
+  const cards = [
+    ["workspaces", "打开工作区", "把一个仓库接进来，起一个 shell", "new-workspace"],
+    ["split", "分屏跑测试", "在这个标签里开一列，保留当前窗格", "split"],
+    ["layout", "从布局模板恢复", ".zenix/layout.toml 跟着仓库走", "restore-layout"],
+    ["shield", "审查并链接插件", "先看清它会执行什么", "trust"]
+  ];
+  return '<div class="empty"><div class="empty-inner">' +
+    '<div class="empty-mark">' + icon("terminal", 20) + "</div>" +
+    "<h3>想做点什么？</h3>" +
+    "<p>直接描述任务，或者从下面挑一个。Ctrl K 打开命令面板。</p>" +
+    '<button class="empty-input" data-act="palette">' + icon("search", 15) +
+    '<span class="grow">描述任务、粘贴错误、或搜索命令…</span><span class="kbd">Ctrl K</span></button>' +
+    '<div class="empty-grid">' + cards.map(([ic, title, desc, act]) =>
+      '<button class="empty-card" data-act="' + act + '"><div class="t">' + icon(ic, 13) + esc(title) +
+      '</div><div class="d">' + esc(desc) + "</div></button>"
+    ).join("") + "</div>" +
+    '<div class="empty-hint">标签还没有窗格。新建的窗格归 daemon，客户端只画它的 surface。</div>' +
+    "</div></div>";
+}
+
+function newTab() {
+  const id = "t" + (model.tabs.length + 1) + "-" + Date.now().toString(36);
+  model.tabs.push({ id: id, label: "新标签", panes: 0 });
+  state.tab = id;
+  PANE_HTML[id] = [];
+  render();
+}
+
 function shellBody() {
   return (
-    '<span class="term-line"><span class="prompt-user">zero</span><span class="prompt-sign">@</span><span class="t-info">zenix</span> <span class="prompt-path">~/work/research/term-ide/zenix</span> <span class="prompt-sign">on</span> <span class="t-accent">main</span></span>' +
+    '<span class="term-line"><span class="prompt-user">zero</span><span class="prompt-sign">@</span><span class="t-info">zenix</span> <span class="prompt-path">~/…/term-ide/zenix</span> <span class="prompt-sign">on</span> <span class="t-accent">main</span></span>' +
     '<span class="term-line"><span class="prompt-sign">$</span> cargo test --lib</span>' +
-    '<span class="term-line t-dim">    Finished `test` profile [unoptimized] target(s) in 0.42s</span>' +
-    '<span class="term-line t-dim">     Running unittests src/lib.rs</span>' +
+    '<span class="term-line t-dim">   Compiling zenix v0.1.0</span>' +
+    '<span class="term-line t-dim">    Finished `test` profile in 0.42s</span>' +
+    '<span class="term-line">     Running unittests src/lib.rs</span>' +
     '<span class="term-line">running 437 tests</span>' +
-    '<span class="term-line t-ok">test config::tests::unknown_key_is_dropped ... ok</span>' +
-    '<span class="term-line t-ok">test shell::registry::tests::a_plugins_contributions_mount_in_the_slots_their_kind_names ... ok</span>' +
-    '<span class="term-line t-ok">test terminal::view::tests::a_frames_cells_reach_the_painter ... ok</span>' +
+    '<span class="term-line t-ok">test config::unknown_key_is_dropped ... ok</span>' +
+    '<span class="term-line t-ok">test shell::slots_are_unique ... ok</span>' +
+    '<span class="term-line t-ok">test terminal::cells_reach_painter ... ok</span>' +
     '<span class="term-line t-dim">… 434 more</span>' +
-    '<span class="term-line t-ok">test result: ok. 437 passed; 0 failed; 0 ignored</span>' +
+    '<span class="term-line t-ok">test result: ok. 437 passed; 0 failed</span>' +
     '<span class="term-line"><span class="prompt-sign">$</span> <span class="cursor"></span></span>'
   );
 }
@@ -1170,11 +1242,11 @@ function claudeBody() {
     '<span class="term-line"> </span>' +
     '<span class="term-line"><span class="msg-role">▸ 我</span> 先出原型。把每个槽位在界面上画出来，再谈扩展。</span>' +
     '<span class="term-line"> </span>' +
-    '<span class="term-line t-dim">读 src/shell/registry.rs、src/plugins/ui_manifest.rs…</span>' +
+    '<span class="term-line t-dim">读 registry.rs、ui_manifest.rs…</span>' +
     '<span class="term-line"> </span>' +
     '<div class="tool-card running"><div class="tc-head">' + icon("terminal", 11) + " <span>grep · 2 个文件匹配</span>" +
     '<span style="margin-left:auto" class="t-dim">running</span></div>' +
-    '<div class="tc-body">registry.rs:208  struct Registry { panels, aside, status, settings }</div></div>' +
+    '<div class="tc-body">registry.rs:208  Registry { 4 slots }</div></div>' +
     '<span class="term-line t-accent">建议：sidebar 与 aside 槽位保持，新增 commands / mcp-tools 由同一份声明派生。</span>' +
     '<span class="term-line t-dim">等待确认 · 2 个待办</span>' +
     '<span class="term-line"><span class="cursor"></span></span>'
@@ -1205,6 +1277,14 @@ function agentBody(name, status) {
     '<div class="tool-card"><div class="tc-head">' + icon("terminal", 11) + " <span>bash · cargo test --lib</span>" +
     '<span style="margin-left:auto" class="t-ok">ok 437</span></div>' +
     '<div class="tc-body">test result: ok. 437 passed; 0 failed</div></div>' +
+    '<span class="term-line t-dim">下一步计划：</span>' +
+    '<span class="term-line t-dim">  1. 接线 agent_order 到驾驶舱排序</span>' +
+    '<span class="term-line t-dim">  2. 复核门禁记录</span>' +
+    '<span class="term-line t-dim">  3. 写 HANDOFF</span>' +
+    '<span class="term-line"> </span>' +
+    '<div class="tool-card"><div class="tc-head">' + icon("plugins", 11) + " <span>edit · src/fleet/mod.rs</span>" +
+    '<span style="margin-left:auto" class="t-ok">+18 −6</span></div>' +
+    '<div class="tc-body">read_tails 保持串行，注释写明 100ms 首请求窗口</div></div>' +
     '<span class="term-line t-dim">下一步：提交 15914e2…</span>' +
     '<span class="term-line"><span class="cursor"></span></span>'
   );
@@ -1269,25 +1349,25 @@ function chatAside() {
     '插件的每一块都带来源标记，评审时能直接看到「这条是谁贡献的」。</div>' +
     '<div class="tools"><div class="tool-card"><div class="tc-head">' + icon("plugins", 11) +
     ' <span>read · src/shell/registry.rs</span><span style="margin-left:auto" class="t-ok">ok</span></div>' +
-    '<div class="tc-body">ContributionBody::{Builtin, Panel, SidebarItem, StatusItem}</div></div></div>' +
+    '<div class="tc-body">ContributionBody::{4 slots}</div></div></div>' +
     '<div class="text t-dim">要我把槽位扩展顺序写成计划吗？</div></div>' +
     sent +
     "</div>" +
     '<div class="chat-compose">' +
-    '<div class="chat-ctx">' + icon("terminal", 11) +
-    "<span>claude · zenix/t1/p2</span><span class=\"grow\"></span><span>8 轮 · 12.4k</span></div>" +
     '<div class="composer">' +
+    '<div class="composer-ctx">' + icon("terminal", 10) +
+    "<span>claude · zenix/t1/p2</span><span class=\"grow\"></span><span>8 轮 · 12.4k</span></div>" +
     '<textarea id="chatInput" placeholder="有什么要做的事…">' + esc(state.draft) + "</textarea>" +
     '<div class="c-bar">' +
     '<button class="icon-round" data-act="attach" title="附加文件或选区">' + icon("plus", 14) + "</button>" +
     '<div class="picker">' +
     '<button class="pill-btn ' + (state.chatPop === "model" ? "open" : "") + '" data-act="chat-model" title="模型">' +
-    icon("agents", 12) + "<span>" + esc(modelLabel(state.chatModel)) + "</span>" + icon("chevron", 10) + "</button>" +
+    "<span>" + esc(modelLabel(state.chatModel)) + "</span>" + icon("chevron", 10) + "</button>" +
     (state.chatPop === "model" ? modelPop() : "") +
     "</div>" +
     '<div class="picker">' +
     '<button class="pill-btn ' + (state.chatPop === "effort" ? "open" : "") + '" data-act="chat-effort" title="推理力度">' +
-    icon("spark", 12) + "<span>" + esc(effortLabel(state.chatEffort)) + "</span>" + icon("chevron", 10) + "</button>" +
+    "<span>" + esc(effortLabel(state.chatEffort)) + "</span>" + icon("chevron", 10) + "</button>" +
     (state.chatPop === "effort" ? effortPop() : "") +
     "</div>" +
     '<span class="grow"></span>' +
@@ -1387,8 +1467,7 @@ function renderStatus() {
     '<div class="grow"></div>' +
     '<div class="seg click warn-seg" data-act="settings" data-page="config">' + icon("warn", 12) + '<span>config.json · 1 条诊断</span></div>' +
     '<div class="seg click">' + icon("branch", 12) + "<span>main ↑1</span></div>" +
-    '<div class="seg mono" style="font-size:10px">prefix ^a</div>' +
-    '<div class="seg mono" style="font-size:10px">Lilex 12</div>';
+    '<div class="seg mono" style="font-size:10px">prefix ^a</div>';
 }
 
 /* ── overlays ───────────────────────────────────────────────────────────── */
@@ -1778,10 +1857,7 @@ document.addEventListener("click", (e) => {
     case "attach":
       break;
     case "new-tab":
-      model.tabs.push({ id: "t" + (model.tabs.length + 1), label: "shell", panes: 1 });
-      state.tab = model.tabs[model.tabs.length - 1].id;
-      PANE_HTML[state.tab] = [{ id: "p" + Date.now(), title: "zsh · ~", agent: null, body: shellBody() }];
-      render();
+      newTab();
       break;
     case "focus-agent":
     case "fleet-agent":
@@ -1850,10 +1926,7 @@ document.addEventListener("keydown", (e) => {
     render();
   } else if (mod && e.key.toLowerCase() === "t") {
     e.preventDefault();
-    model.tabs.push({ id: "t" + (model.tabs.length + 1), label: "shell", panes: 1 });
-    state.tab = model.tabs[model.tabs.length - 1].id;
-    PANE_HTML[state.tab] = [{ id: "p" + Date.now(), title: "zsh · ~", agent: null, body: shellBody() }];
-    render();
+    newTab();
   }
 });
 
