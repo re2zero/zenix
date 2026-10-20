@@ -11,12 +11,11 @@
 #   # then adjust pkgver and source below
 #
 # Required packages (install before building):
-#   sudo pacman -S --needed base-devel rust zig git libxcb \
+#   sudo pacman -S --needed base-devel rust git curl libxcb \
 #     libxkbcommon fontconfig freetype2 expat wayland libglvnd
 #
-# herdr (the submodule, built by build.rs) pins Zig 0.16.0 exactly — 0.17 is
-# rejected by its build.zig.zon, so the packaged zig may not be enough. If the
-# installed version differs, pass the toolchain with ZIG=/path/to/zig-0.16.0/zig.
+# The herdr daemon is a pinned release binary (vendor/herdr-pins.tsv), fetched
+# by scripts/fetch-herdr.sh — no Zig toolchain and no submodule.
 
 pkgname=zenix
 pkgver=0.1.0
@@ -36,9 +35,9 @@ depends=(
 makedepends=(
   'cargo'
   'git'
-  # build.rs builds the herdr submodule, and herdr 0.9.3 requires Zig 0.16.0
-  # exactly (0.17 is rejected by build.zig.zon).
-  'zig'
+  # The herdr daemon is a pinned release binary (`vendor/herdr-pins.tsv`,
+  # fetched by scripts/fetch-herdr.sh), so no Zig toolchain is needed.
+  'curl'
 )
 install=zenix.install
 source=(
@@ -49,10 +48,12 @@ sha256sums=('SKIP')
 # The crates.io index is large; allow network access during build.
 validpgpkeys=()
 
-# Fetch git submodules (herdr is a submodule of zenix).
+# The daemon seed is downloaded, not compiled: build.rs copies res/herdr next to
+# the binary and checks it against the pin.
 prepare() {
   cd "${srcdir}/${pkgname}"
-  git submodule update --init --recursive
+  HERDR_DOWNLOAD_BASE="${HERDR_DOWNLOAD_BASE:-https://github.com/herdrdev/herdr/releases/download}" \
+    ./scripts/fetch-herdr.sh
 }
 
 pkgver() {
@@ -91,7 +92,7 @@ package() {
   # OFL-1.1 still requires the license text to travel with the font.
   install -Dm644 "THIRD-PARTY.md" "${pkgdir}/usr/share/doc/zenix/THIRD-PARTY.md"
   install -Dm644 "assets/fonts/OFL.txt" "${pkgdir}/usr/share/doc/zenix/Lilex-OFL.txt"
-  install -Dm644 "herdr/LICENSE" "${pkgdir}/usr/share/doc/zenix/herdr/LICENSE"
+  install -Dm644 "licenses/herdr/LICENSE" "${pkgdir}/usr/share/doc/zenix/herdr/LICENSE"
   for crate in herdr-client herdr-protocol; do
     install -Dm644 "vendor/${crate}/LICENSE-APACHE" \
       "${pkgdir}/usr/share/doc/zenix/${crate}/LICENSE-APACHE"

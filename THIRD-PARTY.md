@@ -11,7 +11,7 @@ named below under `/usr/share/doc/zenix/`.
 
 | Component | Version | License | Shipped as |
 |---|---|---|---|
-| [herdr](https://github.com/ogulcancelik/herdr) | 0.9.3 (`herdr/` submodule, `7b116c05`) | Apache-2.0 | `/usr/share/zenix/herdr` — the seed the client copies to `~/.local/bin/herdr` on first run; license at `/usr/share/doc/zenix/herdr/LICENSE` |
+| [herdr](https://github.com/herdrdev/herdr) | 0.9.5 (pinned release binary, `vendor/herdr-pins.tsv`) | Apache-2.0 | `/usr/share/zenix/herdr` — the seed the client copies to `~/.local/bin/herdr` on first run; fetched by `scripts/fetch-herdr.sh`, license text at `licenses/herdr/LICENSE` |
 | [Lilex](https://github.com/mishamyrt/Lilex) | 2.601 | SIL OFL-1.1 | `assets/fonts/*.ttf`, compiled into the binary with `include_bytes!`; license at `assets/fonts/OFL.txt` |
 
 ## Statically linked (vendored)
@@ -21,8 +21,10 @@ named below under `/usr/share/doc/zenix/`.
 | herdr-protocol (`vendor/herdr-protocol/`) | Apache-2.0 | `LICENSE-APACHE`, `NOTICE.md` |
 | herdr-client (`vendor/herdr-client/`) | Apache-2.0 | `LICENSE-APACHE`, `NOTICE.md` |
 
-Both are byte-identical copies of the corresponding herdr-gpui crates; their
-`NOTICE.md` files record what was adapted upstream and at which revision.
+Both are copies of the corresponding herdr-gpui crates, kept as **local source**
+(they may be edited when a daemon change needs it); `vendor/HERDR_UPSTREAM.md`
+records the upstream commit and the resync command, and the `NOTICE.md` files
+name what was adapted upstream and at which revision.
 
 ## Cargo dependencies
 

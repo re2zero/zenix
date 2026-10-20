@@ -61,15 +61,19 @@ src/
 res/
   zenix.desktop            Desktop entry / 桌面入口
   zenix.png                Application icon / 应用图标
-  herdr                    Release-built herdr, the deb's first-run seed / 发布构建的 herdr（deb 首启种子）
+  herdr                    The pinned daemon (fetched, gitignored), the package's first-run seed /
+                            pin 的 daemon（脚本下载，不进 git）：包里的首启种子
 assets/
   fonts/                   Lilex font family, compiled in via include_bytes! / Lilex 字体族（编译进二进制）
   themes/                  Theme JSON, not wired into the client yet / 主题 JSON（尚未接入）
   prompts/                 Orchestrator prompt, seeded to the config dir / 编排器提示词（播种到配置目录）
-herdr/                     Git submodule (ogulcancelik/herdr, v0.9.3) / 子模块
-vendor/                    Vendored endpoint crates, byte-identical to upstream / 端点 crate（与上游逐字节相同）
-build.rs                   Makes herdr available: dev copies the installed one, release
-                           builds it from the submodule / 让 herdr 可用：dev 复制已安装件，release 从子模块构建
+licenses/herdr/            herdr's Apache-2.0 text, shipped in the package / herdr 许可文本
+vendor/                    Endpoint protocol + client (herdr-gpui copies) and the daemon pin /
+                           端点协议与客户端（herdr-gpui 副本）+ daemon 版本 pin
+scripts/fetch-herdr.sh     Downloads the pinned herdr release into res/herdr (SHA-256 checked) /
+                           下载 pin 的 herdr 发行版到 res/herdr（校验 SHA-256）
+build.rs                   Copies res/herdr next to the client; release builds verify it against the pin /
+                           把 res/herdr 复制到客户端旁；release 构建按 pin 校验
 ```
 
 ## Dependencies & Licenses / 依赖与许可证
@@ -93,7 +97,9 @@ zenix 本体使用 **GPL-3.0-or-later**（详见 [LICENSE](LICENSE)），第三�
 
 - Rust 1.85+ (edition 2024)
 - System libraries: `libxcb1-dev`, `libxkbcommon-dev`, `libxkbcommon-x11-dev`, `libfontconfig1-dev`, `libfreetype6-dev`, `libexpat1-dev`, `libwayland-dev`, `libegl1-mesa-dev`, `libgl1-mesa-dev`, `pkg-config`
-- **Zig 0.16.0** — only needed when building herdr from the submodule (i.e. any release build). The version is exact: herdr's `build.zig.zon` rejects anything else.
+- **No Zig, no submodule** — the herdr daemon is a released binary pinned by version and
+  SHA-256 in `vendor/herdr-pins.tsv`. Run `scripts/fetch-herdr.sh` once (it writes `res/herdr`),
+  or point `HERDR_DOWNLOAD_BASE` at a mirror if GitHub is slow.
 
 ```bash
 # Install system deps (Debian/Ubuntu/Deepin)
@@ -101,27 +107,28 @@ sudo apt install libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev \
   libfontconfig1-dev libfreetype6-dev libexpat1-dev libwayland-dev \
   libegl1-mesa-dev libgl1-mesa-dev pkg-config
 
-# Clone with submodule / 克隆含子模块
-git clone --recurse-submodules <repo-url>
+# Clone and fetch the pinned daemon / 克隆并取 pin 的 daemon
+git clone <repo-url>
 cd zenix
+./scripts/fetch-herdr.sh
 ```
 
 ### Development / 开发运行
 
 ```bash
-# Uses the system-installed herdr (fast) / 使用系统已安装的 herdr（快速）
+# Uses res/herdr (fetched above) / 使用 res/herdr（上面已下载）
 cargo run
 
-# Force building herdr from the submodule (needs Zig) / 强制从子模块构建 herdr（需要 Zig）
-HERDR_BUILD=1 ZIG=/path/to/zig-0.16.0/zig cargo run
+# No seed yet? A dev build falls back to the installed herdr / 没有 seed 时 dev 回落到系统已装 herdr
+cargo run
 ```
 
 ### Release & Packaging / 发布构建与打包
 
 ```bash
-# Full release build: builds herdr from the submodule and refreshes res/herdr
-# 完整发布构建：从子模块构建 herdr，并刷新 res/herdr
-ZIG=/path/to/zig-0.16.0/zig cargo build --release
+# Release build: verifies res/herdr against the pin, then packages it
+# 发布构建：按 pin 校验 res/herdr，然后打包
+cargo build --release
 
 # Build the .deb (runs the release build first) / 构建 .deb（会先跑发布构建）
 cargo deb

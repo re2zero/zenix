@@ -34,8 +34,9 @@ zenix/
 │   ├── config_adapters/   # Per-agent config adapters
 │   ├── i18n.rs            # rust-i18n wiring (strings in locales/zenix.yml)
 │   └── platform.rs        # Platform-specific code (Linux/macOS/Windows)
-├── herdr/                 # Git submodule (ogulcancelik/herdr v0.9.3, Apache-2.0)
-├── vendor/                # Vendored endpoint crates, byte-identical to upstream (Apache-2.0)
+├── licenses/herdr/        # herdr's Apache-2.0 text, shipped into the package
+├── scripts/               # fetch-herdr.sh (download + SHA-256 pin), sync-herdr-vendor.sh
+├── vendor/                # Endpoint protocol + client, copied from herdr-gpui (Apache-2.0)
 │   ├── herdr-protocol/    # Generation-1 wire + handshake model
 │   ├── herdr-client/      # Endpoint client (connect/session/surface/input)
 │   └── test-support/      # sandbox.rs, only for herdr-client's opt-in live tests
@@ -44,7 +45,7 @@ zenix/
 │   ├── prompts/           # Prompt assets
 │   └── themes/            # Theme JSON (gruvbox, solarized, tokyonight, matrix)
 ├── locales/zenix.yml      # I18n strings (rust-i18n)
-├── build.rs               # Makes the herdr binary available (copy installed, or build from submodule)
+├── build.rs               # Copies res/herdr next to the client; release verifies it against the pin
 ├── Cargo.toml             # Package manifest (path deps into vendor/)
 └── .relay/                # Session relay: PLAN.md / state.json / journal/ (local, gitignored)
 ```
@@ -90,28 +91,28 @@ zenix/
 - **Config is JSONC** (comments allowed), walked against a schema on every load: an unknown key is dropped, a wrong type falls back per field, an out-of-range number is clamped, and each is reported as a diagnostic
 - **Endpoint is the state truth**: workspace/tab/pane/agent state comes from `ClientEvent::Snapshot` pushes — do not add polling
 - **No local PTY**: daemon panes are the only terminal source (the local PTY/alacritty path was removed by decision)
-- **Herdr binary**: auto-seeds to `~/.local/bin/herdr` on first run (from `res/herdr`, which every release build refreshes); herdr self-updates thereafter
-- **Packaged assets**: fonts and theme JSONs are *not* shipped — the Lilex faces are compiled in via `include_bytes!` and no code reads `assets/themes/` yet. License texts (project GPL, Lilex OFL, herdr + vendored Apache-2.0 with NOTICEs) are shipped under `/usr/share/doc/zenix/`; the inventory is `THIRD-PARTY.md`
+- **Herdr binary is pinned, not built**: `vendor/herdr-pins.tsv` records version + per-platform SHA-256; `scripts/fetch-herdr.sh` downloads that release into `res/herdr` (gitignored), `build.rs` copies it beside the client and a release build refuses a seed that does not match. The client auto-seeds `~/.local/bin/herdr` on first run; herdr self-updates thereafter, and `zenix-probe` reports when the running daemon's version differs from the pin
+- **Packaged assets**: fonts and theme JSONs are *not* shipped — the Lilex faces are compiled in via `include_bytes!` and no code reads `assets/themes/` yet. License texts (project GPL, Lilex OFL, herdr's Apache-2.0 from `licenses/herdr/LICENSE`, vendored crates' Apache-2.0 with NOTICEs) ship under `/usr/share/doc/zenix/`; the inventory is `THIRD-PARTY.md`
 
 ## ANTI-PATTERNS (THIS PROJECT)
-- ❌ Direct `cargo run` without checking the herdr binary — dev copies the installed herdr, so install it or set `HERDR_BUILD=1`
-- ❌ Editing `vendor/herdr-{protocol,client}/**` — copy-only; re-sync the whole directory from herdr-gpui instead
+- ❌ Building without a daemon seed — run `scripts/fetch-herdr.sh` once; a dev build without `res/herdr` silently falls back to whatever herdr is installed
+- ❌ Editing `vendor/herdr-{protocol,client}/**` casually — they are local source now, but a change to `wire.rs` is a protocol decision: record it in `vendor/HERDR_UPSTREAM.md` and say why
+- ❌ Reintroducing the herdr submodule, or a source build of the daemon — the pin (`vendor/herdr-pins.tsv`) plus `scripts/fetch-herdr.sh` is the contract
 - ❌ Adding UI deps or API calls without checking real `gpui-kit` / `gpui-pre` signatures first (see the gpui-dev skill)
 - ❌ Mutating state in GPUI `render()` anywhere other than the recorded `Regions::views` call site
 - ❌ Hardcoding a shell panel, status segment, settings page or command outside the contribution registry (`src/shell/registry.rs`)
 - ❌ Keeping a setting in a view struct beside the config, or writing `config.json` directly instead of through `config::update`
 - ❌ Hardcoding theme colors — use theme provider tokens
-- ❌ Assuming herdr builds from source without Zig 0.16.0 — see NOTES
 
 ## COMMANDS
 ```bash
 # Development
-cargo run                                 # Uses the installed herdr (fast)
-HERDR_BUILD=1 cargo run                   # Force building herdr from the submodule (needs ZIG)
-ZIG=/media/zero/data2/tools/zig-0.16.0/zig HERDR_BUILD=1 cargo build   # Explicit toolchain
+./scripts/fetch-herdr.sh                  # Once: download the pinned daemon into res/herdr
+./scripts/fetch-herdr.sh --check          # Verify res/herdr against vendor/herdr-pins.tsv
+cargo run                                 # Uses res/herdr, else the installed herdr
 
 # Build
-cargo build --release        # Full release (compiles herdr from submodule)
+cargo build --release        # Verifies res/herdr against the pin, then packages it
 cargo deb                    # Build .deb package
 
 # Testing/Quality
@@ -124,11 +125,11 @@ cargo clippy                            # Lint
 ```
 
 ## NOTES
-- **Herdr submodule** at `herdr/` targets the v0.9.3 tag (Apache-2.0 since v0.8.0); update via `git submodule update --remote`
-- **herdr from source needs Zig 0.16.0 exactly** (0.17 is rejected by `build.zig.zon` + `src/build/zig.zig`). Installed at `/media/zero/data2/tools/zig-0.16.0/` — pass it as `ZIG=...`. The zig build fetches its own deps from github/codeberg, so retry once on a network hiccup
+- **No herdr submodule, no Zig**: the daemon is a pinned release binary (`vendor/herdr-pins.tsv`, currently 0.9.5; SHA-256 values are GitHub's own asset digests). Bumping the daemon = edit the TSV, `scripts/fetch-herdr.sh`, then `cargo run --bin zenix-probe` and check `version: … match=true`
+- **Upstream herdr source is not in the tree**: code comments cite `herdr/src/...:line` as evidence from when the submodule existed. To re-check one, `git clone --depth 1 --branch v0.9.5 https://github.com/herdrdev/herdr` into /tmp — never into the workspace
 - **UI stack**: `gpui-kit = "0.7.3"` → `gpui-pre 0.3.9` / `gpui-component 0.7.3`; the old git `gpui` dep, the target `gpui_platform` blocks and `vendor/gpui_wgpu_patched` are gone
 - **gpui-kit `test-support`**: the crate's GPUI test entry (`#[gpui_kit::test]`) is a normal feature and lives in `[dev-dependencies]`. Enabling it makes Cargo resolve `gpui-fast-web` → `unicode-properties =0.1.3`, while `gpui-pre-web` pins `0.1.4`; the two cannot coexist, so `Cargo.lock` holds 0.1.3 via `cargo update -p unicode-properties --precise 0.1.3`. Re-apply that command if the lock is regenerated.
-- **Vendored crates**: `vendor/herdr-protocol` + `vendor/herdr-client` (plus `vendor/test-support/sandbox.rs`) are byte-identical to herdr-gpui upstream, with `NOTICE.md`/`LICENSE-APACHE` kept
+- **Vendored crates are local source**: `vendor/herdr-protocol` + `vendor/herdr-client` (plus `vendor/test-support/sandbox.rs`) are copies of herdr-gpui `crates/*` (commit `87f4dc0`), with `NOTICE.md`/`LICENSE-APACHE` kept; `vendor/HERDR_UPSTREAM.md` records provenance and `scripts/sync-herdr-vendor.sh <herdr-gpui>` re-copies and diffs `wire.rs`
 - **I18n**: Chinese/English via `rust-i18n` macro; keys live in `locales/zenix.yml`
 - **Desktop entry** at `res/zenix.desktop`, icon at `res/zenix.png`
 - **License**: GPL-3.0-or-later (zenix), Apache-2.0 (herdr, gpui-kit/gpui-component, vendored endpoint crates), SIL OFL-1.1 (Lilex) — see `THIRD-PARTY.md`

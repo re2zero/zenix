@@ -30,8 +30,6 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - uses: Swatinem/rust-cache@v2
@@ -63,8 +61,6 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - run: rustup target add x86_64-apple-darwin
@@ -92,8 +88,6 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
       - uses: Swatinem/rust-cache@v2
@@ -128,8 +122,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Build and package (.deb) inside ${{ matrix.image }}
         run: |
@@ -159,13 +151,10 @@ jobs:
               curl --proto =https --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
               source "$HOME/.cargo/env"
 
-              curl -L https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz \
-                | tar -xJ -C /usr/local
-              ln -s /usr/local/zig-x86_64-linux-0.16.0/zig /usr/local/bin/zig
-
+              # The daemon is a pinned release binary, not a source build:
+              # vendor/herdr-pins.tsv names the version and its SHA-256.
+              ./scripts/fetch-herdr.sh
               cargo build --release
-              cd herdr && cargo build --release && cd ..
-              cp herdr/target/release/herdr target/release/ 2>/dev/null || true
 
               # The .deb layout is [package.metadata.deb] in Cargo.toml — the one
               # source of truth for the asset list and the control file. The
@@ -233,7 +222,7 @@ jobs:
               cp LICENSE "${APPDIR}/usr/share/doc/zenix/copyright"
               cp THIRD-PARTY.md "${APPDIR}/usr/share/doc/zenix/"
               cp assets/fonts/OFL.txt "${APPDIR}/usr/share/doc/zenix/Lilex-OFL.txt"
-              cp herdr/LICENSE "${APPDIR}/usr/share/doc/zenix/herdr/LICENSE"
+              cp licenses/herdr/LICENSE "${APPDIR}/usr/share/doc/zenix/herdr/LICENSE"
               cp vendor/herdr-client/LICENSE-APACHE vendor/herdr-client/NOTICE.md \
                 "${APPDIR}/usr/share/doc/zenix/herdr-client/"
               cp vendor/herdr-protocol/LICENSE-APACHE vendor/herdr-protocol/NOTICE.md \
@@ -274,7 +263,7 @@ jobs:
               # and no themes — the Lilex faces are compiled into the binary and
               # nothing reads assets/themes/. zenix.spec installs these into
               # %{_docdir}/zenix/, so they have to be in the tarball.
-              src_files="$src_files THIRD-PARTY.md assets/fonts/OFL.txt herdr/LICENSE"
+              src_files="$src_files THIRD-PARTY.md assets/fonts/OFL.txt licenses/herdr/LICENSE"
               src_files="$src_files vendor/herdr-client/LICENSE-APACHE vendor/herdr-client/NOTICE.md"
               src_files="$src_files vendor/herdr-protocol/LICENSE-APACHE vendor/herdr-protocol/NOTICE.md"
               test -f README.md && src_files="$src_files README.md"
@@ -315,8 +304,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
 
       - name: Build and package inside Arch Linux container
         run: |
@@ -327,17 +314,13 @@ jobs:
             archlinux:latest \
             bash -e -c '
               pacman -Sy --noconfirm \
-                base-devel rustup git zstd \
+                base-devel rustup git zstd curl \
                 libxcb libxkbcommon libxkbcommon-x11 \
                 fontconfig \
                 freetype2 expat wayland libglvnd
 
-              # pacman zig may lag behind the required 0.16.0
-              curl -L https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz \
-                | tar -xJ -C /usr/local
-              ln -s /usr/local/zig-x86_64-linux-0.16.0/zig /usr/local/bin/zig
-
               rustup default stable
+              ./scripts/fetch-herdr.sh
               cargo build --release
 
               version="${GITHUB_REF_NAME#v}"
@@ -366,7 +349,7 @@ jobs:
               cp LICENSE "${P}/usr/share/doc/zenix/copyright"
               cp THIRD-PARTY.md "${P}/usr/share/doc/zenix/"
               cp assets/fonts/OFL.txt "${P}/usr/share/doc/zenix/Lilex-OFL.txt"
-              cp herdr/LICENSE "${P}/usr/share/doc/zenix/herdr/LICENSE"
+              cp licenses/herdr/LICENSE "${P}/usr/share/doc/zenix/herdr/LICENSE"
               cp vendor/herdr-client/LICENSE-APACHE vendor/herdr-client/NOTICE.md \
                 "${P}/usr/share/doc/zenix/herdr-client/"
               cp vendor/herdr-protocol/LICENSE-APACHE vendor/herdr-protocol/NOTICE.md \

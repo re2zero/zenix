@@ -9,7 +9,7 @@
 //! hazards worth stopping on, and the review surface draws it. Nothing here
 //! executes a plugin or writes anything — it reads one file and reports.
 //!
-//! Verified against the daemon at the submodule tag v0.9.3:
+//! Verified against the daemon 0.9.5 (`vendor/herdr-pins.tsv`):
 //!
 //! * `src/app/api/plugins/manifest.rs:12` (`RawPluginManifest`) is the parser.
 //!   The TOML section names are its own field names — `[[build]]`,

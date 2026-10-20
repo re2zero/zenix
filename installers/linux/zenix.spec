@@ -72,7 +72,7 @@ architecture, plus system monitoring and plugin support.
 %{__install} -Dm644 LICENSE                             %{buildroot}%{_docdir}/zenix/LICENSE
 %{__install} -Dm644 THIRD-PARTY.md                      %{buildroot}%{_docdir}/zenix/THIRD-PARTY.md
 %{__install} -Dm644 assets/fonts/OFL.txt                %{buildroot}%{_docdir}/zenix/Lilex-OFL.txt
-%{__install} -Dm644 herdr/LICENSE                       %{buildroot}%{_docdir}/zenix/herdr/LICENSE
+%{__install} -Dm644 licenses/herdr/LICENSE                       %{buildroot}%{_docdir}/zenix/herdr/LICENSE
 %{__install} -Dm644 vendor/herdr-client/LICENSE-APACHE  %{buildroot}%{_docdir}/zenix/herdr-client/LICENSE-APACHE
 %{__install} -Dm644 vendor/herdr-client/NOTICE.md       %{buildroot}%{_docdir}/zenix/herdr-client/NOTICE.md
 %{__install} -Dm644 vendor/herdr-protocol/LICENSE-APACHE %{buildroot}%{_docdir}/zenix/herdr-protocol/LICENSE-APACHE

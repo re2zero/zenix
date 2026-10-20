@@ -66,7 +66,7 @@ assets = [
     ["LICENSE", "usr/share/doc/zenix/copyright", "644"],
     ["THIRD-PARTY.md", "usr/share/doc/zenix/", "644"],
     ["assets/fonts/OFL.txt", "usr/share/doc/zenix/Lilex-OFL.txt", "644"],
-    ["herdr/LICENSE", "usr/share/doc/zenix/herdr/LICENSE", "644"],
+    ["licenses/herdr/LICENSE", "usr/share/doc/zenix/herdr/LICENSE", "644"],
     [
         "vendor/herdr-client/LICENSE-APACHE",
         "usr/share/doc/zenix/herdr-client/LICENSE-APACHE",

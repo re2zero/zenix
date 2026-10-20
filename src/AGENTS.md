@@ -150,7 +150,7 @@ src/
 - **No local PTY**: daemon panes are the only terminal source
 
 ## ANTI-PATTERNS
-- ❌ Direct cargo run without the installed herdr or `HERDR_BUILD=1`
+- ❌ Building without the daemon seed — `scripts/fetch-herdr.sh` writes `res/herdr`; a dev build without it silently uses whatever herdr is installed
 - ❌ unwrap() in production paths
 - ❌ Mutating state in render() anywhere other than the recorded `Regions::views` and
   `use_keyed_state` call sites

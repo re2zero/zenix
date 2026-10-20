@@ -54,6 +54,29 @@ fn main() -> ExitCode {
     let mut surface = false;
     let mut mismatch = false;
 
+    // The daemon on this machine need not be the release this client pinned.
+    // Generation 1 keeps them talking, but the seed and the running daemon
+    // disagreeing silently is what the pin exists to stop, so it is printed
+    // rather than assumed.
+    match daemon_version() {
+        Some(version) => {
+            let pinned = zenix::herdr::UPSTREAM_VERSION;
+            if version == pinned {
+                println!("version: daemon={version} pinned={pinned} match=true");
+            } else {
+                println!("version: daemon={version} pinned={pinned} match=false");
+                eprintln!(
+                    "warning: the running daemon is herdr {version}, this client was built \
+                     against {pinned} (vendor/herdr-pins.tsv)"
+                );
+            }
+        }
+        None => println!(
+            "version: daemon=unknown pinned={} match=unknown",
+            zenix::herdr::UPSTREAM_VERSION
+        ),
+    }
+
     while !(welcome && snapshot && surface) {
         let remaining = DEADLINE.saturating_sub(started.elapsed());
         if remaining.is_zero() {
@@ -171,6 +194,24 @@ fn main() -> ExitCode {
     }
 }
 
+/// The version the daemon binary reports, when one can be run.
+///
+/// `HERDR_BINARY` is the copy `build.rs` placed next to this binary; a build
+/// without a seed has no value there, and the daemon on PATH is the next best
+/// answer.
+fn daemon_version() -> Option<String> {
+    let binary = option_env!("HERDR_BINARY").unwrap_or("herdr");
+    let output = std::process::Command::new(binary)
+        .arg("--version")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&output.stdout);
+    text.split_whitespace().nth(1).map(str::to_owned)
+}
+
 fn print_surface(frame: &PaneSurfaceFrame) {
     let cursor = frame
         .frame
@@ -195,13 +236,17 @@ fn print_surface(frame: &PaneSurfaceFrame) {
     );
     for pane in &frame.panes {
         println!(
-            "  pane {} rect={}x{}@({},{}) scroll={} focused={} alternate_screen={} \
-             mouse_reporting={}",
+            "  pane {} rect={}x{}@({},{}) inner={}x{}@({},{}) scroll={} focused={} \
+             alternate_screen={} mouse_reporting={}",
             pane.pane_id,
             pane.rect.width,
             pane.rect.height,
             pane.rect.x,
             pane.rect.y,
+            pane.inner_rect.width,
+            pane.inner_rect.height,
+            pane.inner_rect.x,
+            pane.inner_rect.y,
             pane.scroll.is_some(),
             pane.focused,
             pane.alternate_screen_active,

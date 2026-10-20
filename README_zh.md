@@ -45,14 +45,15 @@ src/
 res/
   zenix.desktop            桌面入口
   zenix.png                应用图标
-  herdr                    发布构建的 herdr（deb 首启种子）
+  herdr                    pin 的 daemon（脚本下载，不进 git）：包里的首启种子
 assets/
   fonts/                   Lilex 字体族（经 include_bytes! 编译进二进制）
   themes/                  主题 JSON（尚未接入客户端）
   prompts/                 编排器提示词（播种到配置目录）
-herdr/                     Git 子模块（ogulcancelik/herdr, v0.9.3）
-vendor/                   内嵌端点 crate（与上游逐字节相同）
-build.rs                   让 herdr 可用：dev 复制已安装件，release 从子模块构建
+licenses/herdr/            herdr 的 Apache-2.0 许可文本（随包发布）
+vendor/                   端点协议与客户端（herdr-gpui 副本）+ daemon 版本 pin
+scripts/fetch-herdr.sh     下载 pin 的 herdr 发行版到 res/herdr（校验 SHA-256）
+build.rs                   把 res/herdr 复制到客户端旁；release 按 pin 校验
 ```
 
 ## 依赖与许可证
@@ -73,7 +74,9 @@ zenix 本体使用 **GPL-3.0-or-later**（详见 [LICENSE](LICENSE)），第三�
 
 - Rust 1.85+（edition 2024）
 - 系统库：`libxcb1-dev`、`libxkbcommon-dev`、`libxkbcommon-x11-dev`、`libfontconfig1-dev`、`libfreetype6-dev`、`libexpat1-dev`、`libwayland-dev`、`libegl1-mesa-dev`、`libgl1-mesa-dev`、`pkg-config`
-- **Zig 0.16.0** —— 仅当从子模块构建 herdr（即任何发布构建）时需要；版本必须精确，herdr 的 `build.zig.zon` 拒绝其它版本。
+- **不需要 Zig，也没有子模块** —— herdr daemon 是 pin 住的发行版二进制（版本 + SHA-256 记在
+  `vendor/herdr-pins.tsv`）。跑一次 `scripts/fetch-herdr.sh` 生成 `res/herdr`；GitHub 慢时把
+  `HERDR_DOWNLOAD_BASE` 指向镜像。
 
 ```bash
 # 安装系统依赖（Debian/Ubuntu/Deepin）
@@ -81,26 +84,27 @@ sudo apt install libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev \
   libfontconfig1-dev libfreetype6-dev libexpat1-dev libwayland-dev \
   libegl1-mesa-dev libgl1-mesa-dev pkg-config
 
-# 克隆（含子模块）
-git clone --recurse-submodules <repo-url>
+# 克隆并取 pin 的 daemon
+git clone <repo-url>
 cd zenix
+./scripts/fetch-herdr.sh
 ```
 
 ### 开发运行
 
 ```bash
-# 使用系统已安装的 herdr（快速）
+# 使用 res/herdr（上面已下载）
 cargo run
 
-# 强制从子模块构建 herdr（需要 Zig）
-HERDR_BUILD=1 ZIG=/path/to/zig-0.16.0/zig cargo run
+# 没有 seed 时 dev 回落到系统已装 herdr
+cargo run
 ```
 
 ### 发布构建与打包
 
 ```bash
-# 完整发布构建：从子模块构建 herdr，并刷新 res/herdr
-ZIG=/path/to/zig-0.16.0/zig cargo build --release
+# 发布构建：按 pin 校验 res/herdr，然后打包
+cargo build --release
 
 # 构建 .deb（会先跑发布构建）
 cargo deb

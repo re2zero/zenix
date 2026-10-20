@@ -72,7 +72,7 @@ Source: "res\zenix.png"; DestDir: "{app}"; Flags: ignoreversion
 Source: "LICENSE"; DestDir: "{app}\doc"; Flags: ignoreversion
 Source: "THIRD-PARTY.md"; DestDir: "{app}\doc"; Flags: ignoreversion
 Source: "assets\fonts\OFL.txt"; DestDir: "{app}\doc"; DestFileName: "Lilex-OFL.txt"; Flags: ignoreversion
-Source: "herdr\LICENSE"; DestDir: "{app}\doc\herdr"; Flags: ignoreversion
+Source: "licenses\herdr\LICENSE"; DestDir: "{app}\doc\herdr"; Flags: ignoreversion
 Source: "vendor\herdr-client\LICENSE-APACHE"; DestDir: "{app}\doc\herdr-client"; Flags: ignoreversion
 Source: "vendor\herdr-client\NOTICE.md"; DestDir: "{app}\doc\herdr-client"; Flags: ignoreversion
 Source: "vendor\herdr-protocol\LICENSE-APACHE"; DestDir: "{app}\doc\herdr-protocol"; Flags: ignoreversion
