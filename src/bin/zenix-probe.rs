@@ -107,6 +107,14 @@ fn main() -> ExitCode {
                         workspace.focused,
                     );
                 }
+                // The cockpit's roster follows this order. An active agent view
+                // (`agent.view.set`) is what makes it differ from the snapshot's
+                // own pane order.
+                println!(
+                    "  agent view: label={} order=[{}]",
+                    frame.agent_view_label.as_deref().unwrap_or("-"),
+                    frame.agent_order.join(", "),
+                );
             }
             Ok(ClientEvent::Surface(frame)) => {
                 surface = true;

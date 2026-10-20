@@ -36,6 +36,7 @@ use std::time::Duration;
 use crossbeam_channel::{Receiver, Sender};
 use serde_json::{Value, json};
 
+use crate::ai::endpoint::{ApiEndpoint, ReadSource};
 use crate::herdr::api::{ApiClient, ApiError, Line};
 
 /// How many transitions are kept. The cockpit is a window on what is happening,
@@ -140,6 +141,35 @@ pub(crate) fn tail_lines(text: &str, shown: usize) -> Vec<String> {
         .collect();
     rows.reverse();
     rows
+}
+
+/// Read every agent's tail, keyed by pane.
+///
+/// The reads are serial on purpose. A local `pane.read` costs about 0.2 ms, so
+/// a fleet of eight is read in under 2 ms; and the daemon reads each
+/// connection's first request byte by polling in 100 ms steps
+/// (`herdr/src/api/server.rs:699-738`), so connections that arrive together are
+/// regularly parked for one of those sleeps. Measured with
+/// `.relay/notes/zenix-tail-read-bench.sh`: eight panes take 1.8 ms in a row and
+/// 101 ms from eight threads. Overlapping the reads loses the race it was meant
+/// to win.
+pub(crate) fn read_tails(endpoint: &ApiEndpoint, panes: &[String]) -> Tails {
+    let mut tails = Tails::new();
+    for pane_id in panes {
+        let (lines, error) = match endpoint.read_pane(pane_id, ReadSource::Recent, TAIL_ROWS) {
+            Ok(read) => (tail_lines(&read.text, TAIL_SHOWN), None),
+            Err(error) => (Vec::new(), Some(error.to_string())),
+        };
+        tails.insert(
+            pane_id.clone(),
+            Tail {
+                at_unix_ms: crate::events::now_unix_ms(),
+                lines,
+                error,
+            },
+        );
+    }
+    tails
 }
 
 /// The stream: one worker thread, one cache, one pulse channel.

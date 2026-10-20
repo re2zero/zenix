@@ -267,7 +267,7 @@ fn agent_row(index: usize, agent: &ClientShellAgent, invocation: &Invocation) ->
 /// Agents in the daemon's order. `agent_order` is a pane-id list that only
 /// carries meaning while an agent view is active; without one the snapshot's
 /// own order stands.
-fn ordered_agents(snapshot: &ClientShellSnapshot) -> Vec<&ClientShellAgent> {
+pub(crate) fn ordered_agents(snapshot: &ClientShellSnapshot) -> Vec<&ClientShellAgent> {
     if snapshot.agent_view_label.is_some() {
         let ordered: Vec<&ClientShellAgent> = snapshot
             .agent_order

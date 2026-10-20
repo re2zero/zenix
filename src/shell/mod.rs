@@ -29,10 +29,10 @@ use gpui_kit::component::{ActiveTheme, ThemeMode, h_flex, v_flex};
 use gpui_kit::*;
 use herdr_client::protocol::{ClientShellSnapshot, ClientShellTab};
 
-use crate::ai::endpoint::{ApiEndpoint, ReadSource};
+use crate::ai::endpoint::ApiEndpoint;
 use crate::config::{self, ASIDE_WIDTH_DEFAULT, ConfigStore, SIDEBAR_WIDTH_DEFAULT};
 use crate::events::{EventState, Stream};
-use crate::fleet::{FleetState, TAIL_ROWS, TAIL_SHOWN, Tail, Tails, tail_lines};
+use crate::fleet::{FleetState, Tails, read_tails};
 use crate::herdr::Connection;
 use crate::herdr::api::ApiClient;
 use crate::layout::{self, LayoutState};
@@ -400,27 +400,7 @@ impl ShellView {
         cx.spawn(async move |shell, cx| {
             let tails = cx
                 .background_executor()
-                .spawn(async move {
-                    let now = crate::events::now_unix_ms();
-                    let mut tails = Tails::new();
-                    for pane_id in panes {
-                        let tail = match endpoint.read_pane(&pane_id, ReadSource::Recent, TAIL_ROWS)
-                        {
-                            Ok(read) => Tail {
-                                at_unix_ms: now,
-                                lines: tail_lines(&read.text, TAIL_SHOWN),
-                                error: None,
-                            },
-                            Err(error) => Tail {
-                                at_unix_ms: now,
-                                lines: Vec::new(),
-                                error: Some(error.to_string()),
-                            },
-                        };
-                        tails.insert(pane_id, tail);
-                    }
-                    tails
-                })
+                .spawn(async move { read_tails(&endpoint, &panes) })
                 .await;
             let _ = shell.update(cx, |shell, cx| {
                 shell.tails = tails;

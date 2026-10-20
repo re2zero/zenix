@@ -18,8 +18,9 @@
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{Theme, h_flex, v_flex};
 use gpui_kit::*;
-use herdr_client::protocol::ClientShellAgent;
+use herdr_client::protocol::{ClientShellAgent, ClientShellSnapshot};
 
+use super::panels::ordered_agents;
 use super::registry::{Builtin, Invocation, ShellRequest};
 use crate::events::age;
 use crate::fleet::{FleetState, Tail};
@@ -79,17 +80,9 @@ fn render(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyElement {
         // status, and the room the timelines took goes to the tails. Reading
         // both at once is what the height cannot afford.
         let timeline = invocation.tails.is_empty();
-        // Blocked first, then everything else in the daemon's own order: an
-        // agent waiting on a person is the one thing in the fleet worth reading
-        // before the rest.
-        let (blocked, rest): (Vec<&ClientShellAgent>, Vec<&ClientShellAgent>) = snapshot
-            .agents
-            .iter()
-            .partition(|agent| status_word(agent) == "blocked");
         column = column.children(
-            blocked
+            roster(snapshot)
                 .into_iter()
-                .chain(rest)
                 .take(ROSTER_SHOWN)
                 .enumerate()
                 .map(|(index, agent)| agent_row(index, agent, fleet, timeline, invocation)),
@@ -160,6 +153,22 @@ fn head(invocation: &Invocation) -> AnyElement {
             move |window, cx| clear(ShellRequest::ClearFleet, window, cx),
         ))
         .into_any_element()
+}
+
+/// The roster's order. With an agent view active the daemon has been told how
+/// to filter and sort the fleet, so its order is the one the reader asked for
+/// and the block does not second-guess it. Without a view there is no sort to
+/// respect, and blocked comes first: an agent waiting on a person is the one
+/// thing worth reading before the rest.
+fn roster(snapshot: &ClientShellSnapshot) -> Vec<&ClientShellAgent> {
+    let ordered = ordered_agents(snapshot);
+    if snapshot.agent_view_label.is_some() {
+        return ordered;
+    }
+    let (blocked, rest): (Vec<&ClientShellAgent>, Vec<&ClientShellAgent>) = ordered
+        .into_iter()
+        .partition(|agent| status_word(agent) == "blocked");
+    blocked.into_iter().chain(rest).collect()
 }
 
 /// One agent: its status and how long it has held it, and the transitions that
@@ -423,5 +432,73 @@ mod tests {
             "state_change_seq": 1, "focused": false, "state_labels": [], "tokens": [],
         }))
         .expect("an agent")
+    }
+
+    fn snapshot_with(agents: serde_json::Value) -> ClientShellSnapshot {
+        serde_json::from_value(serde_json::json!({
+            "boot_id": "boot", "revision": 1,
+            "update_install_command": "", "latest_release_notes_available": false,
+            "integration_updates_available": false, "worktree_directory": "",
+            "tab_bar_right_separator": "", "tab_bar_right": [], "agent_order": [],
+            "focused_workspace_id": "w1", "focused_tab_id": "w1:t1",
+            "focused_pane_id": "w1:p2",
+            "workspaces": [], "tabs": [], "panes": [],
+            "agents": agents, "commands": [],
+        }))
+        .expect("the fixture snapshot deserializes")
+    }
+
+    fn three_agents() -> serde_json::Value {
+        serde_json::json!([
+            {"pane_id": "w1:p1", "workspace_id": "w1", "tab_id": "w1:t1",
+             "name": "a", "agent_status": "idle", "state_change_seq": 1,
+             "focused": false, "state_labels": [], "tokens": []},
+            {"pane_id": "w1:p2", "workspace_id": "w1", "tab_id": "w1:t1",
+             "name": "b", "agent_status": "blocked", "state_change_seq": 2,
+             "focused": false, "state_labels": [], "tokens": []},
+            {"pane_id": "w1:p3", "workspace_id": "w1", "tab_id": "w1:t1",
+             "name": "c", "agent_status": "working", "state_change_seq": 3,
+             "focused": false, "state_labels": [], "tokens": []}
+        ])
+    }
+
+    /// Without an agent view there is no daemon sort to respect, and the block
+    /// promotes the agent that is waiting on a person.
+    #[test]
+    fn without_a_view_the_blocked_agent_comes_first() {
+        let snapshot = snapshot_with(three_agents());
+        let panes: Vec<&str> = roster(&snapshot)
+            .iter()
+            .map(|agent| agent.pane_id.as_str())
+            .collect();
+        assert_eq!(panes, ["w1:p2", "w1:p1", "w1:p3"]);
+    }
+
+    /// With a view active the daemon has been told how to filter and sort, so
+    /// its order wins over the block's own preference.
+    #[test]
+    fn an_active_view_keeps_the_daemons_order() {
+        let mut snapshot = snapshot_with(three_agents());
+        snapshot.agent_view_label = Some("working".into());
+        snapshot.agent_order = vec!["w1:p3".into(), "w1:p2".into(), "w1:p1".into()];
+        let panes: Vec<&str> = roster(&snapshot)
+            .iter()
+            .map(|agent| agent.pane_id.as_str())
+            .collect();
+        assert_eq!(panes, ["w1:p3", "w1:p2", "w1:p1"]);
+    }
+
+    /// An order that names no agent falls back to the snapshot, and the view
+    /// still suppresses the block's own promotion.
+    #[test]
+    fn an_empty_view_order_falls_back_to_the_snapshot() {
+        let mut snapshot = snapshot_with(three_agents());
+        snapshot.agent_view_label = Some("gone".into());
+        snapshot.agent_order = vec!["w9:p9".into()];
+        let panes: Vec<&str> = roster(&snapshot)
+            .iter()
+            .map(|agent| agent.pane_id.as_str())
+            .collect();
+        assert_eq!(panes, ["w1:p1", "w1:p2", "w1:p3"]);
     }
 }
