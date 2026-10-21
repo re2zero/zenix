@@ -63,7 +63,10 @@ echo "fetch-herdr: $version $asset"
 echo "  $url"
 tmp=$(mktemp "$repo_root/res/.herdr-XXXXXX")
 trap 'rm -f "$tmp"' EXIT
-curl -fL --retry 3 --retry-delay 2 -o "$tmp" "$url"
+# A bound on a hopeless link: GitHub's CDN measured ~13 KB/s from some networks,
+# which is 40 minutes for 29 MB and indistinguishable from a hang. Under 4 KB/s
+# for a minute is a dead download, and failing there leaves the seed alone.
+curl -fL --retry 3 --retry-delay 2 --speed-limit 4096 --speed-time 60 -o "$tmp" "$url"
 printf '%s  %s\n' "$sha" "$tmp" | sha256sum -c --status - \
   || { echo "fetch-herdr: the download does not match the pinned SHA-256" >&2; exit 1; }
 chmod 0755 "$tmp"
