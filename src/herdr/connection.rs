@@ -3,13 +3,9 @@
 //! The reader runs on its own thread and only ever locks the state for the
 //! length of one `apply`; the UI clones the state out for a paint. `on_change`
 //! is called after each applied event so a view can repaint without polling.
-//! A caller that needs a specific push — an orchestration tool waiting for a
-//! pane to print something, or for the daemon's answer to a command it queued —
-//! parks on the state's condvar via `wait_for_change`, woken by that same
-//! apply; nothing here polls the daemon.
+//! Nothing here polls the daemon.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -30,12 +26,9 @@ const DAEMON_POLL: Duration = Duration::from_millis(50);
 /// state.
 #[derive(Clone)]
 pub(crate) struct Connection {
-    /// The pushed state, plus the condvar a caller parks on to be woken by the
-    /// next applied event. Waiting here is what lets an orchestration tool
-    /// await a pane's output without polling the daemon.
-    changed: Arc<(Mutex<LiveState>, Condvar)>,
+    /// The pushed state, cloned out for each paint.
+    changed: Arc<Mutex<LiveState>>,
     handle: Arc<Mutex<Option<ClientHandle>>>,
-    stopped: Arc<AtomicBool>,
 }
 
 impl Connection {
@@ -45,21 +38,17 @@ impl Connection {
         target: ConnectTarget,
         on_change: impl Fn() + Send + 'static,
     ) -> Connection {
-        let changed = Arc::new((Mutex::new(LiveState::default()), Condvar::new()));
+        let changed = Arc::new(Mutex::new(LiveState::default()));
         let handle = Arc::new(Mutex::new(None));
-        let stopped = Arc::new(AtomicBool::new(false));
 
         let connection = Connection {
             changed: changed.clone(),
             handle: handle.clone(),
-            stopped: stopped.clone(),
         };
 
-        let reader_state = changed;
-        let reader_handle = handle;
         thread::Builder::new()
             .name("zenix-herdr".into())
-            .spawn(move || read_events(target, reader_state, reader_handle, stopped, on_change))
+            .spawn(move || read_events(target, changed, handle, on_change))
             .expect("failed to spawn the herdr reader thread");
 
         connection
@@ -67,7 +56,7 @@ impl Connection {
 
     /// A copy of the current state, for one paint.
     pub(crate) fn state(&self) -> LiveState {
-        lock(&self.changed.0).clone()
+        lock(&self.changed).clone()
     }
 
     /// Remove and return the pending OSC 52 clipboard payloads, oldest first.
@@ -77,11 +66,11 @@ impl Connection {
     /// would leave the reader's queue intact and the same payloads would be
     /// delivered again on the next pull.
     pub(crate) fn take_clipboard(&self) -> Vec<String> {
-        lock(&self.changed.0).take_clipboard()
+        lock(&self.changed).take_clipboard()
     }
 
     pub(crate) fn footer(&self) -> Option<String> {
-        let state = lock(&self.changed.0);
+        let state = lock(&self.changed);
         if let Some(error) = &state.error {
             return Some(error.clone());
         }
@@ -222,99 +211,14 @@ impl Connection {
     /// Record a request the daemon has been handed, so a caller can wait for
     /// its answer through `LiveState::has_in_flight`.
     fn note(&self, request_id: String) {
-        lock(&self.changed.0).note_request(request_id);
+        lock(&self.changed).note_request(request_id);
     }
 
     /// Whether a command is still waiting for its answer, read from the shared
     /// state rather than a view's pulled copy: an answer does not change the
     /// revision, so that copy stays stale exactly while a drag waits on it.
     pub(crate) fn has_in_flight(&self) -> bool {
-        lock(&self.changed.0).has_in_flight()
-    }
-
-    /// The revision a caller passes to `wait_for_change` to be woken by the
-    /// next change rather than by one it already saw.
-    pub(crate) fn revision(&self) -> u64 {
-        lock(&self.changed.0).revision
-    }
-
-    /// Park until the state moves past `seen`, or `timeout` elapses. Returns
-    /// whether it moved. Every applied event notifies, so this is a push wait:
-    /// nothing here asks the daemon anything.
-    pub(crate) fn wait_for_change(&self, seen: u64, timeout: Duration) -> bool {
-        let (mutex, condvar) = &*self.changed;
-        let mut guard = mutex.lock().unwrap_or_else(PoisonError::into_inner);
-        let deadline = Instant::now() + timeout;
-        loop {
-            if guard.revision != seen {
-                return true;
-            }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if remaining.is_zero() {
-                return false;
-            }
-            let (next, timed_out) = condvar
-                .wait_timeout(guard, remaining)
-                .unwrap_or_else(PoisonError::into_inner);
-            guard = next;
-            if timed_out.timed_out() && guard.revision == seen {
-                return false;
-            }
-        }
-    }
-
-    /// Hand one command to the daemon and wait for its answer payload. `None`
-    /// when the connection was not ready, the daemon refused the command, the
-    /// connection ended, or nothing arrived within `timeout` — a caller that
-    /// only needs the queueing to succeed uses `request` instead.
-    pub(crate) fn request_await(
-        &self,
-        method: Method,
-        params: Value,
-        timeout: Duration,
-    ) -> Option<Value> {
-        let seen = self.revision();
-        let request_id = self.request(method, params)?;
-        self.await_answer(&request_id, seen, timeout)
-    }
-
-    /// Wait for the answer to a request already queued. `seen` is the revision
-    /// read before queueing it.
-    pub(crate) fn await_answer(
-        &self,
-        request_id: &str,
-        mut seen: u64,
-        timeout: Duration,
-    ) -> Option<Value> {
-        let deadline = Instant::now() + timeout;
-        loop {
-            {
-                let mut state = lock(&self.changed.0);
-                if let Some(answer) = state.take_answer(request_id) {
-                    return Some(answer);
-                }
-                // A command the daemon refused, and a disconnect that retired
-                // it, will never be answered: stop instead of spending the
-                // whole timeout on it.
-                if !state.in_flight.contains(request_id) {
-                    return None;
-                }
-            }
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            if !self.wait_for_change(seen, remaining) {
-                return lock(&self.changed.0).take_answer(request_id);
-            }
-            seen = self.revision();
-        }
-    }
-
-    /// Stops the reader and closes the endpoint. No caller today: this is the
-    /// window-close hook wired in M4.
-    pub(crate) fn disconnect(&self) {
-        self.stopped.store(true, Ordering::Release);
-        if let Some(handle) = self.handle() {
-            handle.disconnect();
-        }
+        lock(&self.changed).has_in_flight()
     }
 
     fn handle(&self) -> Option<ClientHandle> {
@@ -322,23 +226,19 @@ impl Connection {
     }
 
     fn boot_id(&self) -> Option<String> {
-        lock(&self.changed.0).boot_id().map(str::to_owned)
+        lock(&self.changed).boot_id().map(str::to_owned)
     }
 }
 
 /// Ensure a daemon answers at `target`, then relay its events until it ends.
 fn read_events(
     target: ConnectTarget,
-    state: Arc<(Mutex<LiveState>, Condvar)>,
+    state: Arc<Mutex<LiveState>>,
     handle_slot: Arc<Mutex<Option<ClientHandle>>>,
-    stopped: Arc<AtomicBool>,
     on_change: impl Fn(),
 ) {
-    // Applying an event and waking the parked waiters belong together: a
-    // waiter that arrived after `apply` but before the notify would miss it.
     let fail = |reason: String| {
-        lock(&state.0).apply(ClientEvent::Disconnected { reason, ssh: None });
-        state.1.notify_all();
+        lock(&state).apply(ClientEvent::Disconnected { reason, ssh: None });
         on_change();
     };
 
@@ -357,23 +257,20 @@ fn read_events(
     *lock(&handle_slot) = Some(client.handle.clone());
 
     while let Ok(event) = client.events.recv() {
-        lock(&state.0).apply(event);
-        state.1.notify_all();
+        lock(&state).apply(event);
         on_change();
     }
 
     lock(&handle_slot).take();
-    let reason = if stopped.load(Ordering::Acquire) {
-        "disconnected".to_owned()
-    } else {
-        "the daemon closed the endpoint".to_owned()
-    };
-    let mut live = lock(&state.0);
+    let reason = "the daemon closed the endpoint";
+    let mut live = lock(&state);
     if live.status != ConnectionStatus::Disconnected {
-        live.apply(ClientEvent::Disconnected { reason, ssh: None });
+        live.apply(ClientEvent::Disconnected {
+            reason: reason.to_owned(),
+            ssh: None,
+        });
     }
     drop(live);
-    state.1.notify_all();
     on_change();
 }
 

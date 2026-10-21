@@ -4,7 +4,7 @@
 //! the branches a terminal pane needs are carried over; notifications, sounds,
 //! integrations and agent recency stay upstream.
 
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeSet, VecDeque};
 use std::sync::Arc;
 
 use herdr_client::ClientEvent;
@@ -16,12 +16,6 @@ pub(crate) enum ConnectionStatus {
     AwaitingSnapshot,
     Connected,
     Disconnected,
-}
-
-impl ConnectionStatus {
-    pub(crate) fn is_connected(self) -> bool {
-        matches!(self, Self::AwaitingSnapshot | Self::Connected)
-    }
 }
 
 /// The live view of one daemon connection. Cloned out of the connection's
@@ -49,14 +43,6 @@ pub(crate) struct LiveState {
     /// The last command the daemon refused, with its reason. Cleared by the
     /// next request the daemon accepts.
     pub(crate) rejected: Option<String>,
-    /// Answers to commands a caller is waiting on, by request id. A caller that
-    /// needs the daemon's payload (an orchestration tool reporting what a pane
-    /// printed, say) parks on the revision and then takes its answer; a caller
-    /// that only queues a command never touches this.
-    answers: HashMap<String, serde_json::Value>,
-    /// Insertion order of `answers`, so the map stays bounded on a long-lived
-    /// connection where some answers are never taken.
-    answer_order: VecDeque<String>,
 }
 
 impl Default for LiveState {
@@ -71,8 +57,6 @@ impl Default for LiveState {
             revision: 0,
             in_flight: BTreeSet::new(),
             rejected: None,
-            answers: HashMap::new(),
-            answer_order: VecDeque::new(),
         }
     }
 }
@@ -131,9 +115,6 @@ impl LiveState {
                 if let Some(message) = error_message(&response) {
                     self.rejected = Some(message.to_owned());
                 }
-                // The payload is kept for a caller waiting on this answer, and
-                // the revision moves so that waiter wakes instead of spinning.
-                self.remember_answer(request_id, response);
                 self.revision += 1;
             }
             ClientEvent::CommandRejected { request_id, reason } => {
@@ -174,28 +155,6 @@ impl LiveState {
     /// the base64 rules.
     pub(crate) fn take_clipboard(&mut self) -> Vec<String> {
         self.clipboard_writes.drain(..).collect()
-    }
-
-    /// Keep one answer for a waiting caller, bounded to the newest few: most
-    /// answers belong to callers that only needed the queueing to succeed.
-    fn remember_answer(&mut self, request_id: String, response: serde_json::Value) {
-        const MAX_ANSWERS: usize = 16;
-        if !self.answers.contains_key(&request_id) {
-            self.answer_order.push_back(request_id.clone());
-        }
-        self.answers.insert(request_id, response);
-        while self.answer_order.len() > MAX_ANSWERS {
-            if let Some(expired) = self.answer_order.pop_front() {
-                self.answers.remove(&expired);
-            }
-        }
-    }
-
-    /// Remove and return the answer to `request_id`, if it has arrived.
-    pub(crate) fn take_answer(&mut self, request_id: &str) -> Option<serde_json::Value> {
-        let answer = self.answers.remove(request_id)?;
-        self.answer_order.retain(|id| id != request_id);
-        Some(answer)
     }
 
     /// Record a command the daemon has been handed. The rejection of an
@@ -346,37 +305,6 @@ mod tests {
             response: serde_json::json!({"id": "request-1", "result": {"type": "ok"}}),
         });
         assert!(state.rejected.is_none());
-    }
-
-    #[test]
-    fn an_answer_is_kept_for_its_caller_and_taken_once() {
-        let mut state = LiveState::default();
-        let before = state.revision;
-        state.note_request("request-1".into());
-        state.apply(ClientEvent::Response {
-            request_id: "request-1".into(),
-            response: serde_json::json!({
-                "id": "request-1",
-                "result": {"type": "pane_read", "read": {"text": "hello"}},
-            }),
-        });
-        assert!(state.revision > before, "a waiter parks on the revision");
-        let answer = state.take_answer("request-1").expect("the answer landed");
-        assert_eq!(answer["result"]["read"]["text"], "hello");
-        assert!(state.take_answer("request-1").is_none());
-    }
-
-    #[test]
-    fn an_untaken_answer_does_not_grow_without_bound() {
-        let mut state = LiveState::default();
-        for index in 0..20 {
-            state.apply(ClientEvent::Response {
-                request_id: format!("request-{index}"),
-                response: serde_json::json!({"id": format!("request-{index}")}),
-            });
-        }
-        assert!(state.take_answer("request-0").is_none());
-        assert!(state.take_answer("request-19").is_some());
     }
 
     #[test]
