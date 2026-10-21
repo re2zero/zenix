@@ -597,7 +597,6 @@ mod tests {
     use std::prelude::v1::test;
 
     use crate::plugins::model::{ManifestEventHook, ManifestPane, Placement};
-    use crate::plugins::ui_manifest::UiContributions;
 
     fn plugin(id: &str) -> InstalledPlugin {
         InstalledPlugin {
@@ -628,7 +627,7 @@ mod tests {
         assert!(builtin.iter().all(|count| *count > 0), "{builtin:?}");
         assert!(empty.iter().all(|(_, _, plugins)| *plugins == 0));
 
-        let declared = UiContributions::parse(
+        let declared = crate::plugins::ui_manifest::parse(
             "a",
             std::path::Path::new("/tmp/plugin"),
             r#"
@@ -738,8 +737,6 @@ action = "one"
             event: event.map(str::to_owned),
             command: vec!["true".into()],
             status,
-            started_unix_ms: 1,
-            finished_unix_ms: Some(2),
             exit_code,
             stdout: None,
             stderr: None,

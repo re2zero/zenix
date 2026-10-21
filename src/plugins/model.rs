@@ -89,13 +89,6 @@ impl Placement {
             Self::Zoomed => "zoomed",
         }
     }
-
-    /// Whether the daemon answers an open with a pane this client can address
-    /// again. A popup is a singleton terminal the daemon owns, not a pane: the
-    /// open reports no id and a second one is refused as `ui_busy`.
-    pub(crate) fn has_pane_id(self) -> bool {
-        !matches!(self, Self::Popup)
-    }
 }
 
 /// One action, as `plugin.action.list` reports it.
@@ -216,9 +209,6 @@ pub(crate) struct PluginCommandLog {
     #[serde(default)]
     pub(crate) command: Vec<String>,
     pub(crate) status: LogStatus,
-    pub(crate) started_unix_ms: u64,
-    #[serde(default)]
-    pub(crate) finished_unix_ms: Option<u64>,
     #[serde(default)]
     pub(crate) exit_code: Option<i32>,
     #[serde(default)]
@@ -303,8 +293,6 @@ pub(crate) struct OwnedPane {
 /// the `PaneInfo` arrives in the snapshot anyway.
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct OpenedPane {
-    pub(crate) plugin_id: String,
-    pub(crate) entrypoint: String,
     pub(crate) pane: PaneId,
 }
 
@@ -468,15 +456,13 @@ mod tests {
     fn placements_round_trip_through_the_daemons_spelling() {
         assert_eq!(Placement::default(), Placement::Overlay);
         assert_eq!(Placement::Split.as_str(), "split");
-        assert!(!Placement::Popup.has_pane_id());
-        assert!(Placement::Tab.has_pane_id());
     }
 
     #[test]
     fn a_log_outcome_leads_with_its_status_and_the_lines_that_matter() {
         let failed: PluginCommandLog = serde_json::from_value(serde_json::json!({
             "log_id": "plugin-log-5", "plugin_id": "zenix.m8probe", "action_id": "fail",
-            "command": ["sh", "fail.sh"], "status": "failed", "started_unix_ms": 1,
+            "command": ["sh", "fail.sh"], "status": "failed",
             "exit_code": 7, "stdout": "before\n", "stderr": "deliberate failure\n",
         }))
         .expect("decodes a failed log");
@@ -498,8 +484,8 @@ mod tests {
     fn a_startup_hook_log_names_the_plugin_because_it_has_neither_action_nor_event() {
         let log: PluginCommandLog = serde_json::from_value(serde_json::json!({
             "log_id": "plugin-log-1", "plugin_id": "zenix.m8probe", "event": "startup",
-            "command": ["sh", "-c", "true"], "status": "succeeded", "started_unix_ms": 1,
-            "finished_unix_ms": 2, "exit_code": 0, "stdout": "started\n",
+            "command": ["sh", "-c", "true"], "status": "succeeded",
+            "exit_code": 0, "stdout": "started\n",
         }))
         .expect("decodes a startup log");
         assert_eq!(log.what(), "zenix.m8probe: startup");

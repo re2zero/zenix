@@ -316,8 +316,6 @@ mod tests {
             event: None,
             command: vec!["true".into()],
             status,
-            started_unix_ms: 1,
-            finished_unix_ms: None,
             exit_code: None,
             stdout: None,
             stderr: None,

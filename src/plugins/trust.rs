@@ -635,7 +635,14 @@ mod tests {
     fn a_preview_carries_the_ui_the_plugin_would_declare() {
         let dir = PluginDir::new("ui", HEADER);
         // No `zenix-ui.toml` yet: the plugin contributes functions only.
-        assert!(preview(&dir.0).expect("a readable manifest").ui.is_empty());
+        let ui = &preview(&dir.0).expect("a readable manifest").ui;
+        // No `zenix-ui.toml` means nothing mounted: no commands, slots, or items.
+        assert!(
+            ui.commands.is_empty()
+                && ui.sidebar_items.is_empty()
+                && ui.panels.is_empty()
+                && ui.status_items.is_empty()
+        );
         std::fs::write(
             dir.0.join("zenix-ui.toml"),
             r#"

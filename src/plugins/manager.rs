@@ -652,11 +652,6 @@ fn placement_label(placement: Placement) -> &'static str {
     placement.as_str()
 }
 
-/// The manager's own glyph, for a caller that wants to label the way in.
-pub(crate) fn icon() -> &'static [u8] {
-    br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h3a2 2 0 0 1 2 2v1.5a1.5 1.5 0 1 0 3 0V6h1a2 2 0 0 1 2 2v3h-1.5a1.5 1.5 0 1 0 0 3H20v3a2 2 0 0 1-2 2h-3v-1.5a1.5 1.5 0 1 0-3 0V19H9a2 2 0 0 1-2-2v-3H5.5a1.5 1.5 0 1 1 0-3H7V6a2 2 0 0 1 2-2Z"/></svg>"#
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -706,7 +701,7 @@ mod tests {
     /// mounts it as — the same four collections its badges are drawn from.
     #[test]
     fn every_declared_slot_is_named_once() {
-        let ui = UiContributions::parse(
+        let ui = crate::plugins::ui_manifest::parse(
             "board.app",
             std::path::Path::new("/tmp/board"),
             r#"

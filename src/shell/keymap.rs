@@ -247,7 +247,11 @@ mod tests {
     }
 
     fn catalog(text: &str) -> Catalog {
-        let ui = UiContributions::parse("board.app", std::path::Path::new("/tmp/board"), text);
+        let ui = crate::plugins::ui_manifest::parse(
+            "board.app",
+            std::path::Path::new("/tmp/board"),
+            text,
+        );
         Catalog::build(&[action("board.app", "sync")], &ui)
     }
 

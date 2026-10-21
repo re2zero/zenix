@@ -364,7 +364,7 @@ mod tests {
     /// One catalog entry, as the shell builds it from what the daemon reports
     /// and what the plugin declared.
     fn announced(key: &str) -> Arc<Exposed> {
-        let ui = UiContributions::parse(
+        let ui = crate::plugins::ui_manifest::parse(
             "example.board",
             std::path::Path::new("/tmp/board"),
             &format!(
@@ -540,7 +540,7 @@ key = "{key}"
     /// three.
     #[test]
     fn one_declaration_reaches_the_row_the_chord_and_the_tool() {
-        let ui = UiContributions::parse(
+        let ui = crate::plugins::ui_manifest::parse(
             "example.board",
             std::path::Path::new("/tmp/board"),
             r#"

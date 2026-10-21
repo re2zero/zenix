@@ -251,7 +251,7 @@ mod tests {
     }
 
     fn ui(text: &str) -> UiContributions {
-        UiContributions::parse("board.app", std::path::Path::new("/tmp/board"), text)
+        crate::plugins::ui_manifest::parse("board.app", std::path::Path::new("/tmp/board"), text)
     }
 
     /// The three surfaces are three projections of one entry, so a declaration's

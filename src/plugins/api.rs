@@ -188,7 +188,6 @@ mod tests {
             decode_field(&result, "plugin_pane", None).expect("a plugin pane");
         let opened = opened.expect("a pane id");
         assert_eq!(opened_pane_id(&opened), "w1:pA");
-        assert_eq!(opened.entrypoint, "p-overlay");
     }
 
     #[test]
@@ -199,11 +198,10 @@ mod tests {
             "context": {"invocation_source": "palette"},
             "log": {
                 "log_id": "plugin-log-1", "plugin_id": "a.b", "action_id": "x",
-                "command": ["true"], "status": "running", "started_unix_ms": 1,
+                "command": ["true"], "status": "running",
             },
         });
         let log: PluginCommandLog = required_field(&result, "log").expect("a log entry");
         assert_eq!(log.status, LogStatus::Running);
-        assert!(log.finished_unix_ms.is_none());
     }
 }

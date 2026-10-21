@@ -471,7 +471,7 @@ mod tests {
     }
 
     fn with_ui(text: &str) -> Registry {
-        Registry::new(&UiContributions::parse(
+        Registry::new(&crate::plugins::ui_manifest::parse(
             "a.b",
             std::path::Path::new("/tmp/zenix-ui-root"),
             text,

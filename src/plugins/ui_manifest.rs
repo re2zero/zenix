@@ -63,24 +63,6 @@ impl UiContributions {
             Err(error) => skipped(plugin_id, format!("{FILE_NAME} could not be read: {error}")),
         }
     }
-
-    /// The same, over text, for a caller that already has it.
-    pub(crate) fn parse(plugin_id: &str, plugin_root: &Path, text: &str) -> Self {
-        parse(plugin_id, plugin_root, text)
-    }
-
-    /// Whether anything at all would be mounted from this file.
-    pub(crate) fn is_empty(&self) -> bool {
-        self.commands.is_empty()
-            && self.sidebar_items.is_empty()
-            && self.panels.is_empty()
-            && self.status_items.is_empty()
-    }
-
-    /// The panel a `[[sidebar_item]]` names, if this file declares it.
-    pub(crate) fn panel(&self, local_id: &str) -> Option<&Arc<PanelSpec>> {
-        self.panels.iter().find(|panel| panel.local_id == local_id)
-    }
 }
 
 /// What every spec has in common: the plugin it belongs to, which kind of
@@ -434,7 +416,7 @@ struct RawSource {
 /// lives, and the daemon owns those).
 const DRAWN_PLACEMENT: &str = "drawer";
 
-fn parse(plugin_id: &str, plugin_root: &Path, text: &str) -> UiContributions {
+pub(crate) fn parse(plugin_id: &str, plugin_root: &Path, text: &str) -> UiContributions {
     let raw: RawManifest = match toml::from_str(text) {
         Ok(raw) => raw,
         Err(error) => return skipped(plugin_id, format!("{FILE_NAME} was not read: {error}")),
@@ -686,6 +668,15 @@ fn parse_version(text: &str) -> Option<(u32, u32, u32)> {
 mod tests {
     use super::*;
 
+    /// The production `is_empty` went with the mount path; the parser tests
+    /// only need "would nothing at all be mounted".
+    fn mounted_nothing(ui: &UiContributions) -> bool {
+        ui.commands.is_empty()
+            && ui.sidebar_items.is_empty()
+            && ui.panels.is_empty()
+            && ui.status_items.is_empty()
+    }
+
     /// The plugin root a declaration's source command would run in. Nothing
     /// here reads it: the specs only carry it.
     fn root() -> &'static Path {
@@ -727,13 +718,13 @@ format = "{count} WIP"
     #[test]
     fn a_missing_file_contributes_nothing_and_warns_about_nothing() {
         let ui = UiContributions::read("a.b", Path::new("/nonexistent/plugin-root"));
-        assert!(ui.is_empty());
+        assert!(mounted_nothing(&ui));
         assert!(ui.warnings.is_empty());
     }
 
     #[test]
     fn a_full_file_reads_as_declared() {
-        let ui = UiContributions::parse("a.b", root(), FIXTURE);
+        let ui = parse("a.b", root(), FIXTURE);
         assert!(ui.warnings.is_empty(), "{:?}", ui.warnings);
         assert_eq!(ui.commands.len(), 1);
         let command = &ui.commands[0];
@@ -753,7 +744,10 @@ format = "{count} WIP"
         assert_eq!(ui.status_items.len(), 1);
         assert_eq!(ui.status_items[0].format, "{count} WIP");
         assert_eq!(
-            ui.panel("board").map(|panel| panel.title.as_str()),
+            ui.panels
+                .iter()
+                .find(|panel| panel.local_id == "board")
+                .map(|panel| panel.title.as_str()),
             Some("Project board")
         );
     }
@@ -762,12 +756,12 @@ format = "{count} WIP"
     /// being half-read under today's rules.
     #[test]
     fn a_newer_schema_version_skips_the_whole_file() {
-        let ui = UiContributions::parse(
+        let ui = parse(
             "a.b",
             root(),
             "zenix_ui_version = 2\n\n[[command]]\nid = \"x\"\naction = \"x\"\n",
         );
-        assert!(ui.is_empty());
+        assert!(mounted_nothing(&ui));
         assert_eq!(ui.warnings.len(), 1);
         assert!(
             ui.warnings[0].contains("zenix_ui_version 2"),
@@ -778,15 +772,15 @@ format = "{count} WIP"
 
     #[test]
     fn a_file_asking_for_a_newer_client_is_skipped_whole() {
-        let ui = UiContributions::parse(
+        let ui = parse(
             "a.b",
             root(),
             "min_zenix_version = \"99.0.0\"\n\n[[panel]]\nid = \"x\"\n",
         );
-        assert!(ui.is_empty());
+        assert!(mounted_nothing(&ui));
         assert!(ui.warnings[0].contains("99.0.0"), "{:?}", ui.warnings);
         // The current client's own version is the gate, and it passes.
-        let current = UiContributions::parse(
+        let current = parse(
             "a.b",
             root(),
             "min_zenix_version = \"0.1.0\"\n\n[[panel]]\nid = \"x\"\n",
@@ -797,7 +791,7 @@ format = "{count} WIP"
 
     #[test]
     fn an_unparsable_minimum_version_only_warns() {
-        let ui = UiContributions::parse(
+        let ui = parse(
             "a.b",
             root(),
             "min_zenix_version = \"soon\"\n\n[[panel]]\nid = \"x\"\n",
@@ -815,7 +809,7 @@ format = "{count} WIP"
     /// view this client lists but cannot draw yet, and an unknown placement.
     #[test]
     fn unknown_views_and_placements_are_downgraded_with_a_warning() {
-        let ui = UiContributions::parse(
+        let ui = parse(
             "a.b",
             root(),
             r#"
@@ -840,14 +834,14 @@ view = "form"
 
     #[test]
     fn a_panel_without_a_view_is_drawn_as_key_value_without_a_warning() {
-        let ui = UiContributions::parse("a.b", root(), "[[panel]]\nid = \"x\"\n");
+        let ui = parse("a.b", root(), "[[panel]]\nid = \"x\"\n");
         assert_eq!(ui.panels[0].view, ViewKind::Kv);
         assert!(ui.warnings.is_empty(), "{:?}", ui.warnings);
     }
 
     #[test]
     fn unknown_contexts_are_dropped_and_unknown_top_level_fields_ignored() {
-        let ui = UiContributions::parse(
+        let ui = parse(
             "a.b",
             root(),
             r#"
@@ -867,7 +861,7 @@ also_unknown = 3
 
     #[test]
     fn a_declaration_without_an_id_or_action_is_skipped_not_fatal() {
-        let ui = UiContributions::parse(
+        let ui = parse(
             "a.b",
             root(),
             r#"
@@ -891,7 +885,7 @@ id = "ok"
 
     #[test]
     fn a_status_item_without_a_format_is_skipped() {
-        let ui = UiContributions::parse(
+        let ui = parse(
             "a.b",
             root(),
             "[[status_item]]\nid = \"wip\"\nsource = { command = [\"true\"] }\n",
@@ -904,7 +898,7 @@ id = "ok"
     /// for one has no data rather than a source that never fires.
     #[test]
     fn an_event_source_is_reported_and_leaves_the_declaration_without_data() {
-        let ui = UiContributions::parse(
+        let ui = parse(
             "a.b",
             root(),
             "[[panel]]\nid = \"x\"\n[panel.source]\nevent = \"worktree.created\"\n",
@@ -920,7 +914,7 @@ id = "ok"
 
     #[test]
     fn a_sidebar_item_naming_an_undeclared_panel_warns_and_keeps_its_row() {
-        let ui = UiContributions::parse(
+        let ui = parse(
             "a.b",
             root(),
             "[[sidebar_item]]\nid = \"board\"\ntitle = \"Board\"\npanel = \"nope\"\n",
@@ -936,19 +930,19 @@ id = "ok"
 
     #[test]
     fn plugin_settings_sections_are_counted_as_unmounted() {
-        let ui = UiContributions::parse(
+        let ui = parse(
             "a.b",
             root(),
             "[[settings_section]]\nid = \"general\"\ntitle = \"Layout\"\n",
         );
-        assert!(ui.is_empty());
+        assert!(mounted_nothing(&ui));
         assert!(ui.warnings[0].contains("settings"), "{:?}", ui.warnings);
     }
 
     #[test]
     fn a_file_that_is_not_toml_warns_instead_of_failing() {
-        let ui = UiContributions::parse("a.b", root(), "this is not = = toml");
-        assert!(ui.is_empty());
+        let ui = parse("a.b", root(), "this is not = = toml");
+        assert!(mounted_nothing(&ui));
         assert!(ui.warnings[0].contains("was not read"), "{:?}", ui.warnings);
     }
 
@@ -1040,7 +1034,7 @@ id = "ok"
         );
 
         let mounted = mounted_ui(&[plugin("a.one", &root, false)]);
-        assert!(mounted.is_empty());
+        assert!(mounted_nothing(&mounted));
         assert!(mounted.warnings.is_empty());
     }
 }

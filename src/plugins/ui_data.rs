@@ -460,7 +460,6 @@ mod tests {
     use super::*;
     use std::prelude::v1::test;
 
-    use super::super::ui_manifest::UiContributions;
 
     fn read_json(id: &str, command: &[&str]) -> Data {
         read_in(id, command, Path::new("/tmp"))
@@ -535,7 +534,7 @@ mod tests {
 
     #[test]
     fn loads_cover_panels_and_status_items_in_mount_order() {
-        let ui = UiContributions::parse(
+        let ui = crate::plugins::ui_manifest::parse(
             "a.b",
             std::path::Path::new("/tmp/zenix-ui-root"),
             r#"
@@ -581,7 +580,7 @@ title = "Quiet"
     /// is, because the bar is never hidden.
     #[test]
     fn a_panel_is_read_only_while_its_slot_is_on_screen() {
-        let ui = UiContributions::parse(
+        let ui = crate::plugins::ui_manifest::parse(
             "a.b",
             std::path::Path::new("/tmp/zenix-ui-root"),
             r#"
