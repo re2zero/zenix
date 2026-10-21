@@ -1,9 +1,11 @@
 //! The forward half of the MCP bridge: a plugin action, offered as an MCP tool.
 //!
-//! A plugin's actions already reach the command palette and the sidebar. This
-//! module is the same list seen from an agent's side: every action the daemon
-//! reports becomes one tool, and calling it runs the action and waits for the
-//! daemon to finish it.
+//! A plugin's actions already reach the command palette and, when the plugin
+//! declares a chord, the keymap. This module is the same list seen from an
+//! agent's side: every action the daemon reports becomes one tool, and calling
+//! it runs the action and waits for the daemon to finish it. All three come from
+//! one catalog ([`crate::plugins::actions`]), so the three cannot disagree about
+//! which actions exist.
 //!
 //! Two things are not what they look like:
 //!
@@ -12,9 +14,9 @@
 //!   tool name is read by an MCP client, and the format MCP settled on
 //!   (SEP-986: 1–64 characters of `A-Za-z0-9_-.`) is narrower than the API
 //!   lane's, with clients in the field narrower still. So every action is
-//!   exposed under a name built from `[A-Za-z0-9_]` only, and the mapping is a
-//!   pure function of the qualified id, which is why the list and the call agree
-//!   without either side remembering anything.
+//!   exposed under a name built from `[A-Za-z0-9_]` only, assigned once by the
+//!   catalog, which is why the list and the call agree without either side
+//!   remembering anything.
 //! * **The call blocks.** `plugin.action.invoke` answers as soon as the daemon
 //!   has *spawned* the command; the outcome is only ever written into the log
 //!   ring. A tool call has to answer with something, so this one polls the ring
@@ -23,9 +25,6 @@
 //! The read side is the daemon's, always: a tool list is one `plugin.action.list`
 //! per `tools/list`, never a cache a second client could disagree with.
 
-use std::collections::HashSet;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -34,18 +33,10 @@ use serde_json::{Map, Value, json};
 
 use super::handler::McpToolHandler;
 use crate::herdr::api::ApiClient;
+use crate::plugins::actions::{Catalog, Exposed};
 use crate::plugins::api as plugin_api;
 use crate::plugins::model::{LogStatus, PluginAction, PluginCommandLog};
-
-/// The longest tool name this bridge will produce. SEP-986 says 1–64; a client
-/// that enforces something narrower than that is a client-side problem, and
-/// staying inside the specification's own bound is the part that is ours.
-const NAME_LIMIT: usize = 64;
-
-/// What every bridged tool's name starts with, so the bridge cannot shadow a
-/// built-in tool (`spawn_worker`, `list_workers`, …) and a name in a log is
-/// recognisable as a plugin's.
-const NAME_PREFIX: &str = "plugin_";
+use crate::plugins::ui_manifest;
 
 /// How many ring entries one poll asks for. The ring holds 200 for the whole
 /// session, and a busy plugin can push a short-lived command out of a smaller
@@ -107,9 +98,10 @@ const CONTEXT_FIELDS: &[(&str, &str)] = &[
 /// reach yields no tools rather than a failure: a client asking for a tool list
 /// while the daemon is down gets the built-in tools, which is the honest answer.
 pub(crate) fn tools(api: &ApiClient) -> Vec<Tool> {
-    bind(&discover(api))
+    catalog(api)
+        .entries()
         .iter()
-        .map(|(name, action)| tool(name, action))
+        .map(|entry| tool(entry))
         .collect()
 }
 
@@ -120,110 +112,33 @@ pub(crate) fn call_named(
     name: &str,
     args: &Map<String, Value>,
 ) -> Option<CallToolResult> {
-    let actions = discover(api);
-    let (_, action) = bind(&actions)
-        .into_iter()
-        .find(|(bound, _)| bound == name)?;
-    Some(call(api, &action, args))
+    let catalog = catalog(api);
+    let entry = catalog.named(name)?;
+    Some(call(api, entry, args))
 }
 
-/// The actions the daemon reports, or none. A failure is logged here because a
-/// tool list has nowhere to carry a sentence about it.
-fn discover(api: &ApiClient) -> Vec<PluginAction> {
-    match plugin_api::list_actions(api) {
+/// The one derivation this bridge shares with the palette and the keymap: the
+/// daemon's actions, paired with the declarations the plugins made for them.
+///
+/// The declarations are read here rather than taken from the shell's cache, for
+/// the same reason the action list is: a tool list is one read of the daemon's
+/// own answer, and a cache would be a second client's opinion.
+fn catalog(api: &ApiClient) -> Catalog {
+    let actions = match plugin_api::list_actions(api) {
         Ok(actions) => actions,
         Err(error) => {
             tracing::warn!(%error, "the plugin action list could not be read for the MCP bridge");
             Vec::new()
         }
-    }
-}
-
-/// Pair every action with the name it is exposed under, in one deterministic
-/// order: sorted by qualified id, first claim wins, and a name two actions would
-/// have shared gets a numbered suffix. The list and the call each build this
-/// from the daemon's own answer, so they agree without sharing state.
-pub(crate) fn bind(actions: &[PluginAction]) -> Vec<(String, PluginAction)> {
-    let mut sorted: Vec<&PluginAction> = actions.iter().collect();
-    sorted.sort_by_key(|action| action.qualified_id());
-    let mut taken: HashSet<String> = HashSet::with_capacity(sorted.len());
-    let mut bound = Vec::with_capacity(sorted.len());
-    for action in sorted {
-        let base = tool_name(&action.plugin_id, &action.action_id);
-        let mut name = base.clone();
-        let mut n = 2u32;
-        while !taken.insert(name.clone()) {
-            name = suffixed(&base, n);
-            n += 1;
+    };
+    let ui = match plugin_api::list_plugins(api) {
+        Ok(plugins) => ui_manifest::mounted_ui(&plugins),
+        Err(error) => {
+            tracing::warn!(%error, "the plugin registry could not be read for the MCP bridge");
+            ui_manifest::UiContributions::default()
         }
-        bound.push((name, action.clone()));
-    }
-    bound
-}
-
-/// The name one action is exposed under: `plugin_` plus its ids with every
-/// character outside `[A-Za-z0-9_]` folded to `_`, shortened if that is still
-/// longer than a tool name may be.
-pub(crate) fn tool_name(plugin_id: &str, action_id: &str) -> String {
-    shorten(&format!(
-        "{NAME_PREFIX}{}_{}",
-        escape(plugin_id),
-        escape(action_id)
-    ))
-}
-
-/// Fold a daemon-side id into the character set a tool name may use. Two ids
-/// that fold together are told apart by [`bind`], not here.
-fn escape(id: &str) -> String {
-    id.chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
-        .collect()
-}
-
-/// Keep a long name inside the limit, with a digest of the whole name as its
-/// tail so two names sharing a long prefix stay apart.
-fn shorten(name: &str) -> String {
-    if name.len() <= NAME_LIMIT {
-        return name.to_owned();
-    }
-    let digest = digest(name);
-    let keep = NAME_LIMIT - digest.len() - 1;
-    let mut shortened: String = name.chars().take(keep).collect();
-    shortened.push('_');
-    shortened.push_str(&digest);
-    shortened
-}
-
-fn suffixed(base: &str, n: u32) -> String {
-    let suffix = format!("_{n}");
-    let keep = NAME_LIMIT.saturating_sub(suffix.len());
-    let mut name: String = base.chars().take(keep).collect();
-    name.push_str(&suffix);
-    name
-}
-
-fn digest(text: &str) -> String {
-    let mut hasher = DefaultHasher::new();
-    text.hash(&mut hasher);
-    format!("{:08x}", hasher.finish() as u32)
-}
-
-/// One action as an MCP tool: what it does, and the context fields it accepts.
-fn tool(name: &str, action: &PluginAction) -> Tool {
-    let mut description = format!(
-        "Run the herdr plugin action `{}` in the daemon and report its exit code and output.",
-        action.qualified_id()
-    );
-    if let Some(detail) = action
-        .description
-        .as_deref()
-        .map(str::trim)
-        .filter(|detail| !detail.is_empty())
-    {
-        description.push(' ');
-        description.push_str(detail);
-    }
-    McpToolHandler::tool_def(name, &description, input_schema())
+    };
+    Catalog::build(&actions, &ui)
 }
 
 /// The tool's input schema: every context field a caller may override, and
@@ -244,6 +159,25 @@ fn input_schema() -> Value {
         "properties": properties,
         "additionalProperties": false,
     })
+}
+
+/// One action as an MCP tool: what it does, and the context fields it accepts.
+fn tool(entry: &Exposed) -> Tool {
+    let mut description = format!(
+        "Run the herdr plugin action `{}` in the daemon and report its exit code and output.",
+        entry.action.qualified_id()
+    );
+    if let Some(detail) = entry
+        .action
+        .description
+        .as_deref()
+        .map(str::trim)
+        .filter(|detail| !detail.is_empty())
+    {
+        description.push(' ');
+        description.push_str(detail);
+    }
+    McpToolHandler::tool_def(entry.tool_name(), &description, input_schema())
 }
 
 /// The context a call supplies, from the arguments it was given. Only fields the
@@ -270,7 +204,8 @@ fn context_from(args: &Map<String, Value>) -> Value {
 }
 
 /// Run one action and answer with its outcome.
-fn call(api: &ApiClient, action: &PluginAction, args: &Map<String, Value>) -> CallToolResult {
+fn call(api: &ApiClient, entry: &Exposed, args: &Map<String, Value>) -> CallToolResult {
+    let action = &entry.action;
     let name = action.qualified_id();
     let log = match plugin_api::invoke_action_in(api, action, context_from(args)) {
         Ok(log) => log,
@@ -360,6 +295,7 @@ fn report(action: &PluginAction, log: &PluginCommandLog) -> CallToolResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::plugins::model::PluginAction;
 
     fn action(plugin_id: &str, action_id: &str) -> PluginAction {
         PluginAction {
@@ -399,61 +335,6 @@ mod tests {
     fn is_error(result: &CallToolResult) -> bool {
         let value = serde_json::to_value(result).expect("a serializable result");
         value["isError"].as_bool().unwrap_or(false)
-    }
-
-    #[test]
-    fn a_tool_name_is_inside_the_character_set_a_client_accepts() {
-        let name = tool_name("zenix.smoke", "mark");
-        assert_eq!(name, "plugin_zenix_smoke_mark");
-        let name = tool_name("a b/c", "d:e");
-        assert!(
-            name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'),
-            "{name}"
-        );
-        assert!(name.len() <= NAME_LIMIT);
-    }
-
-    #[test]
-    fn a_name_longer_than_a_tool_name_may_be_is_shortened_and_still_distinct() {
-        let long = "a".repeat(80);
-        let first = tool_name(&long, "one");
-        let second = tool_name(&long, "two");
-        assert!(first.len() <= NAME_LIMIT, "{first}");
-        assert!(second.len() <= NAME_LIMIT, "{second}");
-        assert_ne!(first, second);
-        assert_eq!(
-            first,
-            tool_name(&long, "one"),
-            "the shortening is a function"
-        );
-    }
-
-    /// Two ids this bridge folds together must still reach the two different
-    /// actions: the names are this side's, so the collision is this side's to
-    /// resolve.
-    #[test]
-    fn two_actions_whose_escaped_names_meet_get_one_name_each() {
-        let bound = bind(&[action("a.b", "c"), action("a_b", "c")]);
-        assert_eq!(bound.len(), 2);
-        let names: Vec<&str> = bound.iter().map(|(name, _)| name.as_str()).collect();
-        assert_ne!(names[0], names[1], "{names:?}");
-        assert!(names.iter().all(|name| name.len() <= NAME_LIMIT));
-    }
-
-    /// The daemon's order is not a promise, so the mapping must not depend on it.
-    #[test]
-    fn binding_does_not_depend_on_the_order_the_daemon_lists_actions_in() {
-        let actions = vec![action("b.p", "x"), action("a.p", "y"), action("a.p", "x")];
-        let mut reversed = actions.clone();
-        reversed.reverse();
-        let names: Vec<String> = bind(&actions).into_iter().map(|(name, _)| name).collect();
-        let names_reversed: Vec<String> =
-            bind(&reversed).into_iter().map(|(name, _)| name).collect();
-        assert_eq!(names, names_reversed);
-        let mut unique = names.clone();
-        unique.sort();
-        unique.dedup();
-        assert_eq!(unique.len(), names.len(), "{names:?}");
     }
 
     #[test]
@@ -541,7 +422,8 @@ mod tests {
     fn a_tool_is_named_and_described_for_the_action_it_runs() {
         let mut apply = action("a.b", "apply");
         apply.description = Some("Applies the project layout.".into());
-        let tool = tool("plugin_a_b_apply", &apply);
+        let catalog = Catalog::build(&[apply], &Default::default());
+        let tool = tool(&catalog.entries()[0]);
         let value = serde_json::to_value(&tool).expect("a serializable tool");
         assert_eq!(value["name"], json!("plugin_a_b_apply"));
         let description = value["description"].as_str().expect("a description");

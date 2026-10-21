@@ -40,6 +40,7 @@ use crate::fleet::{FleetState, Tails, read_tails};
 use crate::herdr::Connection;
 use crate::herdr::api::ApiClient;
 use crate::layout::{self, LayoutState};
+use crate::plugins::actions::Catalog;
 use crate::plugins::host::PluginHost;
 use crate::plugins::model::Availability;
 use crate::plugins::trust_view::{self, TrustReview};
@@ -48,7 +49,7 @@ use crate::plugins::ui_manifest::UiContributions;
 use crate::terminal::Theme as TerminalTheme;
 use crate::terminal::view::TerminalView;
 use commands::{COMMANDS, Command};
-use keymap::{Keymap, RunCommand};
+use keymap::{Chord, Keymap, RunCommand};
 use palette::{Entry, Key as PaletteKey, Palette};
 use panel_resize::{ASIDE, AsideDrag, Edge, PanelWidth, SIDEBAR, SidebarDrag};
 use registry::{
@@ -306,6 +307,11 @@ impl ShellView {
     fn read_plugins(&mut self, cx: &mut Context<Self>) {
         let state = self.plugins.state();
         self.registry = Registry::new(&state.ui);
+        // A chord a plugin declares is this client's to bind: the catalog is the
+        // same list the palette draws and the MCP bridge exposes, so a plugin
+        // that left the registry takes its chord with it.
+        let catalog = Catalog::build(&state.actions, &state.ui);
+        self.keymap.set_plugins(&catalog);
         self.request_ui_data(&state.ui, false, cx);
         // The review is where a link's answer belongs while it is open: the
         // sidebar's log block is behind it, and a refused link leaves no log
@@ -507,6 +513,15 @@ impl ShellView {
         if self.settings_open || self.palette.is_open() || self.trust.is_open() {
             return;
         }
+        // A plugin's chord that carries a modifier of its own is claimed outright,
+        // before the prefix is even considered: that is what declaring
+        // `ctrl-shift-l` asks for, and it is the only case where a chord can be
+        // pressed without disarming anything.
+        if let Some(chord) = self.keymap.claimed(keystroke) {
+            cx.stop_propagation();
+            self.run_chord(chord, window, cx);
+            return;
+        }
         let is_prefix = self.keymap.is_prefix(keystroke);
         if !self.prefix_armed {
             if is_prefix {
@@ -525,10 +540,36 @@ impl ShellView {
             return;
         }
         cx.stop_propagation();
-        if let Some(command) = chord {
-            self.run(command, window, cx);
+        if let Some(chord) = chord {
+            self.run_chord(chord, window, cx);
         }
         // A chord with nothing bound to it is swallowed, as in herdr.
+    }
+
+    /// Run what a chord points at. A plugin action goes out over the same
+    /// dispatch a palette row uses, so the two cannot behave differently; a
+    /// chord only reaches an action the current focus offers, and is swallowed
+    /// otherwise, exactly as an unbound chord is.
+    fn run_chord(&mut self, chord: Chord, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(command) = chord.command() {
+            self.run(command, window, cx);
+            return;
+        }
+        let Some(action) = chord.plugin().cloned() else {
+            return;
+        };
+        let availability = Availability::of(self.terminal.read(cx).live().snapshot.as_deref());
+        if !action.is_available(availability) {
+            return;
+        }
+        self.dispatch(
+            ShellRequest::PluginAction {
+                action,
+                source: "key",
+            },
+            window,
+            cx,
+        );
     }
 
     /// Run one directory command: locally when the shell owns it, otherwise as
@@ -648,34 +689,21 @@ impl ShellView {
     /// the keymap and the sidebar read, so the palette cannot offer a command
     /// the shell has no way to run.
     ///
-    /// A plugin's rows come from the daemon's action list, because that is what
-    /// can actually run; a declaration adds only what it knows and the daemon
-    /// does not — the chord to show beside the row, and a narrower `when` scope.
+    /// The plugin rows are the catalog's entries offered in this focus — the
+    /// same list the keymap binds chords from and the MCP bridge turns into
+    /// tools. A plugin that left the registry leaves none of the three.
     fn palette_entries(&self, cx: &App) -> Vec<Entry> {
         let availability = Availability::of(self.terminal.read(cx).live().snapshot.as_deref());
+        let plugins = self.plugins.state();
         let mut entries: Vec<Entry> = COMMANDS
             .iter()
             .map(|info| Entry::Command(info.command))
             .collect();
-        let plugins = self.plugins.state();
-        for action in plugins
-            .actions
-            .iter()
-            .filter(|action| action.is_available(availability))
-        {
-            let declared = plugins.ui.commands.iter().find(|command| {
-                command.plugin_id == action.plugin_id && command.action_id == action.action_id
-            });
-            if let Some(declared) = declared
-                && !availability.satisfies(&declared.when)
-            {
-                continue;
-            }
-            entries.push(Entry::Plugin {
-                action: action.clone(),
-                declared: declared.cloned(),
-            });
-        }
+        entries.extend(
+            Catalog::build(&plugins.actions, &plugins.ui)
+                .offered(availability)
+                .map(|entry| Entry::Plugin(entry.clone())),
+        );
         entries
     }
 

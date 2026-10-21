@@ -99,7 +99,7 @@ impl Placement {
 }
 
 /// One action, as `plugin.action.list` reports it.
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub(crate) struct PluginAction {
     pub(crate) plugin_id: String,
     pub(crate) action_id: String,

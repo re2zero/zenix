@@ -209,8 +209,11 @@ pub(crate) struct CommandSpec {
     /// The states the row is offered in, in the daemon's own vocabulary. Empty
     /// means what it means for an action: always.
     pub(crate) when: Vec<Context>,
-    /// The chord the author would like the row reachable by. Declared here and
-    /// shown beside the row; registering it is not part of schema v1.
+    /// The chord the author would like the row reachable by. The host binds it
+    /// as declared when it carries a modifier of its own (`ctrl-shift-l`), and
+    /// after the shell's prefix when it is a bare key (`y`) — a bare key bound
+    /// outright would swallow the pane's typing. A chord a shell command already
+    /// owns is dropped.
     pub(crate) key: Option<String>,
 }
 
