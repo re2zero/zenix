@@ -29,7 +29,6 @@ use crate::i18n::t;
 /// The right-hand panel's blocks this module contributes: the fleet is the
 /// panel's second tab, with the whole panel to itself.
 pub(crate) const ASIDE: &[AsideBlock] = &[AsideBlock {
-    id: "cockpit",
     tab: AsideTab::Fleet,
     render,
 }];

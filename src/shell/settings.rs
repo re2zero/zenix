@@ -31,21 +31,13 @@ use crate::terminal::Theme as TerminalTheme;
 /// config section, then the file itself.
 pub(crate) const SETTINGS_SECTIONS: &[SettingsSection] = &[
     SettingsSection {
-        id: "appearance",
         page: appearance_page,
     },
     SettingsSection {
-        id: "terminal",
         page: terminal_page,
     },
-    SettingsSection {
-        id: "layout",
-        page: layout_page,
-    },
-    SettingsSection {
-        id: "config",
-        page: config_page,
-    },
+    SettingsSection { page: layout_page },
+    SettingsSection { page: config_page },
 ];
 
 /// The chrome's own look: which mode it is drawn in, and in which language.

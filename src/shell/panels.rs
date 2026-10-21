@@ -26,17 +26,14 @@ use crate::plugins::panels::{header, line};
 /// The sidebar's blocks, each naming the rail view it belongs to.
 pub(crate) const PANELS: &[SidebarBlock] = &[
     SidebarBlock {
-        id: "workspaces",
         view: SidebarView::Workspaces,
         render: render_workspaces,
     },
     SidebarBlock {
-        id: "agents",
         view: SidebarView::Agents,
         render: render_agents,
     },
     SidebarBlock {
-        id: "layout",
         view: SidebarView::Layout,
         render: render_layout,
     },
@@ -46,42 +43,34 @@ pub(crate) const PANELS: &[SidebarBlock] = &[
 /// the session is opens the bar, what the client thinks closes it.
 pub(crate) const STATUS_SEGMENTS: &[StatusSegment] = &[
     StatusSegment {
-        id: "connection",
         align: StatusAlign::Start,
         render: render_connection,
     },
     StatusSegment {
-        id: "counts",
         align: StatusAlign::Start,
         render: render_counts,
     },
     StatusSegment {
-        id: "grid",
         align: StatusAlign::Start,
         render: render_grid,
     },
     StatusSegment {
-        id: "agents",
         align: StatusAlign::Start,
         render: render_agent_counts,
     },
     StatusSegment {
-        id: "config",
         align: StatusAlign::End,
         render: render_config,
     },
     StatusSegment {
-        id: "rejection",
         align: StatusAlign::End,
         render: render_rejection,
     },
     StatusSegment {
-        id: "branch",
         align: StatusAlign::End,
         render: render_branch,
     },
     StatusSegment {
-        id: "prefix",
         align: StatusAlign::End,
         render: render_prefix,
     },

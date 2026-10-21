@@ -23,17 +23,14 @@ use crate::shell::registry::{Invocation, ShellRequest, SidebarBlock, SidebarView
 /// events view's block.
 pub(crate) const PANELS: &[SidebarBlock] = &[
     SidebarBlock {
-        id: "plugins",
         view: SidebarView::Plugins,
         render: render_plugins,
     },
     SidebarBlock {
-        id: "plugin-logs",
         view: SidebarView::Plugins,
         render: render_logs,
     },
     SidebarBlock {
-        id: "plugin-events",
         view: SidebarView::Events,
         render: render_events,
     },

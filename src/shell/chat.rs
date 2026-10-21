@@ -54,7 +54,6 @@ use crate::i18n::t;
 /// The right-hand panel's blocks this module contributes: the conversation is
 /// the panel's first tab.
 pub(crate) const ASIDE: &[AsideBlock] = &[AsideBlock {
-    id: "chat",
     tab: AsideTab::Chat,
     render,
 }];

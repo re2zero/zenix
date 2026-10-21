@@ -22,9 +22,7 @@ use crate::layout::LayoutState;
 use crate::plugins::host::PluginState;
 use crate::plugins::model::{Placement, PluginAction};
 use crate::plugins::ui_data::UiData;
-use crate::plugins::ui_manifest::{
-    Declared, PanelSpec, SidebarItemSpec, StatusItemSpec, UiContributions,
-};
+use crate::plugins::ui_manifest::{PanelSpec, SidebarItemSpec, StatusItemSpec, UiContributions};
 use crate::plugins::views;
 
 /// One sidebar view: what the activity rail switches between. Every sidebar
@@ -113,12 +111,11 @@ pub(crate) enum ContributionScope {
 }
 
 /// One thing the shell mounts in a slot: a sidebar block, a block of the
-/// right-hand panel, a status-bar segment, and later an MCP tool.
+/// right-hand panel, a status-bar segment. Mounting is positional — a slot is
+/// iterated in order, filtered by scope — so a contribution carries no name
+/// of its own; a plugin declaration's identity lives on its spec.
 #[derive(Clone)]
 pub(crate) struct Contribution {
-    /// Stable id, unique within its slot. A built-in's is a constant; a
-    /// plugin's is the idempotent key of its declaration.
-    pub(crate) id: String,
     /// Which part of its slot shows it. Every contribution has one; the slot
     /// itself is decided by the collection it is built into.
     pub(crate) scope: ContributionScope,
@@ -142,7 +139,6 @@ pub(crate) enum ContributionBody {
 /// read. A block names its view because the rail, not the block, decides what
 /// is on screen.
 pub(crate) struct SidebarBlock {
-    pub(crate) id: &'static str,
     pub(crate) view: SidebarView,
     pub(crate) render: fn(&Invocation<'_>, &mut Window, &mut App) -> AnyElement,
 }
@@ -151,7 +147,6 @@ pub(crate) struct SidebarBlock {
 /// before any plugin is read. A block names its tab because the strip, not the
 /// block, decides what is on screen.
 pub(crate) struct AsideBlock {
-    pub(crate) id: &'static str,
     pub(crate) tab: AsideTab,
     pub(crate) render: fn(&Invocation<'_>, &mut Window, &mut App) -> AnyElement,
 }
@@ -170,14 +165,12 @@ pub(crate) enum StatusAlign {
 /// built. `None` is a segment with nothing to say right now — the bar skips it,
 /// padding and divider included, so a quiet segment leaves no gap behind.
 pub(crate) struct StatusSegment {
-    pub(crate) id: &'static str,
     pub(crate) align: StatusAlign,
     pub(crate) render: fn(&Invocation<'_>, &mut Window, &mut App) -> Option<AnyElement>,
 }
 
 /// One segment the bar mounts, the shell's own or a plugin's.
 pub(crate) struct StatusContribution {
-    id: String,
     align: StatusAlign,
     body: StatusBody,
 }
@@ -190,7 +183,6 @@ enum StatusBody {
 impl StatusContribution {
     fn builtin(segment: &'static StatusSegment) -> Self {
         Self {
-            id: segment.id.to_owned(),
             align: segment.align,
             body: StatusBody::Builtin(segment),
         }
@@ -200,14 +192,9 @@ impl StatusContribution {
     /// the session the bar opens with.
     fn plugin(spec: &Arc<StatusItemSpec>) -> Self {
         Self {
-            id: spec.qualified_id(),
             align: StatusAlign::Start,
             body: StatusBody::Plugin(spec.clone()),
         }
-    }
-
-    pub(crate) fn id(&self) -> &str {
-        &self.id
     }
 
     pub(crate) fn align(&self) -> StatusAlign {
@@ -230,7 +217,6 @@ impl StatusContribution {
 impl Contribution {
     fn sidebar_block(block: &'static SidebarBlock) -> Self {
         Self {
-            id: block.id.to_owned(),
             scope: ContributionScope::View(block.view),
             body: ContributionBody::Builtin(block.render),
         }
@@ -238,7 +224,6 @@ impl Contribution {
 
     fn aside_block(block: &'static AsideBlock) -> Self {
         Self {
-            id: block.id.to_owned(),
             scope: ContributionScope::Tab(block.tab),
             body: ContributionBody::Builtin(block.render),
         }
@@ -268,8 +253,6 @@ impl Contribution {
 /// (`crate::config`), which is where a settings value lives, not the daemon's
 /// snapshot.
 pub(crate) struct SettingsSection {
-    /// Stable id, unique among the sections.
-    pub(crate) id: &'static str,
     /// Builds the page, from the config as it is now.
     pub(crate) page: fn(&App) -> SettingPage,
 }
@@ -416,7 +399,6 @@ impl Registry {
         // declares about itself.
         panels.extend(sidebar_blocks(crate::plugins::panels::PANELS));
         panels.extend(ui.sidebar_items.iter().map(|item| Contribution {
-            id: item.qualified_id(),
             // A plugin's sidebar item belongs to the plugin view: the shell's
             // own views are about the daemon, this one is about what was added.
             scope: ContributionScope::View(SidebarView::Plugins),
@@ -425,7 +407,6 @@ impl Registry {
         let mut aside = aside_blocks(super::chat::ASIDE);
         aside.extend(aside_blocks(super::cockpit::ASIDE));
         aside.extend(ui.panels.iter().map(|panel| Contribution {
-            id: panel.qualified_id(),
             // A panel a plugin declared is what the panel's third tab is for.
             scope: ContributionScope::Tab(AsideTab::Panels),
             body: ContributionBody::Panel(panel.clone()),
@@ -497,58 +478,6 @@ mod tests {
         ))
     }
 
-    /// Every sidebar block the registry holds, in rail order: the slots are
-    /// view-scoped now, so a test that wants "the sidebar" has to name which.
-    fn sidebar(registry: &Registry) -> Vec<Contribution> {
-        SidebarView::ALL
-            .iter()
-            .flat_map(|view| registry.panels_in(*view))
-            .cloned()
-            .collect()
-    }
-
-    /// Every aside block the registry holds, in tab order, the same way.
-    fn aside(registry: &Registry) -> Vec<Contribution> {
-        AsideTab::ALL
-            .iter()
-            .flat_map(|tab| registry.aside_in(*tab))
-            .cloned()
-            .collect()
-    }
-
-    #[test]
-    fn built_in_contribution_ids_are_unique_within_their_slot() {
-        let registry = registry();
-        let panels = sidebar(&registry);
-        for slot in [panels.as_slice(), aside(&registry).as_slice()] {
-            let mut ids: Vec<&str> = slot.iter().map(|item| item.id.as_str()).collect();
-            let total = ids.len();
-            ids.sort_unstable();
-            ids.dedup();
-            assert_eq!(ids.len(), total);
-        }
-        let mut ids: Vec<&str> = registry
-            .status_segments()
-            .iter()
-            .map(StatusContribution::id)
-            .collect();
-        let total = ids.len();
-        ids.sort_unstable();
-        ids.dedup();
-        assert_eq!(ids.len(), total, "status segment ids are unique");
-        let mut ids: Vec<&str> = registry
-            .settings_sections()
-            .iter()
-            .map(|section| section.id)
-            .collect();
-        let total = ids.len();
-        ids.sort_unstable();
-        ids.dedup();
-        assert_eq!(ids.len(), total, "settings section ids are unique");
-    }
-
-    /// The rail switches between views, so a view with no block would be a
-    /// button that shows an empty sidebar.
     #[test]
     fn every_sidebar_view_has_at_least_one_block() {
         let registry = registry();
@@ -589,64 +518,59 @@ id = "wip"
 format = "{count} WIP"
 "#,
         );
-        let plugins_view: Vec<&str> = registry
-            .panels_in(SidebarView::Plugins)
-            .map(|item| item.id.as_str())
-            .collect();
-        let aside: Vec<&str> = registry
-            .aside_in(AsideTab::Panels)
-            .map(|item| item.id.as_str())
-            .collect();
-        let status: Vec<&str> = registry
-            .status_segments()
-            .iter()
-            .map(StatusContribution::id)
-            .collect();
+        let declared_board = |item: &Contribution| match &item.body {
+            ContributionBody::SidebarItem(spec) => spec.local_id == "board",
+            ContributionBody::Panel(spec) => spec.local_id == "board",
+            ContributionBody::Builtin(_) => false,
+        };
         // The plugin's own row lands behind the host's blocks in the view the
         // host lives in, never in front of them.
-        assert_eq!(plugins_view.last().copied(), Some("a.b:sidebar:board"));
-        assert_eq!(plugins_view.first().copied(), Some("plugins"));
-        assert_eq!(status.last().copied(), Some("a.b:status:wip"));
-        // Each view opens with the shell's own block for it.
-        assert_eq!(
-            registry
-                .panels_in(SidebarView::Workspaces)
-                .next()
-                .map(|item| item.id.as_str()),
-            Some("workspaces")
+        let plugins_view: Vec<Contribution> =
+            registry.panels_in(SidebarView::Plugins).cloned().collect();
+        assert!(plugins_view.last().is_some_and(|item| declared_board(item)));
+        assert!(
+            plugins_view
+                .iter()
+                .rev()
+                .skip(1)
+                .any(|item| matches!(item.body, ContributionBody::Builtin(_)))
         );
-        assert_eq!(
-            registry
-                .panels_in(SidebarView::Agents)
+        // A plugin's panel is what the panel's third tab opens with.
+        let panels_tab: Vec<Contribution> = registry.aside_in(AsideTab::Panels).cloned().collect();
+        assert!(panels_tab.first().is_some_and(|item| declared_board(item)));
+        // A plugin's status segment closes the bar's opening side, behind the
+        // segments that report what the session is.
+        let status = registry.status_segments();
+        let last = status.last().expect("the bar mounts a plugin segment");
+        assert!(matches!(&last.body, StatusBody::Plugin(spec) if spec.local_id == "wip"));
+        assert!(matches!(
+            status.first().map(|segment| &segment.body),
+            Some(StatusBody::Builtin(_))
+        ));
+        // Each view and shell tab opens with the shell's own block.
+        for view in [
+            SidebarView::Workspaces,
+            SidebarView::Agents,
+            SidebarView::Events,
+        ] {
+            let first = registry
+                .panels_in(view)
                 .next()
-                .map(|item| item.id.as_str()),
-            Some("agents")
-        );
-        assert_eq!(
-            registry
-                .panels_in(SidebarView::Events)
+                .unwrap_or_else(|| panic!("{view:?} opens with no block"));
+            assert!(
+                matches!(first.body, ContributionBody::Builtin(_)),
+                "{view:?}"
+            );
+        }
+        for tab in [AsideTab::Chat, AsideTab::Fleet] {
+            let first = registry
+                .aside_in(tab)
                 .next()
-                .map(|item| item.id.as_str()),
-            Some("plugin-events")
-        );
-        // The panel's first two tabs are the shell's own blocks; a plugin's
-        // panel is only ever on the third.
-        assert_eq!(
-            registry
-                .aside_in(AsideTab::Chat)
-                .next()
-                .map(|item| item.id.as_str()),
-            Some("chat")
-        );
-        assert_eq!(
-            registry
-                .aside_in(AsideTab::Fleet)
-                .next()
-                .map(|item| item.id.as_str()),
-            Some("cockpit")
-        );
-        assert_eq!(aside.first().copied(), Some("a.b:panel:board"));
-        assert_eq!(status.first().copied(), Some("connection"));
-        assert!(plugins_view.contains(&"plugin-logs"), "{plugins_view:?}");
+                .unwrap_or_else(|| panic!("{tab:?} opens with no block"));
+            assert!(
+                matches!(first.body, ContributionBody::Builtin(_)),
+                "{tab:?}"
+            );
+        }
     }
 }
