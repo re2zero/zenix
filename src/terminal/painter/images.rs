@@ -41,7 +41,11 @@ pub(crate) fn below_text(z: i32) -> bool {
     z < 0
 }
 
-/// Which frame's placements to paint: the main grid's or one popup's.
+/// Which frame's placements to paint: the main grid's or one popup's. No paint
+/// constructs one yet — every `paint_frame` passes no images (the M3 deviation
+/// that keeps kitty graphics unshown) — so the variants are allowed dead until
+/// a paint targets them.
+#[allow(dead_code)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ImageTarget<'a> {
     Main,

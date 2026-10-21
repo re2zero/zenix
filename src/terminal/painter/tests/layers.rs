@@ -49,7 +49,6 @@ fn each_layer_paints_only_its_share_of_the_decorations(cx: &mut TestAppContext) 
                         12.81,
                         &font("Menlo"),
                         &[],
-                        &[],
                         part,
                         None,
                         window,

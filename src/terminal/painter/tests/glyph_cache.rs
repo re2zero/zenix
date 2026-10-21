@@ -48,7 +48,6 @@ fn cache_reuses_cells_invalidates_fonts_and_bounds_storage(cx: &mut TestAppConte
                         cell_width,
                         &font,
                         &[],
-                        &[],
                         None,
                         None,
                         window,

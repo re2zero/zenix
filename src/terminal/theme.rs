@@ -4,8 +4,6 @@
 //! Theme *file* loading (Ghostty themes, `light:`/`dark:` pairs, `available_themes`)
 //! stays upstream for now — M5 wires this into zenix's own theme system.
 
-use crate::terminal::contrast::Contrast;
-
 /// Colors are packed 24-bit RGB, without an alpha channel.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Theme {
@@ -16,12 +14,7 @@ pub(crate) struct Theme {
     pub surface: u32,
     pub active: u32,
     pub muted: u32,
-    /// Upstream's optional `sidebar_bg`, which colors only the sidebar. Unset,
-    /// the sidebar stays on [`Self::surface`].
-    pub sidebar: Option<u32>,
     pub palette: [u32; 256],
-    /// Applied by [`Theme::with_contrast`]; every theme loads as `Standard`.
-    pub contrast: Contrast,
 }
 
 impl Default for Theme {
@@ -49,9 +42,7 @@ impl Default for Theme {
             surface: 0x1c1c22,
             active: 0x2b2933,
             muted: 0x827e91,
-            sidebar: None,
             palette,
-            contrast: Contrast::Standard,
         }
     }
 }
@@ -74,74 +65,6 @@ impl Theme {
         "Catppuccin Mocha",
         "Catppuccin Latte",
     ];
-
-    /// The theme's primary accent, used for selection colors that must read as
-    /// chosen rather than merely hovered.
-    pub(crate) fn primary(&self) -> u32 {
-        self.palette[5]
-    }
-
-    /// The sidebar's fill: the configured `sidebar_bg` when set, else the surface.
-    pub(crate) fn sidebar_background(&self) -> u32 {
-        self.sidebar.unwrap_or(self.surface)
-    }
-
-    /// Dimmed foreground for rows that are not the current one: upstream's
-    /// subtext sits between its text and its muted overlay.
-    pub(crate) fn subtext(&self) -> u32 {
-        self.ink(mix(self.background, self.foreground, 78))
-    }
-
-    /// A configured `dim = true` token: the color faded toward the panel.
-    pub(crate) fn dimmed(&self, color: u32) -> u32 {
-        mix(self.surface, color, 55)
-    }
-
-    /// A wash of [`Self::primary`] over the chrome, for filled selections such
-    /// as the current tab. Large areas of the full accent shout; this keeps the
-    /// hue while staying quiet enough to sit behind text all day.
-    pub(crate) fn primary_wash(&self) -> u32 {
-        mix(self.surface, self.primary(), 22)
-    }
-
-    /// Whichever of the theme's two text colors contrasts more with `fill`.
-    /// A fixed light-or-dark rule breaks on light themes, where the accent and
-    /// the background sit on the same side of any threshold.
-    pub(crate) fn text_on(&self, fill: u32) -> u32 {
-        let luminance = |color: u32| {
-            let channel = |shift: u32| ((color >> shift) & 255) as f32 / 255.;
-            0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0)
-        };
-        let fill = luminance(fill);
-        if (luminance(self.background) - fill).abs() >= (luminance(self.foreground) - fill).abs() {
-            self.background
-        } else {
-            self.foreground
-        }
-    }
-
-    /// `color` as a colored mark or label drawn on this theme's chrome: moved
-    /// only as far as the contrast setting needs to read on the background,
-    /// the surface, and a selected row, keeping its hue. Never for terminal
-    /// cells, whose colors belong to the program that wrote them.
-    pub(crate) fn ink(&self, color: u32) -> u32 {
-        crate::terminal::contrast::ink_on_chrome(
-            color,
-            [self.background, self.surface, self.active],
-            self.contrast.mark_ratio(),
-        )
-    }
-
-    /// High contrast parts selected rows further from the surface and raises
-    /// dim labels to text contrast. Standard leaves the theme as drawn.
-    pub(crate) fn with_contrast(mut self, contrast: Contrast) -> Self {
-        self.contrast = contrast;
-        if contrast == Contrast::High {
-            self.active = mix(self.active, self.foreground, 12);
-            self.muted = self.ink(self.muted);
-        }
-        self
-    }
 
     fn derive_chrome(&mut self) {
         let blend = |percent| mix(self.background, self.foreground, percent);

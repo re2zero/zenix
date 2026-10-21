@@ -46,7 +46,6 @@ fn only_a_last_row_without_separators_continues_below_the_grid() {
 fn paint_row(
     cx: &mut VisualTestContext,
     frame: FrameData,
-    highlights: Vec<Highlight>,
     (x, cell_width): (f32, f32),
 ) -> Vec<Quad> {
     cx.draw(Point::default(), size(px(1920.), px(100.)), |_, _| {
@@ -61,7 +60,6 @@ fn paint_row(
                     None,
                     cell_width,
                     &font("Menlo"),
-                    &highlights,
                     &[],
                     None,
                     None,
@@ -76,37 +74,20 @@ fn paint_row(
 }
 
 #[gpui_kit::test]
-fn highlight_tints_share_the_background_edges(cx: &mut TestAppContext) {
+fn a_background_span_ends_on_the_snapped_grid_edge(cx: &mut TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, _| Empty);
-    let colors: Vec<u32> = (0..51)
+    let colors: Vec<u32> = (0..50)
         .map(|x| if x < 12 { 0x57858b } else { 0xd2a241 })
         .collect();
-    let tint = Tint::Selection.color(&Theme::default());
-    let quads = paint_row(
-        cx,
-        row(&colors, 0),
-        vec![Highlight {
-            row: 0,
-            columns: 12..50,
-            tint: Tint::Selection,
-        }],
-        (17., 8.015),
-    );
-    let (tints, backgrounds): (Vec<_>, Vec<_>) = quads
-        .iter()
-        .partition(|quad| quad.background == tint.into());
-    assert_eq!(tints.len(), 1);
-    let second = backgrounds
-        .iter()
-        .find(|quad: &&&Quad| quad.background == rgb(0xd2a241).into())
-        .map(|quad| quad.bounds.left());
-    assert_eq!(Some(tints[0].bounds.left()), second);
+    let mut quads = paint_row(cx, row(&colors, 0), (17., 8.015));
+    quads.retain(|quad| quad.background == rgb(0xd2a241).into());
+    assert_eq!(quads.len(), 1);
     // Column 50's absolute edge, the one the old left + width arithmetic missed.
     cx.update(|window, _| {
         let edge = window
             .pixel_snap(px(17. + 50. * 8.015))
             .scale(window.scale_factor());
-        assert_eq!(tints[0].bounds.right(), edge);
+        assert_eq!(quads[0].bounds.right(), edge);
     });
 }
 
@@ -118,7 +99,7 @@ fn underline_runs_have_no_seams(cx: &mut TestAppContext) {
             // As many cells as the test window's 1920 px show.
             let cells = vec![0; ((1900. - x) / cell_width) as usize];
             let count = cells.len();
-            let mut quads = paint_row(cx, row(&cells, UNDERLINE), vec![], (x, cell_width));
+            let mut quads = paint_row(cx, row(&cells, UNDERLINE), (x, cell_width));
             quads.retain(|quad| quad.background == rgb(0x123456).into());
             quads.sort_by_key(|quad| quad.bounds.left());
             assert_eq!(quads.len(), count);

@@ -190,9 +190,6 @@ impl Render for RegionView {
                     Some(bounds.size),
                     region.look.cell_width,
                     &region.look.font,
-                    // Upstream passed the highlights clipped to this region's area;
-                    // zenix has no selection or search to clip, so nothing is tinted.
-                    &[],
                     &region.surface.panes,
                     Some(Part {
                         area: &region.area,

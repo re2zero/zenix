@@ -11,7 +11,7 @@ mod grid;
 mod images;
 
 use self::area::whole;
-pub(crate) use self::area::{Layer, Part, Span, cell_ranges, clip, covers};
+pub(crate) use self::area::{Layer, Part, Span, cell_ranges, covers};
 use self::glyphs::GlyphCache;
 use self::graphics::{CellSeparator, Graphic};
 use self::grid::{background_extent, grid_corners, grid_rect, last_row_has_separator};
@@ -28,47 +28,10 @@ use std::{
 };
 use unicode_width::UnicodeWidthStr;
 
-/// The selection tints the cells it covers instead of replacing their colors:
-/// a terminal's own background is meaningful, and the glyphs above it stay
-/// readable on every theme.
-const SELECTION_ALPHA: u32 = 0x59;
-/// Search matches tint like the selection, the current one strongly enough to
-/// find at a glance among the others.
-const MATCH_ALPHA: u32 = 0x4d;
-const CURRENT_MATCH_ALPHA: u32 = 0xa6;
 const REPORT_INTERVAL: Duration = Duration::from_secs(5);
 const SLOW_PAINT: Duration = Duration::from_millis(16);
 const SCROLLBAR_INSET: f32 = 1.;
 const SCROLLBAR_ALPHA: u32 = 0xc0;
-
-/// Why a span of cells is tinted.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Tint {
-    Selection,
-    Match,
-    CurrentMatch,
-    /// The copy-mode cursor, drawn as a block over its cell.
-    CopyCursor,
-}
-
-impl Tint {
-    fn color(self, theme: &Theme) -> Rgba {
-        match self {
-            Self::Selection => rgba((theme.primary() << 8) | SELECTION_ALPHA),
-            Self::Match => rgba((theme.palette[3] << 8) | MATCH_ALPHA),
-            Self::CurrentMatch => rgba((theme.palette[3] << 8) | CURRENT_MATCH_ALPHA),
-            Self::CopyCursor => rgba((theme.cursor << 8) | CURRENT_MATCH_ALPHA),
-        }
-    }
-}
-
-/// Tinted cells of one row, in the grid of the frame that paints them.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Highlight {
-    pub(crate) row: u16,
-    pub(crate) columns: std::ops::Range<u16>,
-    pub(crate) tint: Tint,
-}
 
 #[derive(Default)]
 struct PaintTiming {
@@ -163,32 +126,6 @@ impl Default for TerminalPainter {
             painted_decorations: Vec::new(),
         }
     }
-}
-
-/// The cell rectangle covering every in-frame cell of `rows`, if any.
-fn link_bounds(frame: &FrameData, rows: &[(u16, std::ops::Range<u16>)]) -> Option<SurfaceRect> {
-    let mut cells = rows.iter().filter_map(|(row, columns)| {
-        let end = columns.end.min(frame.width);
-        (*row < frame.height && columns.start < end).then_some((*row, columns.start, end))
-    });
-    let (row, start, end) = cells.next()?;
-    let (top, bottom, left, right) = cells.fold(
-        (row, row, start, end),
-        |(top, bottom, left, right), (row, start, end)| {
-            (
-                top.min(row),
-                bottom.max(row),
-                left.min(start),
-                right.max(end),
-            )
-        },
-    );
-    Some(SurfaceRect {
-        x: left,
-        y: top,
-        width: right - left,
-        height: bottom - top + 1,
-    })
 }
 
 fn decoration_offsets(cell: &CellData, cell_height: f32) -> impl Iterator<Item = f32> + '_ {
@@ -368,65 +305,8 @@ impl TerminalPainter {
         width
     }
 
-    /// Underlines the cells of a hovered link, painted after `paint_frame`
-    /// for the same frame and origin. Each cell takes its own text color, as
-    /// an SGR underline would, and spaces along the link are underlined too.
-    pub fn paint_link(
-        &self,
-        frame: &FrameData,
-        origin: Point<Pixels>,
-        cell_width: f32,
-        rows: &[(u16, std::ops::Range<u16>)],
-        window: &mut Window,
-    ) {
-        let Some(bounds) = link_bounds(frame, rows) else {
-            return;
-        };
-        let layer = Bounds::new(
-            origin
-                + point(
-                    px(f32::from(bounds.x) * cell_width),
-                    px(f32::from(bounds.y) * self.cell_height),
-                ),
-            size(
-                px(f32::from(bounds.width) * cell_width),
-                px(f32::from(bounds.height) * self.cell_height),
-            ),
-        );
-        window.paint_layer(layer, |window| {
-            for (row, columns) in rows {
-                if *row >= frame.height {
-                    continue;
-                }
-                for column in columns.start..columns.end.min(frame.width) {
-                    let index = usize::from(*row) * usize::from(frame.width) + usize::from(column);
-                    let Some(data) = frame.cells.get(index) else {
-                        continue;
-                    };
-                    let position = origin
-                        + point(
-                            px(f32::from(column) * cell_width),
-                            px(f32::from(*row) * self.cell_height + self.cell_height - 2.),
-                        );
-                    window.paint_quad(fill(
-                        Bounds::new(position, size(px(cell_width), px(1.))),
-                        rgb(cell_colors(data, &self.theme).0),
-                    ));
-                }
-            }
-        });
-    }
-
-    /// Releases the textures of images no paint has placed for a while, for
-    /// frames that paint without placing any.
-    pub(crate) fn release_idle_images(&mut self, window: &mut Window) {
-        self.images.release_idle(window);
-    }
-
     /// Paints one layer of the cells of one frame that `part` covers, or
-    /// every layer of all of them, tinting the cells `highlights` name in that frame's own grid. Rows
-    /// outside the frame are ignored: a selection or search was made against
-    /// the live surface, which a repaint may already have replaced.
+    /// every layer of all of them.
     #[allow(clippy::too_many_arguments)]
     pub fn paint_frame(
         &mut self,
@@ -435,7 +315,6 @@ impl TerminalPainter {
         available: Option<Size<Pixels>>,
         cell_width: f32,
         font: &Font,
-        highlights: &[Highlight],
         panes: &[PaneSurfacePane],
         part: Option<Part<'_>>,
         images: Option<PlacedImages<'_>>,
@@ -543,31 +422,6 @@ impl TerminalPainter {
                             paint(x, x + 1, cell_colors(&row[x], &self.theme).1);
                         }
                     }
-                }
-                // Between the backgrounds and the glyphs, so the tint reads as chosen
-                // without hiding either.
-                for Highlight { row, columns, tint } in &clip(highlights, area) {
-                    let (start, end) =
-                        (columns.start.min(frame.width), columns.end.min(frame.width));
-                    if *row >= frame.height || start >= end {
-                        continue;
-                    }
-                    let (top, bottom) = (f32::from(*row), f32::from(*row) + 1.);
-                    window.paint_quad(fill(
-                        grid_rect(
-                            window,
-                            origin,
-                            point(
-                                px(f32::from(start) * cell_width),
-                                px(top * self.cell_height),
-                            ),
-                            point(
-                                px(f32::from(end) * cell_width),
-                                px(bottom * self.cell_height),
-                            ),
-                        ),
-                        tint.color(&self.theme),
-                    ));
                 }
                 if text_with_backgrounds {
                     paint_errors += self.paint_text(

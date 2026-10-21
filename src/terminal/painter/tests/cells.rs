@@ -1,32 +1,5 @@
 use super::*;
 
-#[test]
-fn link_underlines_stay_inside_the_frame() {
-    let frame = FrameData {
-        width: 10,
-        height: 3,
-        cells: vec![cell("a"); 30],
-        cursor: None,
-        hyperlinks: vec![],
-        graphics: vec![],
-    };
-    let rect = |x, y, width, height| SurfaceRect {
-        x,
-        y,
-        width,
-        height,
-    };
-    // A wrapped link's two rows, the second past the frame's right edge.
-    assert_eq!(
-        link_bounds(&frame, &[(1, 4..10), (2, 0..14)]),
-        Some(rect(0, 1, 10, 2))
-    );
-    // Rows a resize has already removed, and empty ranges, paint nothing.
-    assert_eq!(link_bounds(&frame, &[(3, 0..4), (0, 5..5)]), None);
-    assert_eq!(link_bounds(&frame, &[(0, 12..14)]), None);
-    assert_eq!(link_bounds(&frame, &[]), None);
-}
-
 #[gpui_kit::test]
 fn edge_backgrounds_reach_the_canvas_without_stretching_popups_or_prompts(cx: &mut TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, _| Empty);
@@ -62,7 +35,6 @@ fn edge_backgrounds_reach_the_canvas_without_stretching_popups_or_prompts(cx: &m
                         extend.then(|| size(px(23.), px(47.))),
                         10.,
                         &font("Menlo"),
-                        &[],
                         &[],
                         None,
                         None,
@@ -278,7 +250,6 @@ fn blank_cells_paint_decorations_without_shaping(cx: &mut TestAppContext) {
                         None,
                         8.5,
                         &font("Menlo"),
-                        &[],
                         &[],
                         None,
                         None,

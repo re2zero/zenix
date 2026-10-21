@@ -81,7 +81,6 @@ fn adjacent_background_spans_share_snapped_edges(cx: &mut TestAppContext) {
                                 cell_width,
                                 &font("Menlo"),
                                 &[],
-                                &[],
                                 None,
                                 None,
                                 window,
@@ -193,7 +192,6 @@ fn separator_caps_use_cell_geometry_without_shaping(cx: &mut TestAppContext) {
                             None,
                             22.75,
                             &font("Menlo"),
-                            &[],
                             &[],
                             None,
                             with_image.then_some(PlacedImages {

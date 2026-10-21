@@ -1,6 +1,5 @@
 //! Which cells, and which layer of them, a paint covers.
 
-use super::Highlight;
 use herdr_client::protocol::FrameData;
 use std::ops::Range;
 
@@ -14,7 +13,7 @@ pub(crate) struct Span {
 /// One of the layers a paint stacks, bottom first.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Layer {
-    /// Cell backgrounds and highlight tints.
+    /// Cell backgrounds.
     Backgrounds,
     Text,
     /// Box graphics, underlines, the cursor, and scrollbars.
@@ -66,24 +65,4 @@ pub(crate) fn cell_ranges<'a>(
             end(span.columns.start)..end(span.columns.end)
         })
         .filter(|range| range.start < range.end)
-}
-
-/// The parts of `highlights` inside `area`.
-pub(crate) fn clip(highlights: &[Highlight], area: &[Span]) -> Vec<Highlight> {
-    highlights
-        .iter()
-        .flat_map(|highlight| {
-            area.iter()
-                .filter(move |span| span.row == highlight.row)
-                .filter_map(move |span| {
-                    let columns = highlight.columns.start.max(span.columns.start)
-                        ..highlight.columns.end.min(span.columns.end);
-                    (columns.start < columns.end).then_some(Highlight {
-                        row: highlight.row,
-                        columns,
-                        tint: highlight.tint,
-                    })
-                })
-        })
-        .collect()
 }
