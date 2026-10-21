@@ -527,7 +527,7 @@ format = "{count} WIP"
         // host lives in, never in front of them.
         let plugins_view: Vec<Contribution> =
             registry.panels_in(SidebarView::Plugins).cloned().collect();
-        assert!(plugins_view.last().is_some_and(|item| declared_board(item)));
+        assert!(plugins_view.last().is_some_and(&declared_board));
         assert!(
             plugins_view
                 .iter()
@@ -537,7 +537,7 @@ format = "{count} WIP"
         );
         // A plugin's panel is what the panel's third tab opens with.
         let panels_tab: Vec<Contribution> = registry.aside_in(AsideTab::Panels).cloned().collect();
-        assert!(panels_tab.first().is_some_and(|item| declared_board(item)));
+        assert!(panels_tab.first().is_some_and(declared_board));
         // A plugin's status segment closes the bar's opening side, behind the
         // segments that report what the session is.
         let status = registry.status_segments();
