@@ -32,7 +32,7 @@ use gpui_kit::component::{ActiveTheme, Icon, Theme, ThemeMode, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use herdr_client::protocol::{
-    AgentStatus, ClientShellSnapshot, ClientShellTab, ClientShellWorkspace,
+    AgentStatus, ClientShellAgent, ClientShellSnapshot, ClientShellTab, ClientShellWorkspace,
 };
 
 use crate::ai::endpoint::ApiEndpoint;
@@ -720,6 +720,21 @@ impl ShellView {
             .iter()
             .map(|info| Entry::Command(info.command))
             .collect();
+        // The session's workspaces come between the two: the section order is
+        // the entry order, and both the shell's directory and the plugins'
+        // actions bracket the session.
+        if let Some(snapshot) = self.terminal.read(cx).live().snapshot.as_deref() {
+            entries.extend(
+                snapshot
+                    .workspaces
+                    .iter()
+                    .map(|workspace| Entry::Workspace {
+                        workspace_id: workspace.workspace_id.clone(),
+                        label: workspace.label.clone(),
+                        branch: workspace.branch.clone(),
+                    }),
+            );
+        }
         entries.extend(
             Catalog::build(&plugins.actions, &plugins.ui)
                 .runnable(&plugins.plugins)
@@ -2011,20 +2026,15 @@ fn tab_strip(invocation: &Invocation) -> AnyElement {
     let tabs: Vec<&ClientShellTab> = invocation
         .snapshot
         .map(|snapshot| {
-            let workspace = snapshot.focused_workspace_id.as_ref().and_then(|id| {
-                snapshot
-                    .workspaces
-                    .iter()
-                    .find(|workspace| &workspace.workspace_id == id)
-            });
-            match workspace {
-                Some(workspace) => snapshot
-                    .tabs
-                    .iter()
-                    .filter(|tab| tab.workspace_id == workspace.workspace_id)
-                    .collect(),
-                None => Vec::new(),
-            }
+            focused_workspace(snapshot)
+                .map(|workspace| {
+                    snapshot
+                        .tabs
+                        .iter()
+                        .filter(|tab| tab.workspace_id == workspace.workspace_id)
+                        .collect()
+                })
+                .unwrap_or_default()
         })
         .unwrap_or_default();
     let mut strip = h_flex()
@@ -2075,6 +2085,21 @@ fn tab_button(tab: &ClientShellTab, index: usize, invocation: &Invocation) -> An
     } else {
         tab.label.clone()
     };
+    // What the strip says without being opened: whether the tab's agent needs
+    // an eye (the dot), and whether the tab is more than one pane (the count).
+    let dot = invocation
+        .snapshot
+        .and_then(|snapshot| tab_agent_status(&snapshot.agents, &tab.tab_id));
+    let pane_count = invocation
+        .snapshot
+        .map(|snapshot| {
+            snapshot
+                .panes
+                .iter()
+                .filter(|pane| pane.tab_id == tab.tab_id)
+                .count()
+        })
+        .unwrap_or(0);
     h_flex()
         .id(("tab", tab.number))
         .px_2()
@@ -2118,7 +2143,14 @@ fn tab_button(tab: &ClientShellTab, index: usize, invocation: &Invocation) -> An
                 );
             }
         })
+        .children(dot.map(|status| panels::status_dot(status, theme)))
         .child(div().text_sm().child(label))
+        .children((pane_count > 1).then(|| {
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(pane_count.to_string())
+        }))
         .child(
             div()
                 .id(("tab-close", tab.number))
@@ -2132,6 +2164,23 @@ fn tab_button(tab: &ClientShellTab, index: usize, invocation: &Invocation) -> An
                 .child("x"),
         )
         .into_any_element()
+}
+
+/// The status a tab's dot wears: the one among its agents that most needs an
+/// eye — blocked, then working, then done; idle and unknown are the floor. A
+/// tab without agents wears no dot.
+fn tab_agent_status(agents: &[ClientShellAgent], tab_id: &str) -> Option<AgentStatus> {
+    let rank = |status: AgentStatus| match status {
+        AgentStatus::Blocked => 0,
+        AgentStatus::Working => 1,
+        AgentStatus::Done => 2,
+        AgentStatus::Idle | AgentStatus::Unknown => 3,
+    };
+    agents
+        .iter()
+        .filter(|agent| agent.tab_id == tab_id)
+        .map(|agent| agent.agent_status)
+        .min_by_key(|status| rank(*status))
 }
 #[cfg(test)]
 mod tests {
@@ -2244,9 +2293,9 @@ mod tests {
         assert!(focused_workspace(&snapshot).is_none());
     }
 
-    /// A snapshot with agents at the given statuses, so the rail's badge has
-    /// something to count.
-    fn agent_snapshot(statuses: &[&str]) -> ClientShellSnapshot {
+    /// A snapshot with agents at the given statuses, so the rail's badge and
+    /// the tab strip's dot have something to count.
+    fn agent_snapshot(agents: &[(&str, &str)]) -> ClientShellSnapshot {
         serde_json::from_value(serde_json::json!({
             "boot_id": "boot",
             "revision": 1,
@@ -2260,13 +2309,13 @@ mod tests {
             "workspaces": [],
             "tabs": [],
             "panes": [],
-            "agents": statuses
+            "agents": agents
                 .iter()
                 .enumerate()
-                .map(|(n, status)| serde_json::json!({
+                .map(|(n, (tab_id, status))| serde_json::json!({
                     "pane_id": format!("p{n}"),
                     "workspace_id": "w1",
-                    "tab_id": "t1",
+                    "tab_id": tab_id,
                     "agent_status": status,
                     "state_change_seq": 1,
                     "state_labels": [],
@@ -2284,16 +2333,31 @@ mod tests {
     /// and stays off the rail while everything is idle.
     #[test]
     fn the_agents_rail_badge_counts_the_agents_away_from_idle() {
-        let snapshot = agent_snapshot(&["working", "blocked", "idle"]);
+        let snapshot = agent_snapshot(&[("t1", "working"), ("t1", "blocked"), ("t2", "idle")]);
         assert_eq!(
             rail_badge(Some(&snapshot), SidebarView::Agents),
             Some(2),
             "working and blocked wear the count, idle does not"
         );
-        let idle = agent_snapshot(&["idle", "unknown"]);
+        let idle = agent_snapshot(&[("t1", "idle"), ("t1", "unknown")]);
         assert_eq!(rail_badge(Some(&idle), SidebarView::Agents), None);
         // A view without a count wears none, and no snapshot counts nothing.
         assert_eq!(rail_badge(Some(&idle), SidebarView::Events), None);
         assert_eq!(rail_badge(None, SidebarView::Agents), None);
+    }
+
+    /// A tab's dot is its most attention-needing agent's status; a tab with no
+    /// agent wears no dot, and another tab's agent is not this tab's.
+    #[test]
+    fn a_tabs_dot_is_its_most_urgent_agent() {
+        let snapshot = agent_snapshot(&[("t1", "working"), ("t1", "blocked"), ("t2", "done")]);
+        let agents = &snapshot.agents;
+        assert_eq!(
+            tab_agent_status(agents, "t1"),
+            Some(AgentStatus::Blocked),
+            "blocked outranks working"
+        );
+        assert_eq!(tab_agent_status(agents, "t2"), Some(AgentStatus::Done));
+        assert_eq!(tab_agent_status(agents, "t3"), None);
     }
 }

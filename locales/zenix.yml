@@ -219,6 +219,18 @@ shell:
     no_matches:
       en: "nothing matches"
       zh-CN: "没有匹配项"
+    group_commands:
+      en: "Commands"
+      zh-CN: "命令"
+    group_workspaces:
+      en: "Workspaces"
+      zh-CN: "工作区"
+    group_actions:
+      en: "Plugin actions"
+      zh-CN: "插件 action"
+    hints:
+      en: "↑↓ move · enter run · esc close"
+      zh-CN: "↑↓ 选择 · Enter 运行 · Esc 关闭"
   plugins:
     title:
       en: "Plugins"

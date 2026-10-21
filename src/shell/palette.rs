@@ -32,10 +32,29 @@ const ROWS_SHOWN: usize = 8;
 #[derive(Clone)]
 pub(crate) enum Entry {
     Command(Command),
+    /// A workspace of the session: picking one is the same focus request the
+    /// sidebar's rows make, so the palette reaches a workspace the sidebar
+    /// cannot show (it may belong to another rail view or be scrolled away).
+    Workspace {
+        workspace_id: String,
+        label: String,
+        branch: Option<String>,
+    },
     Plugin(Arc<Exposed>),
 }
 
 impl Entry {
+    /// Which section the row belongs to, in the order the sections are
+    /// offered: the shell's directory, the session's workspaces, the plugins'
+    /// actions.
+    fn group(&self) -> u8 {
+        match self {
+            Self::Command(_) => 0,
+            Self::Workspace { .. } => 1,
+            Self::Plugin(_) => 2,
+        }
+    }
+
     /// What the row is called.
     pub(crate) fn label(&self) -> String {
         match self {
@@ -44,12 +63,13 @@ impl Entry {
                 .find(|info| info.command == *command)
                 .map(|info| info.label())
                 .unwrap_or_else(|| format!("{command:?}")),
+            Self::Workspace { label, .. } => label.clone(),
             Self::Plugin(entry) => entry.label().to_owned(),
         }
     }
 
-    /// The dim line under the label: which plugin an action belongs to, or the
-    /// command's own id.
+    /// The dim line under the label: which plugin an action belongs to, the
+    /// workspace's branch, or the command's own id.
     fn detail(&self) -> String {
         match self {
             Self::Command(command) => COMMANDS
@@ -57,6 +77,7 @@ impl Entry {
                 .find(|info| info.command == *command)
                 .map(|info| info.id.to_owned())
                 .unwrap_or_default(),
+            Self::Workspace { branch, .. } => branch.clone().unwrap_or_default(),
             Self::Plugin(entry) => entry.action.qualified_id(),
         }
     }
@@ -68,6 +89,7 @@ impl Entry {
     fn hint(&self, keymap: &Keymap) -> Option<String> {
         match self {
             Self::Plugin(entry) => entry.chord().map(|key| keymap.chord_label(key)),
+            Self::Workspace { .. } => None,
             Self::Command(command) => {
                 let info = COMMANDS.iter().find(|info| info.command == *command)?;
                 if let Some(direct) = info.direct.first() {
@@ -90,6 +112,9 @@ impl Entry {
                 action: entry.action.clone(),
                 source: "palette",
             },
+            Self::Workspace { workspace_id, .. } => {
+                ShellRequest::FocusWorkspace(workspace_id.clone())
+            }
         }
     }
 }
@@ -229,7 +254,16 @@ pub(crate) fn overlay(
             .child(palette.query().to_owned())
     };
     let mut list = v_flex().w_full().gap_0p5();
-    for (index, entry) in matches.iter().take(ROWS_SHOWN).enumerate() {
+    // The rows keep the flat order the entries were built in — commands, then
+    // workspaces, then plugin actions — and a header goes where the section
+    // changes.
+    let mut last_group: Option<u8> = None;
+    for (index, entry) in matches.iter().enumerate().take(ROWS_SHOWN) {
+        let group = entry.group();
+        if last_group != Some(group) {
+            list = list.child(group_header(group, &theme));
+            last_group = Some(group);
+        }
         list = list.child(row(
             index,
             entry,
@@ -273,7 +307,22 @@ pub(crate) fn overlay(
                 .border_color(theme.border)
                 .child(query),
         )
-        .child(div().w_full().flex_1().min_h_0().child(list));
+        .child(div().w_full().flex_1().min_h_0().child(list))
+        // The keyboard path, where a first-time look for it ends: the same
+        // three keys the rows above answer to. It carries the background so a
+        // row the height cap clips does not bleed through it.
+        .child(
+            div()
+                .w_full()
+                .px_2()
+                .py_1()
+                .bg(theme.background)
+                .border_t_1()
+                .border_color(theme.border)
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(t("shell.palette.hints")),
+        );
     h_flex()
         .id("palette-scrim")
         .absolute()
@@ -286,6 +335,22 @@ pub(crate) fn overlay(
             close(ShellRequest::Command(Command::TogglePalette), window, cx);
         })
         .child(boxed)
+        .into_any_element()
+}
+
+/// One section's name, where the rows change from one kind to the next.
+fn group_header(group: u8, theme: &Theme) -> AnyElement {
+    let key = match group {
+        0 => "shell.palette.group_commands",
+        1 => "shell.palette.group_workspaces",
+        _ => "shell.palette.group_actions",
+    };
+    div()
+        .px_2()
+        .pt_1()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child(t(key))
         .into_any_element()
 }
 
@@ -492,6 +557,37 @@ key = "{key}"
             }
             _ => panic!("a plugin row runs a plugin action"),
         }
+    }
+
+    /// A workspace row focuses its workspace, is found by branch as well as by
+    /// name, and sits in its own section between the commands and the plugins.
+    #[test]
+    fn a_workspace_row_focuses_its_workspace_and_names_its_branch() {
+        let row = Entry::Workspace {
+            workspace_id: "w2".into(),
+            label: "BitFun".into(),
+            branch: Some("feat/x".into()),
+        };
+        assert_eq!(row.label(), "BitFun");
+        assert_eq!(row.detail(), "feat/x");
+        assert_eq!(row.group(), 1);
+        assert_eq!(Entry::Command(Command::ToggleSettings).group(), 0);
+        match row.request() {
+            ShellRequest::FocusWorkspace(id) => assert_eq!(id, "w2"),
+            _ => panic!("a workspace row focuses a workspace"),
+        }
+        // No chord reaches a workspace: it is a palette row or a sidebar row.
+        assert_eq!(row.hint(&Keymap::default()), None);
+
+        let mut palette = Palette::default();
+        palette.open();
+        let entries = vec![Entry::Command(Command::ToggleSettings), row];
+        for character in "feat".chars() {
+            palette.keystroke(&typed(&character.to_string()), 1);
+        }
+        let matches = palette.matches(&entries);
+        assert_eq!(matches.len(), 1, "the query reaches the branch");
+        assert_eq!(matches[0].label(), "BitFun");
     }
 
     #[test]

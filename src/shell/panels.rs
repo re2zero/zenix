@@ -240,8 +240,9 @@ fn workspace_detail(snapshot: &ClientShellSnapshot, workspace: &ClientShellWorks
 }
 
 /// A dot for an agent's status: filled while it works, red while it waits for
-/// an answer, faint while idle or unknown.
-fn status_dot(status: AgentStatus, theme: &Theme) -> impl IntoElement {
+/// an answer, faint while idle or unknown. The tab strip wears the same dot,
+/// so a status means one color everywhere the shell draws it.
+pub(crate) fn status_dot(status: AgentStatus, theme: &Theme) -> impl IntoElement {
     let color = match status {
         AgentStatus::Working => theme.success,
         AgentStatus::Blocked => theme.danger,
