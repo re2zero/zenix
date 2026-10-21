@@ -71,7 +71,7 @@ src/
 | Orchestration cockpit | shell/cockpit.rs, fleet/mod.rs | Fleet + transitions + tail comparison; data comes from per-pane `pane.agent_status_changed` subscriptions |
 | Daemon event stream | events/mod.rs, plugins/panels.rs | One session-wide subscription, drawn beside the plugin hooks (`plugin-events`) |
 | Plugin host | plugins/{host,api,model}.rs | `plugin.*` over the JSON API lane; reads are on demand, nothing is pushed |
-| Plugin-declared UI | plugins/{ui_manifest,ui_data,views}.rs | `zenix-ui.toml` → registry contributions, fed by a command's stdout JSON |
+| Plugin-declared UI | plugins/{ui_manifest,ui_data,views}.rs | `zenix-ui.toml` → registry contributions, fed by a command's stdout JSON on the cadence the declaration sets |
 | Plugin actions over MCP | mcp/plugin_tools.rs | `plugin.action.list` → tools, `invoke` → the log ring, stdout and exit code (M8c) |
 | Reverse MCP bridge | cli.rs, mcp/agent_bridge.rs | `zenix mcp-agent`: stdio MCP, exactly one tool (`agent_send`), no window and no daemon dependency beyond the API socket |
 | Pre-link trust review | plugins/trust.rs, plugins/trust_view.rs | Manifest → argv list + hazards; `plugin.link` only after it is read |
@@ -123,8 +123,11 @@ src/
   whole), and every downgrade leaves a warning.
 - **A declared command runs off the UI thread, in the plugin's own root** (`plugins/ui_data.rs`):
   the daemon runs a plugin's commands from `<plugin_root>`, so this host does too, and it sets
-  `HERDR_PLUGIN_CONTEXT_JSON` to the same JSON shape the daemon uses. One read per declaration until
-  someone asks for a refresh — a repaint must not run a plugin's side effects again.
+  `HERDR_PLUGIN_CONTEXT_JSON` to the same JSON shape the daemon uses. A repaint must not run a
+  plugin's side effects again, so the reader keeps a schedule, not a per-frame call: `refresh_s`
+  sets the cadence (absent = ten seconds, `0` = once, `n` = clamped to an hour), and only what is
+  on screen is read at all — a drawer panel while the aside is open on its tab, a status segment
+  always. A re-read keeps the last answer on screen rather than replacing it with "reading".
 - **One cell metric**: the advance width the painter lays cells out with is the one every hit
   test, region view and IME cursor must use. `TerminalView` keeps the measured value (`cell`)
   and it is refreshed inside the canvas prepaint, because the painter's metrics are only
