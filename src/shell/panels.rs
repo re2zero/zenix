@@ -474,9 +474,15 @@ fn layout_detail(template: &Template) -> String {
     }
 }
 
-fn render_connection(invocation: &Invocation, _: &mut Window, _: &mut App) -> Option<AnyElement> {
-    let theme = invocation.theme;
-    let (label, color) = match (invocation.status, invocation.status_error) {
+/// What the connection is, as the (text, color) the status bar and the title
+/// bar both show. Each surface paints the pair its own way; the meaning is
+/// decided once, here.
+pub(crate) fn connection_indication(
+    status: ConnectionStatus,
+    error: Option<&str>,
+    theme: &Theme,
+) -> (String, Hsla) {
+    match (status, error) {
         (ConnectionStatus::Disconnected, Some(error)) => (
             rust_i18n::t!("status.disconnected", reason = error).to_string(),
             theme.danger,
@@ -491,7 +497,12 @@ fn render_connection(invocation: &Invocation, _: &mut Window, _: &mut App) -> Op
             (t("status.awaiting_snapshot"), theme.muted_foreground)
         }
         (ConnectionStatus::Connected, _) => (t("status.connected"), theme.success),
-    };
+    }
+}
+
+fn render_connection(invocation: &Invocation, _: &mut Window, _: &mut App) -> Option<AnyElement> {
+    let theme = invocation.theme;
+    let (label, color) = connection_indication(invocation.status, invocation.status_error, theme);
     Some(
         h_flex()
             .gap_1p5()

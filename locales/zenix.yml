@@ -205,6 +205,10 @@ ai:
 # words, so a locale has nothing to say about them; and the language names on the
 # Appearance page stay as each language calls itself.
 shell:
+  titlebar:
+    search:
+      en: "Search workspaces, commands, plugin actions…"
+      zh-CN: "搜索工作区、命令、插件 action…"
   workspaces:
     en: "Workspaces"
     zh-CN: "工作区"

@@ -31,7 +31,7 @@ use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{ActiveTheme, Icon, Theme, ThemeMode, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use herdr_client::protocol::{ClientShellSnapshot, ClientShellTab};
+use herdr_client::protocol::{ClientShellSnapshot, ClientShellTab, ClientShellWorkspace};
 
 use crate::ai::endpoint::ApiEndpoint;
 use crate::config::{self, ASIDE_WIDTH_DEFAULT, ConfigStore, SIDEBAR_WIDTH_DEFAULT};
@@ -39,6 +39,7 @@ use crate::events::{EventState, Stream};
 use crate::fleet::{FleetState, Tails, read_tails};
 use crate::herdr::Connection;
 use crate::herdr::api::ApiClient;
+use crate::i18n::t;
 use crate::layout::{self, LayoutState};
 use crate::plugins::actions::Catalog;
 use crate::plugins::host::PluginHost;
@@ -1309,7 +1310,16 @@ impl Render for ShellView {
             // Every directly bound keystroke dispatches its action here: a
             // binding with no handler matches and does nothing.
             .on_action(cx.listener(Self::run_command))
-            .child(title_bar(&invocation, sidebar_visible))
+            // The key cap shows the palette's own chord, the way the palette's
+            // rows would spell it.
+            .child({
+                let palette_hint = COMMANDS
+                    .iter()
+                    .find(|info| info.command == Command::TogglePalette)
+                    .and_then(|info| info.direct.first())
+                    .map(|chord| self.keymap.chord_label(chord));
+                title_bar(&invocation, sidebar_visible, aside_visible, palette_hint)
+            })
             .child(body)
             .child(status_bar(
                 self.registry.status_segments(),
@@ -1652,63 +1662,228 @@ fn layout_cwd(snapshot: &ClientShellSnapshot) -> Option<&str> {
     pane.foreground_cwd.as_deref().or(pane.cwd.as_deref())
 }
 
-/// The chrome above the grid: which workspace is in front, and the local
-/// toggles. Window controls stay the platform's until M7 has a frameless
-/// window to draw them on.
-fn title_bar(invocation: &Invocation, sidebar_visible: bool) -> AnyElement {
+/// The chrome's own icons, the same inline svg the rail's views are drawn
+/// with: the prototype's stroke shapes, at whatever size the surface asks for.
+mod icons {
+    pub(crate) const SEARCH: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.3-4.3"/></svg>"#;
+    pub(crate) const CHEVRON: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>"#;
+    pub(crate) const SIDEBAR: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>"#;
+    pub(crate) const ASIDE: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>"#;
+}
+
+/// The workspace the chrome speaks for: the one the daemon says is focused.
+fn focused_workspace(snapshot: &ClientShellSnapshot) -> Option<&ClientShellWorkspace> {
+    let id = snapshot.focused_workspace_id.as_deref()?;
+    snapshot
+        .workspaces
+        .iter()
+        .find(|workspace| workspace.workspace_id == id)
+}
+
+/// The chrome above the grid, the prototype's five-part shell's first part:
+/// who this window is (brand, workspace, daemon), the one search that reaches
+/// every command, and the local toggles. The settings and theme entries live
+/// on the rail and in the settings surface; window controls stay the
+/// platform's until there is a frameless window to draw them on (the M7
+/// decision).
+fn title_bar(
+    invocation: &Invocation,
+    sidebar_visible: bool,
+    aside_visible: bool,
+    palette_hint: Option<String>,
+) -> AnyElement {
     let theme = invocation.theme;
-    let title = invocation
-        .snapshot
-        .and_then(|snapshot| {
-            let id = snapshot.focused_workspace_id.as_ref()?;
-            snapshot
-                .workspaces
-                .iter()
-                .find(|workspace| &workspace.workspace_id == id)
-                .map(|workspace| workspace.label.clone())
-        })
-        .unwrap_or_default();
-    h_flex()
+    let mut bar = h_flex()
         .flex_none()
         .w_full()
         .h(px(TITLE_BAR_HEIGHT))
-        .px_2()
+        .pl_2()
+        .pr_1()
         .gap_2()
         .items_center()
         .bg(theme.title_bar)
         .border_b_1()
         .border_color(theme.title_bar_border)
-        .child(toggle_button(
-            "toggle-sidebar",
-            if sidebar_visible { "<" } else { ">" },
-            Command::ToggleSidebar,
-            invocation,
-        ))
-        .child(div().flex_1().text_sm().child(title))
-        .child(toggle_button(
-            "toggle-aside",
-            crate::i18n::t("ai.chat.title"),
-            Command::ToggleAside,
-            invocation,
-        ))
-        .child(toggle_button(
-            "settings",
-            crate::i18n::t("settings.title"),
-            Command::ToggleSettings,
-            invocation,
-        ))
-        .child(toggle_button(
-            "toggle-theme",
-            // The button names the mode it would switch to, so the label is the
-            // other mode's name.
-            if theme.is_dark() {
-                crate::i18n::t("settings.appearance.theme_light")
-            } else {
-                crate::i18n::t("settings.appearance.theme_dark")
-            },
-            Command::ToggleTheme,
-            invocation,
-        ))
+        // The window says its name before anything else.
+        .child(
+            div()
+                .w(px(18.))
+                .h(px(18.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded_sm()
+                .bg(theme.primary)
+                .text_color(theme.primary_foreground)
+                .text_xs()
+                .font_weight(FontWeight::BOLD)
+                .child("z"),
+        )
+        .child(
+            div()
+                .text_sm()
+                .font_weight(FontWeight::SEMIBOLD)
+                .child("zenix"),
+        )
+        .child(div().w(px(1.)).h(px(16.)).bg(theme.title_bar_border));
+    // The workspace pill: what is in front, and the branch it is on. A click
+    // asks the sidebar for its workspaces view — the same list a workspace
+    // switch is made from — so the pill is an entry to picking, not a picker.
+    if let Some(workspace) = invocation.snapshot.and_then(focused_workspace) {
+        let dispatch = invocation.dispatch.clone();
+        bar = bar.child(
+            h_flex()
+                .id("workspace-pill")
+                .px_2()
+                .py_0p5()
+                .gap_1p5()
+                .items_center()
+                .rounded_sm()
+                .cursor_pointer()
+                .hover(|style| style.bg(theme.list_hover))
+                .on_click(move |_, window, cx| {
+                    dispatch(ShellRequest::ShowView(SidebarView::Workspaces), window, cx);
+                })
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(workspace.label.clone()),
+                )
+                .children(workspace.branch.as_deref().map(|branch| {
+                    div()
+                        .px_1p5()
+                        .py(px(1.))
+                        .rounded_full()
+                        .border_1()
+                        .border_color(theme.border)
+                        .bg(theme.muted)
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(branch.to_owned())
+                }))
+                .child(
+                    div()
+                        .text_color(theme.muted_foreground)
+                        .child(Icon::default().data(icons::CHEVRON).w(px(11.)).h(px(11.))),
+                ),
+        );
+    }
+    // The daemon, beside the workspace it serves. The release version is not
+    // in the handshake, so the label is the state alone — the probe prints the
+    // version when it is worth knowing.
+    let (status_label, status_color) =
+        panels::connection_indication(invocation.status, invocation.status_error, theme);
+    bar = bar.child(
+        h_flex()
+            .gap_1p5()
+            .items_center()
+            .child(div().size(px(6.)).rounded_full().bg(status_color))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child(status_label),
+            ),
+    );
+    // The one search: every command, workspace and plugin action behind a
+    // single trigger, with the chord that reaches it from the keyboard.
+    bar = bar
+        .child(div().flex_1())
+        .child(command_trigger(palette_hint, invocation))
+        .child(div().flex_1());
+    bar.child(title_toggle(
+        "toggle-sidebar",
+        icons::SIDEBAR,
+        sidebar_visible,
+        Command::ToggleSidebar,
+        invocation,
+    ))
+    .child(title_toggle(
+        "toggle-aside",
+        icons::ASIDE,
+        aside_visible,
+        Command::ToggleAside,
+        invocation,
+    ))
+    .into_any_element()
+}
+
+/// The title bar's search trigger: a quiet input-shaped button that opens the
+/// palette. The key cap shows the chord the keymap actually binds, not a
+/// hardcoded one.
+fn command_trigger(palette_hint: Option<String>, invocation: &Invocation) -> AnyElement {
+    let theme = invocation.theme;
+    let dispatch = invocation.dispatch.clone();
+    h_flex()
+        .id("palette-trigger")
+        .w(px(320.))
+        .h(px(24.))
+        .px_2()
+        .gap_2()
+        .items_center()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.background)
+        .text_color(theme.muted_foreground)
+        .cursor_pointer()
+        .hover(|style| style.border_color(theme.muted_foreground))
+        .on_click(move |_, window, cx| {
+            dispatch(ShellRequest::Command(Command::TogglePalette), window, cx);
+        })
+        .child(Icon::default().data(icons::SEARCH).w(px(13.)).h(px(13.)))
+        .child(div().flex_1().text_xs().child(t("shell.titlebar.search")))
+        .children(palette_hint.map(|hint| key_cap(hint, theme)))
+        .into_any_element()
+}
+
+/// The little key cap at a trigger's right edge: the chord that reaches the
+/// same thing from the keyboard.
+fn key_cap(label: String, theme: &Theme) -> AnyElement {
+    div()
+        .px_1()
+        .py(px(1.))
+        .rounded_xs()
+        .border_1()
+        .border_color(theme.border)
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child(label)
+        .into_any_element()
+}
+
+/// One of the chrome's right-edge toggles: an icon, lit while the thing it
+/// opens is in front. A click is the same dispatch a chord runs.
+fn title_toggle(
+    id: &'static str,
+    icon: &'static [u8],
+    active: bool,
+    command: Command,
+    invocation: &Invocation,
+) -> AnyElement {
+    let theme = invocation.theme;
+    let dispatch = invocation.dispatch.clone();
+    div()
+        .id(id)
+        .w(px(26.))
+        .h(px(24.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_sm()
+        .cursor_pointer()
+        .text_color(if active {
+            theme.sidebar_primary
+        } else {
+            theme.muted_foreground
+        })
+        .hover(|style| style.bg(theme.list_hover))
+        .when(active, |button| button.bg(theme.sidebar_accent))
+        .on_click(move |_, window, cx| {
+            dispatch(ShellRequest::Command(command), window, cx);
+        })
+        .child(Icon::default().data(icon).w(px(14.)).h(px(14.)))
         .into_any_element()
 }
 
@@ -1913,5 +2088,65 @@ mod tests {
             Some("t1"),
             &[("p1", "t1"), ("p2", "t2")]
         ))));
+    }
+
+    /// A snapshot with workspaces in it, so the chrome's lookup has something
+    /// to find.
+    fn workspace_snapshot(
+        focused: Option<&str>,
+        labels: &[(&str, &str, Option<&str>)],
+    ) -> ClientShellSnapshot {
+        serde_json::from_value(serde_json::json!({
+            "boot_id": "boot",
+            "revision": 1,
+            "update_install_command": "",
+            "latest_release_notes_available": false,
+            "integration_updates_available": false,
+            "worktree_directory": "",
+            "tab_bar_right_separator": "",
+            "tab_bar_right": [],
+            "agent_order": [],
+            "focused_workspace_id": focused,
+            "workspaces": labels
+                .iter()
+                .map(|(id, label, branch)| serde_json::json!({
+                    "workspace_id": id,
+                    "active_tab_id": "t1",
+                    "new_workspace_cwd": "",
+                    "number": 1,
+                    "label": label,
+                    "custom_label": false,
+                    "branch": branch,
+                    "tokens": [],
+                    "focused": false,
+                    "agent_status": "idle",
+                }))
+                .collect::<Vec<_>>(),
+            "tabs": [],
+            "panes": [],
+            "agents": [],
+            "commands": [],
+            "focused_tab_id": null,
+        }))
+        .expect("a snapshot with workspaces still deserializes")
+    }
+
+    /// The title bar's pill speaks for the focused workspace and names its
+    /// branch; without a focus there is nothing to speak for.
+    #[test]
+    fn the_chrome_names_the_focused_workspace_and_its_branch() {
+        let snapshot = workspace_snapshot(
+            Some("w2"),
+            &[("w1", "zenix", Some("main")), ("w2", "BitFun", None)],
+        );
+        let workspace = focused_workspace(&snapshot).expect("the focused workspace is found");
+        assert_eq!(workspace.label, "BitFun");
+        assert_eq!(workspace.branch.as_deref(), None);
+
+        let snapshot = workspace_snapshot(None, &[("w1", "zenix", Some("main"))]);
+        assert!(focused_workspace(&snapshot).is_none());
+
+        let snapshot = workspace_snapshot(Some("gone"), &[("w1", "zenix", Some("main"))]);
+        assert!(focused_workspace(&snapshot).is_none());
     }
 }
