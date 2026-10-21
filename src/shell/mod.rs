@@ -14,6 +14,7 @@
 pub(crate) mod chat;
 pub(crate) mod cockpit;
 pub(crate) mod commands;
+pub(crate) mod empty;
 pub(crate) mod keymap;
 pub(crate) mod palette;
 pub(crate) mod panel_resize;
@@ -26,6 +27,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{ActiveTheme, Icon, Theme, ThemeMode, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -50,7 +52,8 @@ use keymap::{Keymap, RunCommand};
 use palette::{Entry, Key as PaletteKey, Palette};
 use panel_resize::{ASIDE, AsideDrag, Edge, PanelWidth, SIDEBAR, SidebarDrag};
 use registry::{
-    Dispatch, Invocation, Registry, ShellRequest, SidebarView, StatusAlign, StatusContribution,
+    AsideTab, Dispatch, Invocation, Registry, ShellRequest, SidebarView, StatusAlign,
+    StatusContribution,
 };
 
 const TITLE_BAR_HEIGHT: f32 = 34.;
@@ -77,6 +80,9 @@ pub(crate) struct ShellView {
     /// The right-hand panel's width, under the sidebar's rules but measured
     /// from the other edge.
     aside: PanelWidth,
+    /// Which tab of the right-hand panel is in front. The strip changes it; a
+    /// request that opens the panel for a plugin's panel names its own tab.
+    aside_tab: AsideTab,
     aside_dragging: bool,
     /// The settings surface is over the shell, and has the keyboard.
     settings_open: bool,
@@ -220,6 +226,7 @@ impl ShellView {
             sidebar,
             sidebar_dragging: false,
             aside,
+            aside_tab: AsideTab::Chat,
             aside_dragging: false,
             settings_open: false,
             settings_focus: cx.focus_handle(),
@@ -717,6 +724,14 @@ impl ShellView {
                 self.rail = view;
                 cx.notify();
             }
+            // The same for the panel's tabs, except that a tab click also opens
+            // a closed panel: the click named a tab, so hiding it would be a
+            // gesture answered by nothing.
+            ShellRequest::ShowAsideTab(tab) => {
+                self.aside_tab = tab;
+                config::update(cx, |config| config.layout.aside_visible = true);
+                cx.notify();
+            }
             ShellRequest::FocusWorkspace(workspace_id) => {
                 self.connection.focus_workspace(&workspace_id)
             }
@@ -761,6 +776,7 @@ impl ShellView {
             // mounts in the right-hand panel: showing that panel is the whole
             // request.
             ShellRequest::ShowPluginPanels => {
+                self.aside_tab = AsideTab::Panels;
                 config::update(cx, |config| config.layout.aside_visible = true);
                 cx.notify();
             }
@@ -1039,6 +1055,7 @@ impl Render for ShellView {
                 // lane; the dispatch is the shell's, so the two paths cannot
                 // part ways.
                 request @ (ShellRequest::ShowView(_)
+                | ShellRequest::ShowAsideTab(_)
                 | ShellRequest::MoveTab { .. }
                 | ShellRequest::MoveWorkspace { .. }
                 | ShellRequest::PluginAction { .. }
@@ -1129,15 +1146,43 @@ impl Render for ShellView {
                 .min_w_0()
                 .min_h_0()
                 .child(tab_strip(&invocation))
-                // The grid needs the remaining height: inside a flex
-                // column a childless `size_full` collapses to the height
-                // its own content asks for, which for a canvas is one row.
-                .child(div().flex_1().min_h_0().child(self.terminal.clone())),
+                .child(
+                    // The grid needs the remaining height: inside a flex
+                    // column a childless `size_full` collapses to the height
+                    // its own content asks for, which for a canvas is one row.
+                    // With no pane to paint, the area says what can be done
+                    // instead of showing an empty surface.
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .child(if grid_is_empty(live.snapshot.as_deref()) {
+                            empty::grid(&invocation)
+                        } else {
+                            self.terminal.clone().into_any_element()
+                        }),
+                ),
         );
         if aside_visible {
             let aside_width = self
                 .aside
                 .width(window.viewport_size().width.to_f64() as f32);
+            // Every tab stays mounted and only the one in front is laid out:
+            // a block's state lives in the element that renders it, so
+            // unmounting a tab would drop what was typed into it (M11c).
+            let bodies: Vec<AnyElement> = AsideTab::ALL
+                .iter()
+                .map(|tab| {
+                    let active = *tab == self.aside_tab;
+                    v_flex()
+                        .id(("aside-body", *tab as usize))
+                        .flex_1()
+                        .min_h_0()
+                        .w_full()
+                        .when(!active, |body| body.hidden())
+                        .child(aside_body(*tab, &self.registry, &invocation, window, cx))
+                        .into_any_element()
+                })
+                .collect();
             body = body.child(
                 v_flex()
                     .relative()
@@ -1159,12 +1204,8 @@ impl Render for ShellView {
                         AsideDrag,
                         cx.listener(Self::reset_aside),
                     ))
-                    .children(
-                        self.registry
-                            .aside_panels()
-                            .iter()
-                            .map(|panel| panel.render(&invocation, window, cx)),
-                    ),
+                    .child(aside_strip(self.aside_tab, &self.registry, &invocation))
+                    .children(bodies),
             );
         }
         let mut root = v_flex()
@@ -1218,6 +1259,158 @@ impl Render for ShellView {
         }
         root
     }
+}
+
+/// One tab's blocks. The chat and the fleet bring their own scrolling, the
+/// plugin panels are plain columns and need the shell to scroll them — so the
+/// scroll wrapper belongs to the tab that needs it, inside the container that
+/// decides whether the tab is laid out at all.
+fn aside_body(
+    tab: AsideTab,
+    registry: &Registry,
+    invocation: &Invocation,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let mut column = v_flex().flex_1().min_h_0().w_full();
+    if tab == AsideTab::Panels {
+        if registry.aside_in(tab).next().is_none() {
+            // The third tab is only what the plugins declare, so a client with
+            // no such declaration says where they come from rather than showing
+            // an empty column.
+            column = column.child(empty::plugin_panels(invocation));
+        }
+        return column
+            .children(
+                registry
+                    .aside_in(tab)
+                    .map(|panel| panel.render(invocation, window, cx)),
+            )
+            .overflow_y_scrollbar()
+            .into_any_element();
+    }
+    column
+        .children(
+            registry
+                .aside_in(tab)
+                .map(|panel| panel.render(invocation, window, cx)),
+        )
+        .into_any_element()
+}
+
+/// The right-hand panel's strip: one button per tab, then the button that
+/// closes the panel. A tab with something to count shows how many, so the strip
+/// answers "is anything running / declared?" without being opened.
+fn aside_strip(current: AsideTab, registry: &Registry, invocation: &Invocation) -> AnyElement {
+    let theme = invocation.theme;
+    let fleet = invocation.fleet.count("running") + invocation.fleet.count("blocked");
+    let panels = registry.aside_in(AsideTab::Panels).count();
+    let strip = h_flex()
+        .flex_none()
+        .w_full()
+        .h(px(TAB_STRIP_HEIGHT))
+        .px_1()
+        .gap_1()
+        .items_center()
+        .bg(theme.tab_bar)
+        .border_b_1()
+        .border_color(theme.border)
+        .children(AsideTab::ALL.iter().map(|tab| {
+            let count = match tab {
+                AsideTab::Fleet => fleet,
+                AsideTab::Panels => panels,
+                AsideTab::Chat => 0,
+            };
+            aside_tab_button(*tab, *tab == current, count, invocation)
+        }));
+    strip
+        .child(div().flex_1())
+        .child(aside_close(invocation))
+        .into_any_element()
+}
+
+/// The strip's own close: a glyph button, not a labelled one — the strip has no
+/// room for a word here and the locale file says nothing about symbols.
+fn aside_close(invocation: &Invocation) -> AnyElement {
+    let theme = invocation.theme;
+    let dispatch = invocation.dispatch.clone();
+    div()
+        .id("close-aside")
+        .w(px(22.))
+        .h(px(22.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_sm()
+        .cursor_pointer()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .hover(|style| style.bg(theme.muted))
+        .on_click(move |_, window, cx| {
+            dispatch(ShellRequest::Command(Command::ToggleAside), window, cx);
+        })
+        .child("x")
+        .into_any_element()
+}
+
+/// One tab of the panel's strip, in the same pill the workspace tabs use.
+fn aside_tab_button(
+    tab: AsideTab,
+    selected: bool,
+    count: usize,
+    invocation: &Invocation,
+) -> AnyElement {
+    let theme = invocation.theme;
+    let dispatch = invocation.dispatch.clone();
+    h_flex()
+        .id(("aside-tab", tab as usize))
+        .px_1()
+        .py_0p5()
+        .gap_1()
+        .items_center()
+        .rounded_sm()
+        .cursor_pointer()
+        .bg(if selected {
+            theme.tab_active
+        } else {
+            theme.tab
+        })
+        .text_color(if selected {
+            theme.tab_active_foreground
+        } else {
+            theme.tab_foreground
+        })
+        .hover(|style| style.bg(theme.tab_active))
+        .on_click(move |_, window, cx| {
+            dispatch(ShellRequest::ShowAsideTab(tab), window, cx);
+        })
+        .child(Icon::default().data(tab.icon()).w(px(13.)).h(px(13.)))
+        .child(
+            div()
+                .text_xs()
+                .when(selected, |label| label.font_weight(FontWeight::SEMIBOLD))
+                .child(tab.label()),
+        )
+        .children((count > 0).then(|| {
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(count.to_string())
+        }))
+        .into_any_element()
+}
+
+/// Whether the grid has no pane to paint. The daemon always gives a tab one
+/// pane, so this is also the state before the first snapshot lands — the same
+/// question either way: is there a surface for a focused tab?
+fn grid_is_empty(snapshot: Option<&ClientShellSnapshot>) -> bool {
+    let Some(snapshot) = snapshot else {
+        return true;
+    };
+    let Some(tab_id) = snapshot.focused_tab_id.as_deref() else {
+        return true;
+    };
+    !snapshot.panes.iter().any(|pane| pane.tab_id == tab_id)
 }
 
 /// The status bar: the facts about the session open it, the client's own state
@@ -1565,4 +1758,55 @@ fn tab_button(tab: &ClientShellTab, index: usize, invocation: &Invocation) -> An
                 .child("x"),
         )
         .into_any_element()
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use herdr_client::protocol::ClientShellSnapshot;
+    use std::prelude::v1::test;
+
+    fn snapshot(focused_tab: Option<&str>, panes: &[(&str, &str)]) -> ClientShellSnapshot {
+        serde_json::from_value(serde_json::json!({
+            "boot_id": "boot",
+            "revision": 1,
+            "update_install_command": "",
+            "latest_release_notes_available": false,
+            "integration_updates_available": false,
+            "worktree_directory": "",
+            "tab_bar_right_separator": "",
+            "tab_bar_right": [],
+            "agent_order": [],
+            "workspaces": [],
+            "tabs": [],
+            "panes": panes
+                .iter()
+                .map(|(pane_id, tab_id)| serde_json::json!({
+                    "pane_id": pane_id,
+                    "workspace_id": "w1",
+                    "tab_id": tab_id,
+                    "focused": false,
+                    "right_click_passthrough": false,
+                }))
+                .collect::<Vec<_>>(),
+            "agents": [],
+            "commands": [],
+            "focused_tab_id": focused_tab,
+        }))
+        .expect("a snapshot with panes still deserializes")
+    }
+
+    /// The empty state stands in for the surface, so it must be shown exactly
+    /// when there is no surface to paint for the focused tab.
+    #[test]
+    fn the_grid_is_empty_without_a_snapshot_or_without_a_pane_in_the_focused_tab() {
+        assert!(grid_is_empty(None));
+        assert!(grid_is_empty(Some(&snapshot(None, &[("p1", "t1")]))));
+        assert!(grid_is_empty(Some(&snapshot(Some("t1"), &[]))));
+        // A pane in another tab is not a pane in front of this one.
+        assert!(grid_is_empty(Some(&snapshot(Some("t2"), &[("p1", "t1")]))));
+        assert!(!grid_is_empty(Some(&snapshot(
+            Some("t1"),
+            &[("p1", "t1"), ("p2", "t2")]
+        ))));
+    }
 }

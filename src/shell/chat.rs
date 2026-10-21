@@ -33,11 +33,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::scroll::ScrollableElement;
-use gpui_kit::component::{ActiveTheme, Theme, h_flex, v_flex};
+use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
+use gpui_kit::component::select::{Select, SelectEvent, SelectState};
+use gpui_kit::component::{ActiveTheme as _, IndexPath, Sizable as _, Size, Theme, h_flex, v_flex};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
-use super::registry::{Builtin, Invocation};
+use super::registry::{AsideBlock, AsideTab, Invocation};
 use crate::ai::compactor::Compactor;
 use crate::ai::endpoint::ApiEndpoint;
 use crate::ai::engine::{
@@ -46,11 +48,16 @@ use crate::ai::engine::{
 use crate::ai::roles::RoleRegistry;
 use crate::ai::session::{ChatMessage, Session, SessionManager, ToolCallState, ToolCallStatus};
 use crate::ai::tools::{Tool, ToolExecutor, builtin_tools};
-use crate::api_provider::{self, ApiProviderConfig};
+use crate::api_provider::{self, ApiProviderConfig, ThinkingLevel};
 use crate::i18n::t;
 
-/// The right-hand panel's blocks, top to bottom.
-pub(crate) const ASIDE: &[Builtin] = &[Builtin { id: "chat", render }];
+/// The right-hand panel's blocks this module contributes: the conversation is
+/// the panel's first tab.
+pub(crate) const ASIDE: &[AsideBlock] = &[AsideBlock {
+    id: "chat",
+    tab: AsideTab::Chat,
+    render,
+}];
 
 /// How many tool rounds one turn may take. The engine has its own ceiling; this
 /// is the tighter one the panel asks for.
@@ -72,9 +79,16 @@ struct ChatPanel {
     messages: Vec<ChatMessage>,
     streaming: Option<usize>,
     input: Entity<InputState>,
-    /// The provider the last turn ran on, and the one the header names. Read
-    /// once per turn rather than once per frame: the file is not a push.
+    /// The provider the next turn runs on, and the one the composer names. Read
+    /// once when the panel is built and then owned by the composer: a picker
+    /// that re-read the file would forget what the user just chose.
     provider: Option<ApiProviderConfig>,
+    /// The model picker's list: every configured provider that carries a key,
+    /// which is the whole catalog this client has (`crate::api_provider`, the
+    /// same list `crate::ai::engine` picks from — no second enum).
+    model_select: Entity<SelectState<SearchableVec<ModelChoice>>>,
+    /// The reasoning-effort picker: the four levels `ThinkingLevel` defines.
+    effort_select: Entity<SelectState<SearchableVec<EffortChoice>>>,
     /// Why the last send or the last turn failed, until the next one starts.
     error: Option<String>,
     /// What the running turn compacted away, if it had to.
@@ -92,6 +106,8 @@ struct ChatPanel {
     open: Vec<String>,
     scroll: ScrollHandle,
     _input: Subscription,
+    _model: Subscription,
+    _effort: Subscription,
 }
 
 impl ChatPanel {
@@ -106,11 +122,80 @@ impl ChatPanel {
                 InputEvent::Focus | InputEvent::Blur => {}
             },
         );
+        let provider = available_provider();
+        let models: Vec<ModelChoice> = usable_providers().iter().map(ModelChoice::of).collect();
+        let chosen = provider.as_ref().and_then(|provider| {
+            models
+                .iter()
+                .position(|choice| choice.name == provider.name)
+        });
+        let model_select = cx.new(|cx| {
+            SelectState::new(
+                SearchableVec::new(models),
+                chosen.map(|row| IndexPath::default().row(row)),
+                window,
+                cx,
+            )
+        });
+        let levels = levels();
+        let level = provider
+            .as_ref()
+            .map(|provider| provider.thinking_level)
+            .unwrap_or_default();
+        let effort_select = cx.new(|cx| {
+            SelectState::new(
+                SearchableVec::new(levels),
+                Some(IndexPath::default().row(level_index(level))),
+                window,
+                cx,
+            )
+        });
+        let model = cx.subscribe_in(
+            &model_select,
+            window,
+            |panel: &mut Self,
+             _select,
+             event: &SelectEvent<SearchableVec<ModelChoice>>,
+             _window,
+             cx| {
+                let SelectEvent::Confirm(Some(name)) = event else {
+                    return;
+                };
+                if let Some(choice) = usable_providers()
+                    .into_iter()
+                    .find(|provider| provider.name == name.as_ref())
+                {
+                    panel.provider = Some(choice);
+                    cx.notify();
+                }
+            },
+        );
+        let effort = cx.subscribe_in(
+            &effort_select,
+            window,
+            |panel: &mut Self,
+             _select,
+             event: &SelectEvent<SearchableVec<EffortChoice>>,
+             _window,
+             cx| {
+                let SelectEvent::Confirm(Some(level)) = event else {
+                    return;
+                };
+                if let Some(provider) = panel.provider.as_mut()
+                    && let Some(level) = level_of(level.as_ref())
+                {
+                    provider.thinking_level = level;
+                    cx.notify();
+                }
+            },
+        );
         Self {
             messages: Vec::new(),
             streaming: None,
             input,
-            provider: available_provider(),
+            provider,
+            model_select,
+            effort_select,
             error: None,
             compacted: None,
             reasoning_started: None,
@@ -120,6 +205,8 @@ impl ChatPanel {
             open: Vec::new(),
             scroll: ScrollHandle::new(),
             _input: subscription,
+            _model: model,
+            _effort: effort,
         }
     }
 
@@ -139,7 +226,12 @@ impl ChatPanel {
         if text.is_empty() {
             return;
         }
-        self.provider = available_provider();
+        // A provider the composer already holds is the user's choice; the file
+        // is only read when there is none, so a picker cannot be overwritten
+        // between a click and the next turn.
+        if self.provider.is_none() {
+            self.provider = available_provider();
+        }
         let Some(provider) = self.provider.clone() else {
             // The text stays in the box: nothing was sent.
             self.error = Some(format!(
@@ -388,16 +480,14 @@ impl Render for ChatPanel {
             rows.push(message_row(index, message, &self.open, cx));
         }
 
+        // The panel's tab strip already says which tab this is, so the block
+        // opens with the conversation rather than a second title row.
         let mut column = v_flex()
-            // The panel's own height is what the cockpit below it leaves: the
-            // chat is the panel's main block, so it takes the remaining room
-            // rather than filling the whole panel and pushing the cockpit out.
             .flex_1()
             .min_h_0()
             .w_full()
             .bg(theme.sidebar)
-            .text_color(theme.foreground)
-            .child(header(self, &theme, cx));
+            .text_color(theme.foreground);
         if rows.is_empty() {
             column = column.child(empty_state(self, &theme));
         } else {
@@ -417,7 +507,7 @@ impl Render for ChatPanel {
         }
         column
             .child(notes(self, &theme))
-            .child(input_bar(self, &theme, cx))
+            .child(composer(self, &theme, cx))
             .into_any_element()
     }
 }
@@ -606,19 +696,75 @@ fn tool_card(
     .into_any_element()
 }
 
-/// The panel's title, the provider the last turn ran on, and the two buttons
-/// that matter while a turn runs: start another conversation, or stop this one.
-fn header(panel: &ChatPanel, theme: &Theme, cx: &mut Context<ChatPanel>) -> AnyElement {
+/// The composer: what this conversation is running on, the message box, and the
+/// two pickers that decide the next turn. The pickers read the catalog this
+/// client actually has — the configured providers and the levels
+/// [`ThinkingLevel`] defines — so neither is a list invented here.
+fn composer(panel: &ChatPanel, theme: &Theme, cx: &mut Context<ChatPanel>) -> AnyElement {
+    v_flex()
+        .flex_none()
+        .w_full()
+        .border_t_1()
+        .border_color(theme.border)
+        .child(context_line(panel, theme, cx))
+        .child(
+            h_flex()
+                .w_full()
+                .px_2()
+                .pt_1()
+                .gap_2()
+                .items_center()
+                .child(div().flex_1().min_w_0().child(Input::new(&panel.input)))
+                .child(send_button(panel, theme, cx)),
+        )
+        .child(
+            h_flex()
+                .w_full()
+                .px_2()
+                .py_1()
+                .gap_1()
+                .items_center()
+                // The model's name is the longer of the two, so it takes the
+                // room and the level keeps a fixed column.
+                .child(
+                    div().flex_1().min_w_0().child(
+                        Select::new(&panel.model_select)
+                            .with_size(Size::XSmall)
+                            .placeholder(t("ai.config_empty"))
+                            .menu_width(px(260.))
+                            .disabled(panel.provider.is_none()),
+                    ),
+                )
+                .child(
+                    div().w(px(120.)).child(
+                        Select::new(&panel.effort_select)
+                            .with_size(Size::XSmall)
+                            .placeholder(t("ai.chat.effort"))
+                            .menu_width(px(180.))
+                            .disabled(panel.provider.is_none()),
+                    ),
+                ),
+        )
+        .into_any_element()
+}
+
+/// One line naming what the next turn runs on, and the two controls that act on
+/// the conversation rather than on its text.
+fn context_line(panel: &ChatPanel, theme: &Theme, cx: &mut Context<ChatPanel>) -> AnyElement {
     let detail = match panel.provider.as_ref() {
         Some(provider) if panel.is_streaming() => {
             format!("{} · {}", provider.name, t("ai.chat.streaming"))
         }
-        Some(provider) => [provider.name.as_str(), provider.model.as_str()]
-            .into_iter()
-            .filter(|part| !part.is_empty())
-            .collect::<Vec<&str>>()
-            .join(" · "),
-        None => String::new(),
+        Some(provider) => [
+            provider.name.as_str(),
+            provider.model.as_str(),
+            provider.thinking_level.as_str(),
+        ]
+        .into_iter()
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<&str>>()
+        .join(" · "),
+        None => format!("{} {}", t("ai.config_empty"), t("ai.config_empty_hint")),
     };
     let stop = cx.listener(|panel, _: &ClickEvent, _window, cx| panel.stop(cx));
     let fresh = cx.listener(|panel, _: &ClickEvent, _window, cx| panel.new_session(cx));
@@ -626,12 +772,9 @@ fn header(panel: &ChatPanel, theme: &Theme, cx: &mut Context<ChatPanel>) -> AnyE
         .flex_none()
         .w_full()
         .px_2()
-        .py_1()
+        .pt_1()
         .gap_2()
         .items_center()
-        .border_b_1()
-        .border_color(theme.border)
-        .child(div().text_sm().child(t("ai.chat.title")))
         .child(
             div()
                 .min_w_0()
@@ -655,27 +798,16 @@ fn header(panel: &ChatPanel, theme: &Theme, cx: &mut Context<ChatPanel>) -> AnyE
         .into_any_element()
 }
 
-/// The message box, and the button that sends what is in it.
-fn input_bar(panel: &ChatPanel, theme: &Theme, cx: &mut Context<ChatPanel>) -> AnyElement {
+/// The button that sends what is in the box; disabled while a turn runs.
+fn send_button(panel: &ChatPanel, theme: &Theme, cx: &mut Context<ChatPanel>) -> AnyElement {
     let send = cx.listener(|panel, _: &ClickEvent, window, cx| panel.send(window, cx));
-    h_flex()
-        .flex_none()
-        .w_full()
-        .px_2()
-        .py_2()
-        .gap_2()
-        .items_center()
-        .border_t_1()
-        .border_color(theme.border)
-        .child(div().flex_1().min_w_0().child(Input::new(&panel.input)))
-        .child(button(
-            "chat-send",
-            t("ai.chat.send"),
-            !panel.is_streaming(),
-            send,
-            theme,
-        ))
-        .into_any_element()
+    button(
+        "chat-send",
+        t("ai.chat.send"),
+        !panel.is_streaming(),
+        send,
+        theme,
+    )
 }
 
 /// The last failure and the last compaction, above the message box where they
@@ -845,10 +977,96 @@ fn fold_event(message: &mut ChatMessage, event: &DispatchStreamEvent, now_ms: u6
 
 /// The provider a turn runs on: the first one with a key, which is the rule the
 /// old UI had. Choosing between several is a settings question (M7/M9).
-fn available_provider() -> Option<ApiProviderConfig> {
+/// Every configured provider that carries a key: the catalog this client has,
+/// as `crate::api_provider` reads it. A provider without a key cannot run a
+/// turn, so it is not offered as a choice.
+fn usable_providers() -> Vec<ApiProviderConfig> {
     api_provider::load_all()
         .into_iter()
-        .find(|provider| !provider.api_key.trim().is_empty())
+        .filter(|provider| !provider.api_key.trim().is_empty())
+        .collect()
+}
+
+fn available_provider() -> Option<ApiProviderConfig> {
+    usable_providers().into_iter().next()
+}
+
+/// One row of the model picker: a provider, named by what it is and what it
+/// runs. Its value is the provider's name, which is how it is found again.
+#[derive(Clone)]
+struct ModelChoice {
+    name: SharedString,
+    title: SharedString,
+}
+
+impl ModelChoice {
+    fn of(provider: &ApiProviderConfig) -> Self {
+        let title = if provider.model.trim().is_empty() {
+            provider.name.clone()
+        } else {
+            format!("{} · {}", provider.name, provider.model)
+        };
+        Self {
+            name: provider.name.clone().into(),
+            title: title.into(),
+        }
+    }
+}
+
+impl SearchableListItem for ModelChoice {
+    type Value = SharedString;
+
+    fn title(&self) -> SharedString {
+        self.title.clone()
+    }
+
+    fn value(&self) -> &SharedString {
+        &self.name
+    }
+}
+
+/// One row of the reasoning-effort picker. Its value is the level's wire
+/// spelling, which is what `ThinkingLevel` stores.
+#[derive(Clone)]
+struct EffortChoice {
+    value: SharedString,
+    title: SharedString,
+}
+
+impl SearchableListItem for EffortChoice {
+    type Value = SharedString;
+
+    fn title(&self) -> SharedString {
+        self.title.clone()
+    }
+
+    fn value(&self) -> &SharedString {
+        &self.value
+    }
+}
+
+fn levels() -> Vec<EffortChoice> {
+    ThinkingLevel::all()
+        .iter()
+        .map(|level| EffortChoice {
+            value: level.as_str().into(),
+            title: t(&format!("ai.effort.{}", level.as_str())).into(),
+        })
+        .collect()
+}
+
+fn level_index(level: ThinkingLevel) -> usize {
+    ThinkingLevel::all()
+        .iter()
+        .position(|candidate| *candidate == level)
+        .unwrap_or(0)
+}
+
+fn level_of(value: &str) -> Option<ThinkingLevel> {
+    ThinkingLevel::all()
+        .iter()
+        .copied()
+        .find(|level| level.as_str() == value)
 }
 
 fn engine_for(
@@ -1138,5 +1356,42 @@ mod tests {
         assert_eq!(wire_role("user"), "user");
         assert_eq!(wire_role("orchestrator"), "assistant");
         assert_eq!(wire_role("anything-else"), "assistant");
+    }
+
+    /// The composer's model picker is the configured providers, named by what
+    /// they are and what they run — the catalog `crate::ai::engine` picks from.
+    #[test]
+    fn the_model_picker_names_a_provider_by_its_model() {
+        let provider = ApiProviderConfig {
+            name: "local".into(),
+            format: crate::api_provider::ApiFormat::OpenAI,
+            base_url: "http://localhost:8000".into(),
+            api_key: "key".into(),
+            model: "qwen".into(),
+            thinking_level: ThinkingLevel::High,
+            url_suffix: "/v1/chat/completions".into(),
+            enabled_agents: Vec::new(),
+        };
+        let choice = ModelChoice::of(&provider);
+        assert_eq!(choice.title(), "local · qwen");
+        assert_eq!(choice.value(), "local");
+        // A provider with no model named is still offered, by its name alone.
+        let choice = ModelChoice::of(&ApiProviderConfig {
+            model: String::new(),
+            ..provider
+        });
+        assert_eq!(choice.title(), "local");
+    }
+
+    /// The effort picker is `ThinkingLevel` itself, so a level's label and its
+    /// wire spelling have to round-trip through the row's value.
+    #[test]
+    fn the_effort_picker_round_trips_every_level() {
+        assert_eq!(levels().len(), ThinkingLevel::all().len());
+        for (index, level) in ThinkingLevel::all().iter().enumerate() {
+            assert_eq!(level_index(*level), index);
+            assert_eq!(level_of(level.as_str()), Some(*level));
+        }
+        assert_eq!(level_of("not-a-level"), None);
     }
 }

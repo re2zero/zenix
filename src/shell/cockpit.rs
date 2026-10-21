@@ -21,21 +21,18 @@ use gpui_kit::*;
 use herdr_client::protocol::{ClientShellAgent, ClientShellSnapshot};
 
 use super::panels::ordered_agents;
-use super::registry::{Builtin, Invocation, ShellRequest};
+use super::registry::{AsideBlock, AsideTab, Invocation, ShellRequest};
 use crate::events::age;
 use crate::fleet::{FleetState, Tail};
 use crate::i18n::t;
 
-/// The right-hand panel's blocks this module contributes.
-pub(crate) const ASIDE: &[Builtin] = &[Builtin {
+/// The right-hand panel's blocks this module contributes: the fleet is the
+/// panel's second tab, with the whole panel to itself.
+pub(crate) const ASIDE: &[AsideBlock] = &[AsideBlock {
     id: "cockpit",
+    tab: AsideTab::Fleet,
     render,
 }];
-
-/// How tall the block is. The fleet is bounded by the panel, not by the window:
-/// a long roster scrolls inside the block rather than pushing the chat panel
-/// out of the way.
-const HEIGHT: f32 = 340.;
 
 /// Transitions one agent's row names before the timeline is cut off.
 const HISTORY: usize = 2;
@@ -55,21 +52,19 @@ fn render(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyElement {
     let Some(snapshot) = invocation.snapshot else {
         return div().into_any_element();
     };
-    // The block scrolls: a fleet of six with a comparison open is taller than
-    // the room it is given. `overflow_y_scrollbar` wraps the column in
-    // gpui-component's `Scrollable`, which owns the handle (per window, keyed by
-    // this id) and the wheel — tracking a handle of our own here would leave the
-    // wheel driving a different one.
+    // The tab is the block's whole room now, so it fills it and scrolls rather
+    // than sitting under the conversation. `overflow_y_scrollbar` wraps the
+    // column in gpui-component's `Scrollable`, which owns the handle (per
+    // window, keyed by this id) and the wheel — tracking a handle of our own
+    // here would leave the wheel driving a different one.
     let mut column = v_flex()
         .id("cockpit")
-        .flex_none()
-        .max_h(px(HEIGHT))
+        .flex_1()
+        .min_h_0()
         .w_full()
-        .px_1()
-        .py_1()
-        .gap_0p5()
-        .border_t_1()
-        .border_color(theme.border)
+        .px_2()
+        .py_2()
+        .gap_1()
         .overflow_y_scrollbar()
         .child(head(invocation));
     if snapshot.agents.is_empty() {

@@ -177,6 +177,24 @@ ai:
     streaming:
       en: "Thinking..."
       zh-CN: "思考中…"
+    effort:
+      en: "Reasoning effort"
+      zh-CN: "推理力度"
+  # The composer's reasoning-effort picker: one label per `ThinkingLevel`, keyed
+  # by the level's wire spelling.
+  effort:
+    low:
+      en: "Low"
+      zh-CN: "低"
+    medium:
+      en: "Medium"
+      zh-CN: "中"
+    high:
+      en: "High"
+      zh-CN: "高"
+    xhigh:
+      en: "X-High"
+      zh-CN: "极高"
   agent:
     monitor_title:
       en: "Active Agents"
@@ -234,6 +252,64 @@ shell:
       events:
         en: "Nothing has happened yet"
         zh-CN: "尚无事件"
+  # The right-hand panel's tabs: the strip's labels, and what its tabs say when
+  # they have nothing to show.
+  aside:
+    chat:
+      en: "Chat"
+      zh-CN: "对话"
+    fleet:
+      en: "Fleet"
+      zh-CN: "驾驶舱"
+    panels:
+      en: "Panels"
+      zh-CN: "插件面板"
+  # The grid with no pane to paint (PLAN.md §M11c). Every entry is a command from
+  # the directory, so nothing here is decoration standing in for an action.
+  empty:
+    title:
+      en: "What would you like to do?"
+      zh-CN: "想做点什么？"
+    hint:
+      en: "Describe a task, or pick one below. Ctrl K opens the command palette."
+      zh-CN: "直接描述任务，或者从下面挑一个。Ctrl K 打开命令面板。"
+    palette:
+      en: "Describe a task, paste an error, or search a command…"
+      zh-CN: "描述任务、粘贴错误、或搜索命令…"
+    workspace:
+      title:
+        en: "Open a workspace"
+        zh-CN: "打开工作区"
+      detail:
+        en: "Bring a repository in and start a shell"
+        zh-CN: "把一个仓库接进来，起一个 shell"
+    split:
+      title:
+        en: "Split to run tests"
+        zh-CN: "分屏跑测试"
+      detail:
+        en: "Open a column in this tab, keeping the current pane"
+        zh-CN: "在这个标签里开一列，保留当前窗格"
+    layout:
+      title:
+        en: "Restore a layout template"
+        zh-CN: "从布局模板恢复"
+      detail:
+        en: ".zenix/layout.toml travels with the repository"
+        zh-CN: ".zenix/layout.toml 跟着仓库走"
+    trust:
+      title:
+        en: "Review and link a plugin"
+        zh-CN: "审查并链接插件"
+      detail:
+        en: "See what it would run before it runs"
+        zh-CN: "先看清它会执行什么"
+    panels:
+      en: "No plugin has declared a panel for this client."
+      zh-CN: "没有插件为本客户端声明面板。"
+    panels_action:
+      en: "Review and link a plugin"
+      zh-CN: "审查并链接插件"
   trust:
     title:
       en: "Link a plugin — what it would run"
