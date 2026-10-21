@@ -513,14 +513,6 @@ fn a_pane_key_sends_its_target_held_as_typed() {
         (code, modifiers, kind),
         (ClientKeyCode::Char('a'), 2, ClientKeyKind::Repeat)
     );
-    // Alt-modified targets are sent whatever option_as_alt says.
-    assert!(reaches_pane(&Keystroke::parse("alt-b").unwrap()));
-    for unsendable in ["cmd-a", "a", "shift-a"] {
-        assert!(
-            !reaches_pane(&Keystroke::parse(unsendable).unwrap()),
-            "{unsendable}"
-        );
-    }
 }
 
 #[test]
@@ -610,10 +602,4 @@ fn scrollbar_thumb_tracks_offset_to_the_pixel_and_round_trips() {
     // One line moves the thumb a fraction of a pixel, not a whole cell.
     let step = f32::from(bottom.thumb.top() - one.thumb.top());
     assert!(step > 0. && step < 1., "{step}");
-    for offset in [0, 1, 500, 1977, 1978] {
-        let bar = Scrollbar::new(&pane(offset, 1978), 8., 20.).unwrap();
-        assert_eq!(bar.offset_at(f32::from(bar.thumb.top())), offset);
-    }
-    assert_eq!(bottom.offset_at(-100.), 1978);
-    assert_eq!(bottom.offset_at(1000.), 0);
 }

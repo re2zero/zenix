@@ -474,12 +474,6 @@ pub fn pane_key_input(event: &KeyDownEvent, sent: &Keystroke) -> Option<ClientPa
     keystroke_input(sent, event.is_held, true)
 }
 
-/// Whether a pane can receive `keystroke` as a key event, so `[pane_keys]`
-/// never names one that would silently send nothing.
-pub(crate) fn reaches_pane(keystroke: &Keystroke) -> bool {
-    key_code(keystroke, true).is_some()
-}
-
 fn keystroke_input(
     keystroke: &Keystroke,
     is_held: bool,
@@ -644,16 +638,6 @@ impl Scrollbar {
             ),
             max: scroll.max_offset_from_bottom,
         })
-    }
-
-    /// The offset from the bottom that puts the thumb's top at `top`.
-    pub(crate) fn offset_at(&self, top: f32) -> u64 {
-        let travel = f32::from(self.track.size.height - self.thumb.size.height);
-        if travel <= 0. {
-            return 0;
-        }
-        let fraction = ((top - f32::from(self.track.top())) / travel).clamp(0., 1.);
-        ((1. - fraction) * self.max as f32).round() as u64
     }
 }
 
