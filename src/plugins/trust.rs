@@ -52,6 +52,8 @@ use std::path::Path;
 
 use serde::Deserialize;
 
+use super::ui_manifest::UiContributions;
+
 /// The manifest file, inside the plugin directory.
 pub(crate) const FILE_NAME: &str = "herdr-plugin.toml";
 
@@ -121,6 +123,11 @@ pub(crate) struct Preview {
     /// Manifest problems that are not fatal here, in the daemon's own wording
     /// where the daemon has words for them.
     pub(crate) warnings: Vec<String>,
+    /// The UI this directory would declare for this client, read from its
+    /// `zenix-ui.toml` beside the daemon's manifest. The daemon neither reads
+    /// nor validates that file, so what it fills is only ever shown here and in
+    /// the manager.
+    pub(crate) ui: UiContributions,
 }
 
 /// Read `<dir>/herdr-plugin.toml` and summarise it. The only function here that
@@ -445,6 +452,10 @@ fn summarise(raw: RawManifest, path: &Path) -> Result<Preview, String> {
     }
 
     let hazards = hazards_for(&commands);
+    let ui = path
+        .parent()
+        .map(|dir| UiContributions::read(&plugin_id, dir))
+        .unwrap_or_default();
     Ok(Preview {
         plugin_id,
         name,
@@ -452,6 +463,7 @@ fn summarise(raw: RawManifest, path: &Path) -> Result<Preview, String> {
         commands,
         hazards,
         warnings,
+        ui,
     })
 }
 
@@ -614,6 +626,29 @@ mod tests {
             .find(|(reason, _)| reason.contains(needle))
             .map(|(reason, _)| *reason)
             .unwrap_or_else(|| panic!("a hazard rule mentions {needle:?}"))
+    }
+
+    /// The review reads the UI the plugin would declare as well as the commands
+    /// it would run: the daemon never reads `zenix-ui.toml`, so this screen is
+    /// the only place its slots can be seen before a link.
+    #[test]
+    fn a_preview_carries_the_ui_the_plugin_would_declare() {
+        let dir = PluginDir::new("ui", HEADER);
+        // No `zenix-ui.toml` yet: the plugin contributes functions only.
+        assert!(preview(&dir.0).expect("a readable manifest").ui.is_empty());
+        std::fs::write(
+            dir.0.join("zenix-ui.toml"),
+            r#"
+[[sidebar_item]]
+id = "board"
+title = "Project board"
+panel = "board"
+"#,
+        )
+        .expect("a UI declaration is written");
+        let preview = preview(&dir.0).expect("a readable manifest");
+        assert_eq!(preview.ui.sidebar_items.len(), 1);
+        assert_eq!(preview.ui.sidebar_items[0].plugin_id, "test.plugin");
     }
 
     #[test]

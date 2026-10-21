@@ -7,15 +7,15 @@
 //! nothing to say — no plugin linked, nothing run — which is the state of a
 //! client that has never touched a plugin.
 
-use gpui_kit::component::{h_flex, v_flex};
+use gpui_kit::component::{Theme, h_flex, v_flex};
 use gpui_kit::*;
 
+use super::actions::Catalog;
 use super::host::PluginState;
-use super::model::{
-    Availability, Context, InstalledPlugin, LogStatus, ManifestPane, OwnedPane, PluginAction,
-    PluginCommandLog,
-};
+use super::model::{InstalledPlugin, LogStatus, OwnedPane, PluginCommandLog};
 use crate::events::{self, Event};
+use crate::mcp::handler::McpToolHandler;
+use crate::shell::commands::COMMANDS;
 use crate::shell::registry::{Invocation, ShellRequest, SidebarBlock, SidebarView};
 
 /// The sidebar's plugin blocks, each naming the rail view it belongs to. The
@@ -48,9 +48,10 @@ const LOGS_SHOWN: usize = 5;
 /// this is the part that fits beside the panels.
 const EVENTS_SHOWN: usize = 8;
 
-/// What is linked: each plugin, the actions it offers here, and the panes it
-/// declared. A click runs an action, or opens a pane, with the context the
-/// daemon completes.
+/// What is linked, and how much of this client the plugins fill. A row opens the
+/// plugin's own page in the manager: the actions it offers, the panes it declares
+/// and the commands it would run are one plugin's detail, not four lines under
+/// every name here.
 fn render_plugins(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyElement {
     let theme = invocation.theme;
     let state = invocation.plugins;
@@ -61,37 +62,152 @@ fn render_plugins(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyEl
             theme,
         );
     }
-    let availability = Availability::of(invocation.snapshot);
     let mut column = v_flex().w_full().px_1().py_1().gap_0p5().child(header(
         "plugins-header",
         &crate::i18n::t("shell.plugins.title"),
         &crate::i18n::t("general.refresh"),
         ShellRequest::RefreshPlugins,
+        None,
         invocation,
     ));
     if let Some(error) = state.error.as_deref() {
         column = column.child(line(error, theme.danger));
     }
-    // One counter across every row keeps the element ids unique without the
-    // index having to mean anything.
-    let mut index = 0usize;
-    for plugin in &state.plugins {
-        column = column.child(plugin_row(index, plugin, invocation));
-        index += 1;
-        for action in available_actions(state, plugin, availability) {
-            column = column.child(action_row(index, action, invocation));
-            index += 1;
-        }
-        for pane in &plugin.panes {
-            column = column.child(pane_row(index, plugin, pane, invocation));
-            index += 1;
-        }
-    }
-    for pane in live_plugin_panes(state, invocation.snapshot) {
-        column = column.child(owned_pane_row(index, pane, invocation));
-        index += 1;
-    }
-    column.into_any_element()
+    column = column.children(
+        state
+            .plugins
+            .iter()
+            .enumerate()
+            .map(|(index, plugin)| plugin_row(index, plugin, invocation)),
+    );
+    // The panes this client opened, and the daemon still reports: the one list
+    // that is about a running thing rather than a declaration.
+    column = column.children(
+        live_plugin_panes(state, invocation.snapshot)
+            .into_iter()
+            .enumerate()
+            .map(|(index, pane)| owned_pane_row(index, pane, invocation)),
+    );
+    // What the plugins fill, slot by slot, beside what the shell fills itself.
+    // The numbers are the registry's own: a plugin that was unlinked is in
+    // neither half of any row.
+    column = column.child(section(&crate::i18n::t("shell.manager.overview"), theme));
+    column = column.children(inventory(state).into_iter().enumerate().map(
+        |(index, (slot, builtin, plugins))| inventory_row(index, slot, builtin, plugins, theme),
+    ));
+    let open = {
+        let dispatch = invocation.dispatch.clone();
+        button(
+            "plugins-manager",
+            &crate::i18n::t("shell.manager.open"),
+            theme,
+        )
+        .on_click(move |_, window, cx| dispatch(ShellRequest::OpenPluginManager(None), window, cx))
+    };
+    column.child(open).into_any_element()
+}
+
+/// One slot's tally: the shell's own contributions beside the plugins'.
+type Inventory = Vec<(&'static str, usize, usize)>;
+
+/// How many contributions each slot holds, the shell's own and the plugins'.
+/// Every number is read off the same constants the registry mounts, so a row
+/// cannot claim a slot that is not actually filled.
+fn inventory(state: &PluginState) -> Inventory {
+    let ui = &state.ui;
+    // The palette's and the MCP bridge's plugin half is what can actually run,
+    // so a disabled plugin counts nowhere until it is enabled again.
+    let catalogued = Catalog::build(&state.actions, ui)
+        .runnable(&state.plugins)
+        .entries()
+        .len();
+    vec![
+        (
+            "sidebar",
+            crate::shell::panels::PANELS.len() + PANELS.len(),
+            ui.sidebar_items.len(),
+        ),
+        (
+            "aside panel",
+            crate::shell::chat::ASIDE.len() + crate::shell::cockpit::ASIDE.len(),
+            ui.panels.len(),
+        ),
+        (
+            "status segment",
+            crate::shell::panels::STATUS_SEGMENTS.len(),
+            ui.status_items.len(),
+        ),
+        (
+            "settings page",
+            crate::shell::settings::SETTINGS_SECTIONS.len(),
+            0,
+        ),
+        ("command / palette", COMMANDS.len(), catalogued),
+        ("MCP tool", McpToolHandler::build_tools().len(), catalogued),
+    ]
+}
+
+/// Whether a plugin runs, as a dot: the same shape the agent rows use.
+pub(crate) fn status_dot(theme: &Theme, enabled: bool) -> AnyElement {
+    div()
+        .flex_none()
+        .w(px(8.))
+        .h(px(8.))
+        .rounded_full()
+        .bg(if enabled {
+            theme.success
+        } else {
+            theme.muted_foreground
+        })
+        .into_any_element()
+}
+
+/// A section label: dim, spaced off what comes before it.
+pub(crate) fn section(label: &str, theme: &Theme) -> AnyElement {
+    div()
+        .w_full()
+        .pt_1()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child(label.to_owned())
+        .into_any_element()
+}
+
+/// One inventory row: the slot, then `builtin + plugin`.
+fn inventory_row(
+    index: usize,
+    slot: &str,
+    builtin: usize,
+    plugins: usize,
+    theme: &Theme,
+) -> AnyElement {
+    h_flex()
+        .id(("plugin-inventory", index))
+        .w_full()
+        .px_1()
+        .py_0p5()
+        .gap_1()
+        .items_center()
+        .child(
+            div()
+                .min_w_0()
+                .flex_1()
+                .text_xs()
+                .text_color(theme.sidebar_foreground)
+                .child((*slot).to_owned()),
+        )
+        .child(
+            div()
+                .flex_none()
+                .text_xs()
+                .text_color(if plugins > 0 {
+                    theme.magenta
+                } else {
+                    theme.muted_foreground
+                })
+                .child(format!("{builtin} + {plugins}")),
+        )
+        .into_any_element()
 }
 
 /// The daemon's plugin log ring, newest first. An invocation is fire-and-forget
@@ -108,6 +224,7 @@ fn render_logs(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyEleme
         &crate::i18n::t("shell.plugins.logs"),
         &crate::i18n::t("general.refresh"),
         ShellRequest::RefreshPlugins,
+        None,
         invocation,
     ));
     if let Some(last) = state.last.as_deref() {
@@ -149,6 +266,7 @@ fn render_events(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyEle
         &crate::i18n::t("shell.plugins.events"),
         &crate::i18n::t("general.clear"),
         ShellRequest::ClearEvents,
+        None,
         invocation,
     ));
     if let Some(error) = state.error.as_deref() {
@@ -240,171 +358,79 @@ fn chain(plugin: &InstalledPlugin, event: &str, state: &PluginState) -> String {
 fn plugin_row(index: usize, plugin: &InstalledPlugin, invocation: &Invocation) -> AnyElement {
     let theme = invocation.theme;
     let dispatch = invocation.dispatch.clone();
-    let root = plugin.plugin_root.clone();
-    let mut detail = plugin.plugin_id.clone();
-    if !plugin.enabled {
-        detail.push_str(" · disabled");
-    }
-    let mut row = v_flex()
-        .id(("plugin", index))
-        .w_full()
-        .px_1()
-        .py_0p5()
-        .gap_0p5()
-        .child(
-            h_flex()
-                .w_full()
-                .gap_1()
-                .items_center()
-                .child(
-                    div()
-                        .min_w_0()
-                        .flex_1()
-                        .text_sm()
-                        .text_color(theme.foreground)
-                        .child(plugin.name.clone()),
-                )
-                .child(
-                    div()
-                        .flex_none()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(plugin.version.clone()),
-                ),
-        )
-        // The commands the manifest declares are one click away, where they can
-        // be read as a list rather than as a row's suffix.
-        .child(
-            h_flex()
-                .w_full()
-                .gap_1()
-                .items_center()
-                .child(
-                    div()
-                        .min_w_0()
-                        .flex_1()
-                        .child(line(&detail, theme.muted_foreground)),
-                )
-                .child(
-                    div()
-                        .id(("plugin-commands", index))
-                        .flex_none()
-                        .px_0p5()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .cursor_pointer()
-                        .on_click(move |_, window, cx| {
-                            dispatch(ShellRequest::OpenPluginTrustAt(root.clone()), window, cx);
-                        })
-                        .child(crate::i18n::t("shell.plugins.commands")),
-                ),
-        );
+    let plugin_id = plugin.plugin_id.clone();
+    let slots = super::manager::slot_count(
+        super::manager::declared_for(invocation.plugins, &plugin.plugin_id),
+        &plugin.plugin_id,
+    );
+    let actions = invocation
+        .plugins
+        .actions
+        .iter()
+        .filter(|action| action.plugin_id == plugin.plugin_id)
+        .count();
+    let mut row =
+        v_flex()
+            .id(("plugin", index))
+            .w_full()
+            .px_1()
+            .py_0p5()
+            .gap_0p5()
+            .rounded_sm()
+            .cursor_pointer()
+            .hover(|style| style.bg(theme.sidebar_accent))
+            .on_click(move |_, window, cx| {
+                dispatch(
+                    ShellRequest::OpenPluginManager(Some(plugin_id.clone())),
+                    window,
+                    cx,
+                );
+            })
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_1()
+                    .items_center()
+                    .child(status_dot(theme, plugin.enabled))
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .text_sm()
+                            .text_color(theme.sidebar_foreground)
+                            .child(plugin.name.clone()),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(plugin.version.clone()),
+                    ),
+            )
+            .child(
+                h_flex()
+                    .w_full()
+                    .gap_1()
+                    .items_center()
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(format!("{actions} actions")),
+                    )
+                    .children((slots > 0).then(|| {
+                        div().flex_none().text_xs().text_color(theme.magenta).child(
+                            rust_i18n::t!("shell.manager.ui_slots", count = slots).to_string(),
+                        )
+                    })),
+            );
     for warning in &plugin.warnings {
         row = row.child(line(warning, theme.warning));
     }
     row.into_any_element()
-}
-
-/// One action the plugin offers in the current state. Clicking it runs it.
-fn action_row(index: usize, action: &PluginAction, invocation: &Invocation) -> AnyElement {
-    let theme = invocation.theme;
-    let dispatch = invocation.dispatch.clone();
-    let title = action.title.clone();
-    let context = context_label(action);
-    let cloned = action.clone();
-    let row = h_flex()
-        .id(("plugin-action", index))
-        .w_full()
-        .px_1()
-        .py_0p5()
-        .gap_1()
-        .items_center()
-        .rounded_sm()
-        .cursor_pointer()
-        .on_click(move |_, window, cx| {
-            dispatch(
-                ShellRequest::PluginAction {
-                    action: cloned.clone(),
-                    source: "sidebar",
-                },
-                window,
-                cx,
-            );
-        })
-        .child(
-            div()
-                .min_w_0()
-                .flex_1()
-                .text_sm()
-                .text_color(theme.sidebar_foreground)
-                .child(title),
-        );
-    if context.is_empty() {
-        row.into_any_element()
-    } else {
-        row.child(
-            div()
-                .flex_none()
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .child(context),
-        )
-        .into_any_element()
-    }
-}
-
-/// One pane a plugin declared. Clicking it opens that pane at its placement.
-fn pane_row(
-    index: usize,
-    plugin: &InstalledPlugin,
-    pane: &ManifestPane,
-    invocation: &Invocation,
-) -> AnyElement {
-    let theme = invocation.theme;
-    let dispatch = invocation.dispatch.clone();
-    let (plugin_id, entrypoint, title) = (
-        plugin.plugin_id.clone(),
-        pane.id.clone(),
-        pane.title.clone(),
-    );
-    let placement = pane.placement;
-    h_flex()
-        .id(("plugin-pane", index))
-        .w_full()
-        .px_1()
-        .py_0p5()
-        .gap_1()
-        .items_center()
-        .rounded_sm()
-        .cursor_pointer()
-        .on_click(move |_, window, cx| {
-            dispatch(
-                ShellRequest::OpenPluginPane {
-                    plugin_id: plugin_id.clone(),
-                    entrypoint: entrypoint.clone(),
-                    title: title.clone(),
-                    placement,
-                },
-                window,
-                cx,
-            );
-        })
-        .child(
-            div()
-                .min_w_0()
-                .flex_1()
-                .text_sm()
-                .text_color(theme.sidebar_foreground)
-                .child(pane.title.clone()),
-        )
-        .child(
-            div()
-                .flex_none()
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .child(placement.as_str()),
-        )
-        .into_any_element()
 }
 
 /// A plugin pane this client opened and the daemon still reports. The daemon
@@ -473,19 +499,6 @@ fn log_row(index: usize, log: &PluginCommandLog, invocation: &Invocation) -> Any
         .into_any_element()
 }
 
-/// The actions one plugin offers in the current state, in the daemon's order.
-fn available_actions<'a>(
-    state: &'a PluginState,
-    plugin: &InstalledPlugin,
-    availability: Availability,
-) -> Vec<&'a PluginAction> {
-    state
-        .actions
-        .iter()
-        .filter(|action| action.plugin_id == plugin.plugin_id && action.is_available(availability))
-        .collect()
-}
-
 /// The plugin panes this client opened that the snapshot still reports.
 fn live_plugin_panes<'a>(
     state: &'a PluginState,
@@ -506,18 +519,20 @@ fn live_plugin_panes<'a>(
         .collect()
 }
 
-/// What an action asks for, as the dim suffix on its row: the contexts the
-/// daemon would offer it in. A global action has none to show.
-fn context_label(action: &PluginAction) -> String {
-    let Some(contexts) = &action.contexts else {
-        return String::new();
-    };
-    contexts
-        .iter()
-        .filter(|context| **context != Context::Global)
-        .map(|context| context.as_str())
-        .collect::<Vec<_>>()
-        .join(",")
+/// A small button inside a block: the shape the review and the manager use for
+/// everything they can be asked to do.
+pub(crate) fn button(id: &'static str, label: &str, theme: &Theme) -> Stateful<Div> {
+    div()
+        .id(id)
+        .flex_none()
+        .px_2()
+        .py_0p5()
+        .rounded_sm()
+        .bg(theme.secondary)
+        .text_color(theme.secondary_foreground)
+        .text_xs()
+        .cursor_pointer()
+        .child(label.to_owned())
 }
 
 /// A block's title line, with an affordance on the right that asks for the
@@ -529,6 +544,7 @@ pub(crate) fn header(
     title: &str,
     action: &str,
     request: ShellRequest,
+    extra: Option<AnyElement>,
     invocation: &Invocation,
 ) -> AnyElement {
     let theme = invocation.theme;
@@ -541,10 +557,19 @@ pub(crate) fn header(
         .justify_between()
         .items_center()
         .child(
-            div()
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .child(title.to_owned()),
+            h_flex()
+                .min_w_0()
+                .flex_1()
+                .gap_1()
+                .items_center()
+                .children(extra)
+                .child(
+                    div()
+                        .min_w_0()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(title.to_owned()),
+                ),
         )
         .child(
             div()
@@ -574,7 +599,8 @@ mod tests {
     use super::*;
     use std::prelude::v1::test;
 
-    use crate::plugins::model::{ManifestEventHook, Placement};
+    use crate::plugins::model::{ManifestEventHook, ManifestPane, Placement};
+    use crate::plugins::ui_manifest::UiContributions;
 
     fn plugin(id: &str) -> InstalledPlugin {
         InstalledPlugin {
@@ -594,73 +620,60 @@ mod tests {
         }
     }
 
-    fn action(plugin_id: &str, action_id: &str, contexts: Option<Vec<Context>>) -> PluginAction {
-        PluginAction {
-            plugin_id: plugin_id.into(),
-            action_id: action_id.into(),
-            title: action_id.into(),
-            description: None,
-            contexts,
-        }
-    }
-
+    /// The inventory is the registry's own tally: the shell's own count beside
+    /// the plugins', and a plugin's half is exactly what its declarations fill.
+    /// Unlinking a plugin must move its number to zero without touching the
+    /// shell's.
     #[test]
-    fn only_the_named_plugins_actions_are_offered() {
-        let state = PluginState {
-            plugins: vec![plugin("a"), plugin("b")],
-            actions: vec![
-                action("a", "one", None),
-                action("b", "two", None),
-                action("c", "three", None),
-            ],
-            ..PluginState::default()
-        };
-        let offered = available_actions(&state, &state.plugins[0], Availability::default());
-        assert_eq!(offered.len(), 1);
-        assert_eq!(offered[0].action_id, "one");
-    }
+    fn the_inventory_counts_the_shell_beside_the_plugins() {
+        let empty = inventory(&PluginState::default());
+        let builtin: Vec<usize> = empty.iter().map(|(_, builtin, _)| *builtin).collect();
+        assert!(builtin.iter().all(|count| *count > 0), "{builtin:?}");
+        assert!(empty.iter().all(|(_, _, plugins)| *plugins == 0));
 
-    /// The sidebar shows what the current focus can run: an action for a
-    /// workspace is hidden while the daemon reports no focused workspace.
-    #[test]
-    fn actions_follow_the_availability_of_the_focused_state() {
+        let declared = UiContributions::parse(
+            "a",
+            std::path::Path::new("/tmp/plugin"),
+            r#"
+[[sidebar_item]]
+id = "board"
+title = "Project board"
+panel = "board"
+
+[[panel]]
+id = "board"
+title = "Project board"
+placement = "drawer"
+view = "table"
+
+[panel.source]
+command = ["true"]
+
+[[status_item]]
+id = "wip"
+source = { command = ["true"] }
+format = "{count} WIP"
+
+[[command]]
+id = "sync"
+title = "Sync"
+action = "one"
+"#,
+        );
         let state = PluginState {
             plugins: vec![plugin("a")],
-            actions: vec![
-                action("a", "global", None),
-                action("a", "per-workspace", Some(vec![Context::Workspace])),
-            ],
+            actions: vec![],
+            ui: declared,
             ..PluginState::default()
         };
-        let offered = available_actions(&state, &state.plugins[0], Availability::default());
-        assert_eq!(offered.len(), 1);
-        assert_eq!(offered[0].action_id, "global");
-        let offered = available_actions(
-            &state,
-            &state.plugins[0],
-            Availability {
-                workspace: true,
-                ..Availability::default()
-            },
-        );
-        assert_eq!(offered.len(), 2);
-    }
-
-    #[test]
-    fn a_global_action_shows_no_context_suffix() {
-        assert_eq!(context_label(&action("a", "x", None)), "");
-        assert_eq!(
-            context_label(&action("a", "x", Some(vec![Context::Global]))),
-            ""
-        );
-        assert_eq!(
-            context_label(&action(
-                "a",
-                "x",
-                Some(vec![Context::Global, Context::Pane, Context::Selection])
-            )),
-            "pane,selection"
-        );
+        let filled = inventory(&state);
+        let plugins: Vec<usize> = filled.iter().map(|(_, _, plugins)| *plugins).collect();
+        let before: Vec<usize> = empty.iter().map(|(_, _, plugins)| *plugins).collect();
+        assert_eq!(plugins, vec![1, 1, 1, 0, 0, 0], "one declaration each");
+        assert_eq!(before, vec![0; 6]);
+        // The shell's own half does not move because a plugin declared something.
+        let builtin_after: Vec<usize> = filled.iter().map(|(_, builtin, _)| *builtin).collect();
+        assert_eq!(builtin_after, builtin);
     }
 
     /// A pane the daemon no longer reports is not offered: the only record of a

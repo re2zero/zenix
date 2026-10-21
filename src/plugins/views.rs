@@ -10,7 +10,7 @@
 //! without a window.
 
 use gpui_kit::component::table::{Table, TableBody, TableCell, TableHead, TableHeader, TableRow};
-use gpui_kit::component::{Theme, h_flex, v_flex};
+use gpui_kit::component::{Icon, Theme, h_flex, v_flex};
 use gpui_kit::*;
 use serde_json::Value;
 
@@ -19,9 +19,33 @@ use super::ui_data::Data;
 use super::ui_manifest::{Declared, PanelSpec, SidebarItemSpec, StatusItemSpec, ViewKind};
 use crate::shell::registry::{Invocation, ShellRequest};
 
-/// One declared panel: its title, and the data its command last printed. The
-/// data is read by the host, never by this view, so a panel is a pure function
-/// of the last answer.
+/// The mark a plugin's own contribution carries: the plugin's id, in the accent
+/// the prototype gives plugin furniture. Every slot that can hold a plugin's
+/// contribution draws this same badge, so a sidebar row, a panel card and a
+/// status segment are recognisable as one plugin's — and a contribution drawn
+/// without one is the shell's own, by construction.
+pub(crate) fn source_badge(theme: &Theme, plugin_id: &str) -> AnyElement {
+    // The same puzzle the rail uses for plugins, small enough to sit in a line
+    // of text; `currentColor` lets the badge's own accent reach it.
+    let glyph = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h3a2 2 0 0 1 2 2v1.5a1.5 1.5 0 1 0 3 0V6h1a2 2 0 0 1 2 2v3h-1.5a1.5 1.5 0 1 0 0 3H20v3a2 2 0 0 1-2 2h-3v-1.5a1.5 1.5 0 1 0-3 0V19H9a2 2 0 0 1-2-2v-3H5.5a1.5 1.5 0 1 1 0-3H7V6a2 2 0 0 1 2-2Z"/></svg>"#;
+    h_flex()
+        .flex_none()
+        .gap_1()
+        .items_center()
+        .px_1()
+        .rounded(px(3.))
+        .bg(theme.magenta.opacity(0.12))
+        .text_color(theme.magenta)
+        .border_1()
+        .border_color(theme.magenta.opacity(0.3))
+        .child(Icon::default().data(glyph).w(px(9.)).h(px(9.)))
+        .child(div().text_xs().child(plugin_id.to_owned()))
+        .into_any_element()
+}
+
+/// One declared panel: whose it is, its title, and the data its command last
+/// printed. The data is read by the host, never by this view, so a panel is a
+/// pure function of the last answer.
 pub(crate) fn panel(
     spec: &PanelSpec,
     invocation: &Invocation,
@@ -34,6 +58,7 @@ pub(crate) fn panel(
         &spec.title,
         &crate::i18n::t("general.refresh"),
         ShellRequest::RefreshPlugins,
+        Some(source_badge(theme, &spec.plugin_id)),
         invocation,
     ));
     column
@@ -50,7 +75,8 @@ pub(crate) fn panel(
 }
 
 /// A sidebar line that opens the panels a plugin declared. A drawer panel
-/// mounts in the right-hand panel, so the line's one job is to show it.
+/// mounts in the right-hand panel, so the line's one job is to show it — and to
+/// say whose line it is.
 pub(crate) fn sidebar_item(
     spec: &SidebarItemSpec,
     invocation: &Invocation,
@@ -80,10 +106,13 @@ pub(crate) fn sidebar_item(
                 .text_color(theme.sidebar_foreground)
                 .child(title),
         )
+        .child(source_badge(theme, &spec.plugin_id))
         .into_any_element()
 }
 
-/// One status segment: the declared format, with the answer's fields in it.
+/// One status segment: whose it is, and the declared format with the answer's
+/// fields in it. The segment is narrower than a row, so the plugin is named by
+/// its id in the accent rather than by a badge.
 pub(crate) fn status_item(
     spec: &StatusItemSpec,
     invocation: &Invocation,
@@ -95,11 +124,15 @@ pub(crate) fn status_item(
         Some(Data::Ready(value)) => Some(value.as_ref()),
         _ => None,
     };
-    div()
+    h_flex()
         .flex_none()
+        .gap_1()
+        .items_center()
         .text_xs()
-        .text_color(theme.muted_foreground)
-        .child(fill(&spec.format, answer))
+        .text_color(theme.magenta)
+        .child(div().child(spec.plugin_id.clone()))
+        .child(div().child("·"))
+        .child(div().child(fill(&spec.format, answer)))
         .into_any_element()
 }
 

@@ -322,6 +322,16 @@ pub(crate) enum ShellRequest {
     /// Re-read the plugin registry, which nothing pushes, and re-read the data
     /// its declarations print.
     RefreshPlugins,
+    /// Show the plugin manager, on one plugin's page when the click named one.
+    OpenPluginManager(Option<String>),
+    /// Close the plugin manager.
+    ClosePluginManager,
+    /// Bring one plugin's page to the front in the manager.
+    SelectPlugin(String),
+    /// Turn a linked plugin on or off, which the daemon decides.
+    SetPluginEnabled { plugin_id: String, enabled: bool },
+    /// Forget a linked plugin. Its directory is untouched.
+    UnlinkPlugin(String),
     /// Open the pre-link review: a plugin directory is read, and what it would
     /// run is shown, before anything is linked.
     OpenPluginTrust,

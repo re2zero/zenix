@@ -25,7 +25,7 @@ use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 
 use super::api;
 use super::model::{InstalledPlugin, OwnedPane, Placement, PluginAction, PluginCommandLog};
-use super::ui_manifest::{self, UiContributions};
+use super::ui_manifest::{self, DeclaredUi, UiContributions};
 use crate::herdr::api::ApiClient;
 
 /// How long the worker waits for work before re-reading the registry anyway.
@@ -52,6 +52,10 @@ pub(crate) struct PluginState {
     /// each plugin's own `zenix-ui.toml` and mounted in the shell. The daemon
     /// knows nothing about it: it is the host's own contract with the plugin.
     pub(crate) ui: UiContributions,
+    /// The same declarations, one entry per installed plugin — including the
+    /// disabled ones, which declare slots and mount none of them. That
+    /// difference is the manager's to show.
+    pub(crate) declared: Vec<DeclaredUi>,
     /// Why the last refresh failed, until one succeeds. The registry below may
     /// still be the previous, working answer.
     pub(crate) error: Option<String>,
@@ -118,6 +122,21 @@ impl PluginHost {
         let _ = self.commands.send(Request::Link { path });
     }
 
+    /// Turn a linked plugin on or off, and read the registry again: a disabled
+    /// plugin's contributions unmount and its actions stop being offered, and
+    /// nothing pushes either.
+    pub(crate) fn set_enabled(&self, plugin_id: String, enabled: bool) {
+        let _ = self
+            .commands
+            .send(Request::SetEnabled { plugin_id, enabled });
+    }
+
+    /// Forget a linked plugin. Its directory is untouched, so this is also how a
+    /// link is undone before linking it again.
+    pub(crate) fn unlink(&self, plugin_id: String) {
+        let _ = self.commands.send(Request::Unlink { plugin_id });
+    }
+
     /// Run one action. `source` names where the click came from, which is the
     /// one part of the invocation context the daemon cannot know by itself.
     pub(crate) fn invoke(&self, action: PluginAction, source: &'static str) {
@@ -156,6 +175,13 @@ enum Request {
     RefreshLogs,
     Link {
         path: String,
+    },
+    SetEnabled {
+        plugin_id: String,
+        enabled: bool,
+    },
+    Unlink {
+        plugin_id: String,
     },
     Invoke {
         action: PluginAction,
@@ -224,6 +250,31 @@ fn handle(client: &ApiClient, cache: &Mutex<PluginState>, request: Request) {
                 Err(error) => note(cache, format!("{path} was not linked: {error}")),
             }
         }
+        Request::SetEnabled { plugin_id, enabled } => {
+            match api::set_enabled(client, &plugin_id, enabled) {
+                Ok(()) => {
+                    let state = if enabled { "enabled" } else { "disabled" };
+                    note(cache, format!("{plugin_id}: {state}"));
+                    // Nothing pushes this either, and every slot an unlinked or
+                    // disabled plugin filled has to go, so read the registry now.
+                    refresh(client, cache);
+                }
+                Err(error) => note(cache, format!("{plugin_id} was not changed: {error}")),
+            }
+        }
+        Request::Unlink { plugin_id } => {
+            match api::unlink(client, &plugin_id) {
+                Ok(()) => {
+                    note(cache, format!("{plugin_id}: unlinked"));
+                    refresh(client, cache);
+                    // A denied pane of an unlinked plugin is the daemon's to
+                    // report; what this side remembers is what it opened, and a
+                    // link that is gone cannot have anything left open.
+                    lock(cache).panes.retain(|pane| pane.plugin_id != plugin_id);
+                }
+                Err(error) => note(cache, format!("{plugin_id} was not unlinked: {error}")),
+            }
+        }
         Request::OpenPane {
             plugin_id,
             entrypoint,
@@ -271,11 +322,13 @@ fn refresh(client: &ApiClient, cache: &Mutex<PluginState>) {
         (Ok(plugins), Ok(actions)) => {
             // The declared UI is read here rather than at paint time: it is a
             // file per plugin, and this is the thread that may block on one.
-            let ui = ui_manifest::mounted_ui(&plugins);
+            let declared = ui_manifest::declared(&plugins);
+            let ui = ui_manifest::mount(&plugins, &declared);
             let mut state = lock(cache);
             state.plugins = plugins;
             state.actions = actions;
             state.ui = ui;
+            state.declared = declared;
             state.error = None;
         }
         // The registry could not be read at all: keep the last working answer

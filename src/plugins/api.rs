@@ -96,6 +96,31 @@ pub(crate) fn link_plugin(
     required_field(&result, "plugin")
 }
 
+/// Turn a linked plugin on or off. The daemon is what decides: a disabled
+/// plugin's actions are not offered and its declarations mount nothing, so this
+/// is not a filter this client could apply by itself.
+pub(crate) fn set_enabled(
+    client: &ApiClient,
+    plugin_id: &str,
+    enabled: bool,
+) -> Result<(), ApiError> {
+    let method = if enabled {
+        "plugin.enable"
+    } else {
+        "plugin.disable"
+    };
+    client.call(method, json!({ "plugin_id": plugin_id }))?;
+    Ok(())
+}
+
+/// Unlink a plugin: the daemon forgets the directory. The plugin's own files are
+/// untouched — this is a registry decision, not a delete, and the directory can
+/// be linked again.
+pub(crate) fn unlink(client: &ApiClient, plugin_id: &str) -> Result<(), ApiError> {
+    client.call("plugin.unlink", json!({ "plugin_id": plugin_id }))?;
+    Ok(())
+}
+
 /// Open one of a plugin's declared panes. `Ok(None)` is the daemon's answer for
 /// a popup, which is not a pane and reports no id.
 pub(crate) fn open_pane(

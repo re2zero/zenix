@@ -28,7 +28,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 
-use super::model::{Availability, PluginAction};
+use super::model::{Availability, InstalledPlugin, PluginAction};
 use super::ui_manifest::{CommandSpec, UiContributions};
 
 /// What every bridged tool's name starts with, so the MCP bridge cannot shadow
@@ -133,6 +133,24 @@ impl Catalog {
         Self { entries }
     }
 
+    /// Keep only the actions a plugin has enabled. The daemon lists a disabled
+    /// plugin's actions anyway — measured on 0.9.5: `plugin.action.list` answers
+    /// for one, and `plugin.action.invoke` refuses it with `plugin_disabled` — so
+    /// offering them is this client's to refuse. The names stay as assigned, so
+    /// enabling a plugin does not rename its tools.
+    pub(crate) fn runnable(self, plugins: &[InstalledPlugin]) -> Self {
+        let entries = self
+            .entries
+            .into_iter()
+            .filter(|entry| {
+                plugins
+                    .iter()
+                    .any(|plugin| plugin.enabled && plugin.plugin_id == entry.action.plugin_id)
+            })
+            .collect();
+        Self { entries }
+    }
+
     /// Every entry, in tool-name order.
     pub(crate) fn entries(&self) -> &[Arc<Exposed>] {
         &self.entries
@@ -218,6 +236,20 @@ mod tests {
         }
     }
 
+    fn plugin(id: &str) -> InstalledPlugin {
+        InstalledPlugin {
+            plugin_id: id.into(),
+            name: id.into(),
+            version: "0.1.0".into(),
+            plugin_root: "/tmp/plugin".into(),
+            description: None,
+            enabled: true,
+            panes: Vec::new(),
+            events: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
     fn ui(text: &str) -> UiContributions {
         UiContributions::parse("board.app", std::path::Path::new("/tmp/board"), text)
     }
@@ -279,6 +311,40 @@ key = "shift-y"
         assert!(gone.entries().is_empty());
         assert!(gone.offered(Availability::of(None)).next().is_none());
         assert!(gone.named("plugin_board_app_sync").is_none());
+    }
+
+    /// A disabled plugin still has its actions listed by the daemon; the client
+    /// offers none of them, and the ones it does offer keep their names.
+    #[test]
+    fn a_disabled_plugins_actions_are_not_offered() {
+        let actions = [action("a.b", "one", "One"), action("c.d", "two", "Two")];
+        let enabled = InstalledPlugin {
+            plugin_id: "c.d".into(),
+            enabled: true,
+            ..plugin("c.d")
+        };
+        let disabled = InstalledPlugin {
+            plugin_id: "a.b".into(),
+            enabled: false,
+            ..plugin("a.b")
+        };
+        let catalog = Catalog::build(&actions, &UiContributions::default())
+            .runnable(&[disabled.clone(), enabled.clone()]);
+        assert_eq!(catalog.entries().len(), 1);
+        assert_eq!(catalog.entries()[0].tool_name(), "plugin_c_d_two");
+        assert!(catalog.named("plugin_a_b_one").is_none());
+
+        // Both enabled: both are offered, and the disabled one's name was never
+        // given away.
+        let both = Catalog::build(&actions, &UiContributions::default()).runnable(&[
+            InstalledPlugin {
+                enabled: true,
+                ..disabled
+            },
+            enabled,
+        ]);
+        assert_eq!(both.entries().len(), 2);
+        assert!(both.named("plugin_a_b_one").is_some());
     }
 
     /// A declaration narrows where its action is offered; the daemon's contexts

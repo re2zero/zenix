@@ -20,11 +20,13 @@
 //! * [`ui_manifest`] — `zenix-ui.toml`, the UI a plugin declares for this host.
 //! * [`ui_data`] — the JSON the declarations' commands print, read off-thread.
 //! * [`views`] — how a declaration is drawn: panel, sidebar line, status item.
+//! * [`manager`] — one plugin's page: its declaration, its slots, its actions.
 //! * [`panels`] — the sidebar blocks the registry mounts.
 
 pub(crate) mod actions;
 pub(crate) mod api;
 pub(crate) mod host;
+pub(crate) mod manager;
 pub(crate) mod model;
 pub(crate) mod panels;
 pub(crate) mod trust;

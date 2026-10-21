@@ -18,6 +18,8 @@ use std::path::{Path, PathBuf};
 use gpui_kit::component::{ActiveTheme, Theme, h_flex, v_flex};
 use gpui_kit::*;
 
+use super::manager;
+use super::panels::button;
 use super::trust::{self, Preview};
 use crate::i18n::t;
 use crate::shell::registry::{Dispatch, ShellRequest};
@@ -298,6 +300,9 @@ fn declared(preview: &Preview, theme: &Theme) -> AnyElement {
                     .child(preview.version.clone()),
             ),
     );
+    // The one sentence the whole screen exists for: the commands below run with
+    // the daemon's rights, not in a sandbox.
+    column = column.child(note(&t("shell.trust.contract"), theme.warning));
     column = column.child(note(
         rust_i18n::t!("shell.trust.would_run", count = preview.commands.len()).as_ref(),
         theme.muted_foreground,
@@ -308,6 +313,15 @@ fn declared(preview: &Preview, theme: &Theme) -> AnyElement {
     if preview.commands.is_empty() {
         column = column.child(note(&t("shell.trust.no_commands"), theme.muted_foreground));
     }
+    // What the plugin would draw for this client, read from its own
+    // `zenix-ui.toml`: the same slots the manager lists afterwards, so what is
+    // reviewed is what will be mounted.
+    let slots = manager::slots_of(&preview.ui, &preview.plugin_id);
+    column = column.child(note(&t("shell.trust.declared"), theme.muted_foreground));
+    if slots.is_empty() {
+        column = column.child(note(&t("shell.trust.no_ui"), theme.muted_foreground));
+    }
+    column = column.children(slots.iter().map(|slot| manager::slot_row(slot, theme)));
     for (index, command) in preview.commands.iter().enumerate() {
         let hazard = preview.hazards.iter().find(|hazard| hazard.index == index);
         let line = trust::render_command(command);
@@ -339,20 +353,6 @@ fn note(text: &str, color: Hsla) -> AnyElement {
         .text_color(color)
         .child(text.to_owned())
         .into_any_element()
-}
-
-fn button(id: &'static str, label: &str, theme: &Theme) -> Stateful<Div> {
-    div()
-        .id(id)
-        .flex_none()
-        .px_2()
-        .py_0p5()
-        .rounded_sm()
-        .bg(theme.secondary)
-        .text_color(theme.secondary_foreground)
-        .text_xs()
-        .cursor_pointer()
-        .child(label.to_owned())
 }
 
 #[cfg(test)]

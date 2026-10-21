@@ -53,6 +53,8 @@ pub(crate) enum Command {
     RefreshPlugins,
     /// Local: read a plugin directory before linking it.
     LinkPlugin,
+    /// Local: the plugin manager, over the shell.
+    PluginsManager,
     /// Local: dismiss the daemon's popup pane, if one is open.
     ClosePopup,
     /// Local: write the focused tab's layout to the project's template file.
@@ -79,6 +81,7 @@ impl Command {
                 | Command::TogglePalette
                 | Command::RefreshPlugins
                 | Command::LinkPlugin
+                | Command::PluginsManager
                 | Command::ClosePopup
                 | Command::SaveLayout
                 | Command::RestoreLayout
@@ -298,6 +301,14 @@ pub(crate) const COMMANDS: &[CommandInfo] = &[
         direct: &[],
         prefixed: &[],
     },
+    // The manager is where a plugin's slots, actions and panes are one page, so
+    // it belongs in the directory beside the review that precedes a link.
+    CommandInfo {
+        command: Command::PluginsManager,
+        id: "plugins.manager",
+        direct: &[],
+        prefixed: &[],
+    },
     CommandInfo {
         command: Command::ClosePopup,
         id: "view.close-popup",
@@ -473,6 +484,7 @@ pub(crate) fn request(command: Command, snapshot: &ClientShellSnapshot) -> Optio
         | Command::TogglePalette
         | Command::RefreshPlugins
         | Command::LinkPlugin
+        | Command::PluginsManager
         | Command::ClosePopup
         | Command::SaveLayout
         | Command::RestoreLayout
@@ -535,6 +547,7 @@ mod tests {
         assert!(request(Command::ToggleSettings, &snapshot).is_none());
         assert!(request(Command::TogglePalette, &snapshot).is_none());
         assert!(request(Command::RefreshPlugins, &snapshot).is_none());
+        assert!(request(Command::PluginsManager, &snapshot).is_none());
         assert!(request(Command::ClosePopup, &snapshot).is_none());
     }
 
@@ -558,6 +571,7 @@ mod tests {
                 "view.palette",
                 "plugins.refresh",
                 "plugins.link",
+                "plugins.manager",
                 "view.close-popup",
                 "layout.save",
                 "layout.restore",

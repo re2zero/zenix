@@ -155,19 +155,56 @@ impl Declared for StatusItemSpec {
     }
 }
 
-/// Fold every installed plugin's declared UI into the one set the shell mounts:
+/// What one installed plugin declares for this client, read from its own
+/// `zenix-ui.toml`. Kept per plugin beside the mounted set because the two
+/// differ for exactly one reason: a disabled plugin still declares its slots,
+/// and mounts none of them — which is what the manager has to show.
+#[derive(Clone, Debug)]
+pub(crate) struct DeclaredUi {
+    pub(crate) plugin_id: String,
+    pub(crate) ui: UiContributions,
+}
+
+/// Read every installed plugin's `zenix-ui.toml`, enabled or not. This is the
+/// file read off the UI thread; the shell only ever sees the result.
+pub(crate) fn declared(plugins: &[InstalledPlugin]) -> Vec<DeclaredUi> {
+    plugins
+        .iter()
+        .map(|plugin| DeclaredUi {
+            plugin_id: plugin.plugin_id.clone(),
+            ui: UiContributions::read(&plugin.plugin_id, Path::new(&plugin.plugin_root)),
+        })
+        .collect()
+}
+
+/// Read every plugin's declarations and mount the enabled ones, for a caller
+/// that has nothing per-plugin to keep.
+pub(crate) fn mounted_ui(plugins: &[InstalledPlugin]) -> UiContributions {
+    mount(plugins, &declared(plugins))
+}
+
+/// Fold the enabled plugins' declarations into the one set the shell mounts:
 /// plugins in the daemon's order, sidebar items in the order they asked for, and
 /// a duplicated id dropped in favour of the first declaration. A disabled plugin
 /// contributes nothing, exactly as its actions are not offered.
-pub(crate) fn mounted_ui(plugins: &[InstalledPlugin]) -> UiContributions {
+pub(crate) fn mount(plugins: &[InstalledPlugin], declared: &[DeclaredUi]) -> UiContributions {
     let mut mounted = UiContributions::default();
     for plugin in plugins.iter().filter(|plugin| plugin.enabled) {
-        let declared = UiContributions::read(&plugin.plugin_id, Path::new(&plugin.plugin_root));
-        mounted.warnings.extend(declared.warnings);
-        mounted.commands.extend(declared.commands);
-        mounted.sidebar_items.extend(declared.sidebar_items);
-        mounted.panels.extend(declared.panels);
-        mounted.status_items.extend(declared.status_items);
+        let Some(entry) = declared
+            .iter()
+            .find(|entry| entry.plugin_id == plugin.plugin_id)
+        else {
+            continue;
+        };
+        mounted.warnings.extend(entry.ui.warnings.clone());
+        mounted.commands.extend(entry.ui.commands.iter().cloned());
+        mounted
+            .sidebar_items
+            .extend(entry.ui.sidebar_items.iter().cloned());
+        mounted.panels.extend(entry.ui.panels.iter().cloned());
+        mounted
+            .status_items
+            .extend(entry.ui.status_items.iter().cloned());
     }
     let mut warnings = std::mem::take(&mut mounted.warnings);
     mounted.commands = dedupe(mounted.commands, &mut warnings);

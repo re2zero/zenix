@@ -131,14 +131,15 @@ fn catalog(api: &ApiClient) -> Catalog {
             Vec::new()
         }
     };
-    let ui = match plugin_api::list_plugins(api) {
-        Ok(plugins) => ui_manifest::mounted_ui(&plugins),
+    let plugins = match plugin_api::list_plugins(api) {
+        Ok(plugins) => plugins,
         Err(error) => {
             tracing::warn!(%error, "the plugin registry could not be read for the MCP bridge");
-            ui_manifest::UiContributions::default()
+            Vec::new()
         }
     };
-    Catalog::build(&actions, &ui)
+    let ui = ui_manifest::mounted_ui(&plugins);
+    Catalog::build(&actions, &ui).runnable(&plugins)
 }
 
 /// The tool's input schema: every context field a caller may override, and

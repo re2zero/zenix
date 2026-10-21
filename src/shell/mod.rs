@@ -42,6 +42,7 @@ use crate::herdr::api::ApiClient;
 use crate::layout::{self, LayoutState};
 use crate::plugins::actions::Catalog;
 use crate::plugins::host::PluginHost;
+use crate::plugins::manager::{self, Manager};
 use crate::plugins::model::Availability;
 use crate::plugins::trust_view::{self, TrustReview};
 use crate::plugins::ui_data::{self, UiData, UiDataHost};
@@ -98,8 +99,11 @@ pub(crate) struct ShellView {
     /// The pre-link review: a path is typed into it, and what that path would
     /// run is shown before anything is linked.
     trust: TrustReview,
+    /// The plugin manager: the registry one plugin at a time.
+    manager: Manager,
     /// The keyboard while the review is open.
     trust_focus: FocusHandle,
+    manager_focus: FocusHandle,
     /// The installed plugins, and where an action's outcome appears. Nothing
     /// pushes a plugin change, so this is read rather than painted from a
     /// stream, and refreshed on demand — see `crate::plugins::host`.
@@ -234,7 +238,9 @@ impl ShellView {
             palette: Palette::default(),
             palette_focus: cx.focus_handle(),
             trust: TrustReview::default(),
+            manager: Manager::default(),
             trust_focus: cx.focus_handle(),
+            manager_focus: cx.focus_handle(),
             plugins,
             ui_data_host,
             ui_data: UiData::default(),
@@ -310,7 +316,7 @@ impl ShellView {
         // A chord a plugin declares is this client's to bind: the catalog is the
         // same list the palette draws and the MCP bridge exposes, so a plugin
         // that left the registry takes its chord with it.
-        let catalog = Catalog::build(&state.actions, &state.ui);
+        let catalog = Catalog::build(&state.actions, &state.ui).runnable(&state.plugins);
         self.keymap.set_plugins(&catalog);
         self.request_ui_data(&state.ui, false, cx);
         // The review is where a link's answer belongs while it is open: the
@@ -510,7 +516,7 @@ impl ShellView {
         // The settings surface, the palette and the review own the keyboard
         // while they are open: their inputs must see every key, including the
         // prefix.
-        if self.settings_open || self.palette.is_open() || self.trust.is_open() {
+        if self.overlay_owns_keyboard() {
             return;
         }
         // A plugin's chord that carries a modifier of its own is claimed outright,
@@ -606,6 +612,9 @@ impl ShellView {
             // Linking runs a directory's commands as the user, so the review
             // comes first, from wherever the command was reached.
             Command::LinkPlugin => self.dispatch(ShellRequest::OpenPluginTrust, window, cx),
+            Command::PluginsManager => {
+                self.dispatch(ShellRequest::OpenPluginManager(None), window, cx)
+            }
             Command::ClosePopup => self.plugins.close_popup(),
             // The template is the project's, not the daemon's: saving writes a
             // file, and restoring stays a command because `layout.apply` always
@@ -701,6 +710,7 @@ impl ShellView {
             .collect();
         entries.extend(
             Catalog::build(&plugins.actions, &plugins.ui)
+                .runnable(&plugins.plugins)
                 .offered(availability)
                 .map(|entry| Entry::Plugin(entry.clone())),
         );
@@ -809,6 +819,30 @@ impl ShellView {
                 cx.notify();
             }
             ShellRequest::RefreshPlugins => self.refresh_plugins(cx),
+            ShellRequest::OpenPluginManager(start_at) => {
+                self.manager.open(start_at.as_deref());
+                let focus = self.manager_focus.clone();
+                window.focus(&focus, cx);
+                cx.notify();
+            }
+            ShellRequest::ClosePluginManager => {
+                self.manager.close();
+                let focus = self.terminal.read(cx).focus_handle().clone();
+                window.focus(&focus, cx);
+                cx.notify();
+            }
+            ShellRequest::SelectPlugin(plugin_id) => {
+                self.manager.select(&plugin_id);
+                cx.notify();
+            }
+            ShellRequest::SetPluginEnabled { plugin_id, enabled } => {
+                self.plugins.set_enabled(plugin_id, enabled);
+                cx.notify();
+            }
+            ShellRequest::UnlinkPlugin(plugin_id) => {
+                self.plugins.unlink(plugin_id);
+                cx.notify();
+            }
             ShellRequest::OpenPluginTrust => {
                 self.trust.open();
                 let focus = self.trust_focus.clone();
@@ -942,7 +976,18 @@ impl ShellView {
     /// any of them is up — the shell's own chord interceptor defers to them the
     /// same way.
     fn overlay_owns_keyboard(&self) -> bool {
-        self.settings_open || self.palette.is_open() || self.trust.is_open()
+        self.settings_open
+            || self.palette.is_open()
+            || self.trust.is_open()
+            || self.manager.is_open()
+    }
+
+    /// A keystroke while the manager is open: Escape closes it, and nothing else
+    /// is typed into it — every command it offers is a click.
+    fn manager_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if event.keystroke.key == "escape" {
+            self.dispatch(ShellRequest::ClosePluginManager, window, cx);
+        }
     }
 
     /// A keystroke while the review is open: Escape closes it, Enter reads the
@@ -1096,6 +1141,11 @@ impl Render for ShellView {
                 | ShellRequest::OpenPluginTrustAt(_)
                 | ShellRequest::LinkPlugin(_)
                 | ShellRequest::ClosePluginTrust
+                | ShellRequest::OpenPluginManager(_)
+                | ShellRequest::ClosePluginManager
+                | ShellRequest::SelectPlugin(_)
+                | ShellRequest::SetPluginEnabled { .. }
+                | ShellRequest::UnlinkPlugin(_)
                 | ShellRequest::SaveLayout
                 | ShellRequest::RestoreLayout
                 | ShellRequest::ClearEvents
@@ -1271,6 +1321,20 @@ impl Render for ShellView {
                 self.registry.settings_sections(),
                 &self.settings_focus,
                 &dispatch,
+                cx,
+            ));
+        }
+        // Over the settings and the palette: the manager is opened from the
+        // plugin view and from the review, and holding the keyboard is what
+        // makes Escape mean what it says.
+        if self.manager.is_open() {
+            root = root.child(manager::overlay(
+                &self.manager,
+                &plugins,
+                Availability::of(live.snapshot.as_deref()),
+                &self.manager_focus,
+                &dispatch,
+                cx.listener(Self::manager_key),
                 cx,
             ));
         }

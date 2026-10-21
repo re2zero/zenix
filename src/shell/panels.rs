@@ -430,6 +430,7 @@ fn render_layout(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyEle
         &t("layout.title"),
         &t("layout.save"),
         ShellRequest::SaveLayout,
+        None,
         invocation,
     ));
     let row = h_flex()

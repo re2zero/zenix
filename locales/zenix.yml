@@ -233,6 +233,66 @@ shell:
     commands:
       en: "commands"
       zh-CN: "命令"
+  # The plugin manager: one plugin's page, and the inventory the plugin view
+  # counts. Every string here is read by `src/plugins/manager.rs` and the plugin
+  # sidebar block beside it.
+  manager:
+    title:
+      en: "Plugins"
+      zh-CN: "插件"
+    review:
+      en: "Review & link…"
+      zh-CN: "审查并链接…"
+    open:
+      en: "Open the plugin manager"
+      zh-CN: "打开插件管理器"
+    overview:
+      en: "Contributions"
+      zh-CN: "贡献点总览"
+    # `%{count}` is the number of slots one plugin declared for this client.
+    ui_slots:
+      en: "UI %{count}"
+      zh-CN: "UI %{count}"
+    enabled:
+      en: "enabled"
+      zh-CN: "启用"
+    disabled:
+      en: "disabled"
+      zh-CN: "停用"
+    enable:
+      en: "Enable"
+      zh-CN: "启用"
+    disable:
+      en: "Disable"
+      zh-CN: "停用"
+    unlink:
+      en: "Unlink"
+      zh-CN: "解除链接"
+    # `%{count}` is how many slots the plugin's `zenix-ui.toml` fills.
+    declares:
+      en: "zenix-ui.toml · %{count} slots"
+      zh-CN: "zenix-ui.toml · %{count} 项"
+    no_ui:
+      en: "no zenix-ui.toml: it contributes functions only (actions, panes, hooks)"
+      zh-CN: "没有 zenix-ui.toml：只贡献功能（actions / panes / hooks）"
+    argv:
+      en: "Commands…"
+      zh-CN: "查看命令…"
+    slots:
+      en: "UI contributions"
+      zh-CN: "UI 贡献点"
+    actions:
+      en: "Actions"
+      zh-CN: "actions"
+    no_actions:
+      en: "No actions"
+      zh-CN: "没有 action"
+    actions_disabled:
+      en: "The plugin is disabled: enable it to run these."
+      zh-CN: "插件已停用：启用后才能运行。"
+    panes:
+      en: "Panes"
+      zh-CN: "pane"
   views:
     reading:
       en: "reading"
@@ -271,8 +331,8 @@ shell:
       en: "What would you like to do?"
       zh-CN: "想做点什么？"
     hint:
-      en: "Describe a task, or pick one below. Ctrl K opens the command palette."
-      zh-CN: "直接描述任务，或者从下面挑一个。Ctrl K 打开命令面板。"
+      en: "Describe a task, or pick one below. Cmd Shift P opens the command palette."
+      zh-CN: "直接描述任务，或者从下面挑一个。Cmd Shift P 打开命令面板。"
     palette:
       en: "Describe a task, paste an error, or search a command…"
       zh-CN: "描述任务、粘贴错误、或搜索命令…"
@@ -332,6 +392,17 @@ shell:
     no_commands:
       en: "This manifest declares no command."
       zh-CN: "该清单没有声明任何命令。"
+    # The sentence the whole review exists for: linking is what makes the
+    # commands below run as the user, with the daemon's own rights.
+    contract:
+      en: "herdr runs a plugin as a process, not in a sandbox: once linked, its commands have the daemon's rights."
+      zh-CN: "herdr 插件不是沙箱进程：链接后，它的命令与 daemon 同权限。"
+    declared:
+      en: "What this client would draw"
+      zh-CN: "读取到的 UI 声明"
+    no_ui:
+      en: "No zenix-ui.toml: the plugin contributes functions only."
+      zh-CN: "没有 zenix-ui.toml：只贡献功能。"
     linking:
       en: "linking %{path}…"
       zh-CN: "正在链接 %{path}…"
@@ -484,6 +555,9 @@ command:
     link:
       en: "Link a Plugin…"
       zh-CN: "链接插件…"
+    manager:
+      en: "Plugin Manager…"
+      zh-CN: "插件管理器…"
   layout:
     save:
       en: "Save Layout"
