@@ -460,7 +460,6 @@ mod tests {
     use super::*;
     use std::prelude::v1::test;
 
-
     fn read_json(id: &str, command: &[&str]) -> Data {
         read_in(id, command, Path::new("/tmp"))
     }

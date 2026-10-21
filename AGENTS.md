@@ -121,11 +121,11 @@ cargo deb                    # Build .deb package
 
 # Testing/Quality
 cargo fmt --check                       # Format check
-cargo check --workspace --all-targets   # Type check
-cargo test --lib                        # Unit tests (248 passed at M4 first half)
+cargo check --workspace --all-targets   # Type check (zero warnings since the 2026-10-21 dead-code sweep)
+cargo test --lib                        # Unit tests (454 passed at the M11f warning sweep)
 cargo run --bin zenix-probe             # Daemon endpoint smoke gate (every session since M2)
 cargo test -p herdr-protocol -p herdr-client   # Vendored crate tests
-cargo clippy                            # Lint
+cargo clippy                            # Lint — the CI gate is `-D warnings` with no `-A dead_code`
 ```
 
 ## NOTES
