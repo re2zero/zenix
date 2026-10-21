@@ -279,6 +279,11 @@ pub(crate) struct PanelSpec {
     pub(crate) plugin_root: PathBuf,
     pub(crate) view: ViewKind,
     pub(crate) source: Option<Source>,
+    /// How often the source command is run again, in seconds, as `refresh_s`.
+    /// Absent is the host's default; `0` is once, which is what a declaration
+    /// that prints a snapshot wants. The daemon never reads this key: the
+    /// cadence is this client's, because the command is run by this client.
+    pub(crate) refresh_s: Option<u64>,
 }
 
 /// A segment of the status bar, formatted from one data source.
@@ -291,6 +296,8 @@ pub(crate) struct StatusItemSpec {
     /// The text to show, with `{field}` holes filled from the source's JSON
     /// object. A hole with no field behind it stays a hole.
     pub(crate) format: String,
+    /// How often to run the source again, as for a panel's.
+    pub(crate) refresh_s: Option<u64>,
     pub(crate) source: Option<Source>,
 }
 
@@ -397,6 +404,8 @@ struct RawPanel {
     view: Option<String>,
     #[serde(default)]
     source: Option<RawSource>,
+    #[serde(default)]
+    refresh_s: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -407,6 +416,8 @@ struct RawStatusItem {
     format: Option<String>,
     #[serde(default)]
     source: Option<RawSource>,
+    #[serde(default)]
+    refresh_s: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -545,6 +556,7 @@ fn parse(plugin_id: &str, plugin_root: &Path, text: &str) -> UiContributions {
             plugin_root: plugin_root.to_path_buf(),
             view,
             source: source(item.source, "panel", &mut warnings),
+            refresh_s: item.refresh_s,
         }));
     }
 
@@ -557,6 +569,7 @@ fn parse(plugin_id: &str, plugin_root: &Path, text: &str) -> UiContributions {
             continue;
         };
         ui.status_items.push(Arc::new(StatusItemSpec {
+            refresh_s: item.refresh_s,
             plugin_id: plugin_id.to_owned(),
             local_id,
             plugin_root: plugin_root.to_path_buf(),

@@ -480,13 +480,19 @@ impl ShellView {
         .detach();
     }
 
-    /// Ask the reader for the data these declarations name. `force` re-reads
-    /// every one of them, which is what asking for a refresh means; otherwise
-    /// only what has no answer yet is read.
+    /// Tell the reader what is on screen and how often each declaration wants
+    /// to be read. A panel is asked for only while the aside shows the tab it
+    /// mounts in — a closed panel is not worth a process every ten seconds —
+    /// and a status segment always, because the bar is never hidden. `force`
+    /// re-reads what is on screen now, which is what a refresh click means.
     fn request_ui_data(&self, ui: &UiContributions, force: bool, cx: &App) {
         let live = self.terminal.read(cx).live().clone();
         let context = Arc::new(ui_data::context(live.snapshot.as_deref()));
-        self.ui_data_host.sync(ui_data::loads(ui), context, force);
+        let screen = ui_data::OnScreen {
+            panels: config::get(cx).layout.aside_visible && self.aside_tab == AsideTab::Panels,
+        };
+        self.ui_data_host
+            .sync(ui_data::loads(ui, screen), context, force);
     }
 
     /// The terminal keeps the keyboard: the shell has no focus of its own.
@@ -591,6 +597,9 @@ impl ShellView {
             Command::ToggleAside => {
                 let visible = !config::get(cx).layout.aside_visible;
                 config::update(cx, |config| config.layout.aside_visible = visible);
+                // Opening or closing the panel changes what can be seen, and
+                // with it what the reader is responsible for.
+                self.request_ui_data(&self.plugins.state().ui, false, cx);
             }
             // The mode the chrome is drawn in is a setting, so the title bar's
             // button and the settings panel's item are the same write; the
@@ -768,6 +777,9 @@ impl ShellView {
             ShellRequest::ShowAsideTab(tab) => {
                 self.aside_tab = tab;
                 config::update(cx, |config| config.layout.aside_visible = true);
+                // The tab that just came forward may hold declarations nobody
+                // has read yet: ask for them now rather than on the next refresh.
+                self.request_ui_data(&self.plugins.state().ui, false, cx);
                 cx.notify();
             }
             ShellRequest::FocusWorkspace(workspace_id) => {
@@ -816,6 +828,7 @@ impl ShellView {
             ShellRequest::ShowPluginPanels => {
                 self.aside_tab = AsideTab::Panels;
                 config::update(cx, |config| config.layout.aside_visible = true);
+                self.request_ui_data(&self.plugins.state().ui, false, cx);
                 cx.notify();
             }
             ShellRequest::RefreshPlugins => self.refresh_plugins(cx),

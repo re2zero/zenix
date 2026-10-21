@@ -1,11 +1,22 @@
 //! The data behind a declared contribution: one command's stdout, parsed as
 //! JSON, read off the UI thread and with a deadline.
 //!
-//! A declaration names a command, not a poll interval. The host therefore runs
-//! one when it has a reason to — the first time a declaration appears, or when
-//! a user asks for a refresh — and keeps the last answer for every paint after
-//! that. Nothing here runs on the UI thread: the command is another process, and
-//! a plugin that hangs must not take the window with it.
+//! A declaration names a command; the host decides when it runs. Two rules do
+//! that, and both are about a plugin's commands being real processes:
+//!
+//! * **On screen only.** A panel's command runs while the aside is showing the
+//!   panels tab, a status segment's always (the bar is always painted). A
+//!   declaration nobody can see is not run — a closed panel is not worth a
+//!   process every ten seconds.
+//! * **The declaration sets the cadence.** `refresh_s` in the declaration is how
+//!   often the command is run again; absent means [`DEFAULT_EVERY`], and `0`
+//!   means once and never again. A board wants a heartbeat; a layout dump does
+//!   not.
+//!
+//! Nothing here runs on the UI thread: the command is another process, and a
+//! plugin that hangs must not take the window with it. A re-read keeps the last
+//! answer on screen until the new one arrives, so a heartbeat never blanks a
+//! panel.
 //!
 //! The command is run with `HERDR_PLUGIN_CONTEXT_JSON`, the same variable and
 //! the same JSON shape the daemon sets for a plugin action, so an author writes
@@ -19,7 +30,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crossbeam_channel::{Receiver, Sender};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
 use herdr_client::protocol::ClientShellSnapshot;
 use serde_json::{Map, Value};
 
@@ -32,6 +43,15 @@ const DEADLINE: Duration = Duration::from_secs(5);
 /// How often a running command is asked whether it is done.
 const POLL: Duration = Duration::from_millis(25);
 
+/// How often a declaration's command is run again when it does not say. Ten
+/// seconds is a heartbeat a person reads as "live" without turning a panel into
+/// a process spawner.
+const DEFAULT_EVERY: Duration = Duration::from_secs(10);
+
+/// The longest cadence a declaration may ask for. An hour is already "when I ask
+/// for it"; anything longer is a typo worth clamping rather than honouring.
+const MAX_EVERY: Duration = Duration::from_secs(3600);
+
 /// What a declaration's data is filed under: the contribution's own key, the
 /// command to read for it, and the directory to read it from — the plugin's own
 /// root, which is where the daemon runs a plugin's commands from too.
@@ -39,6 +59,24 @@ pub(crate) struct Load {
     pub(crate) id: String,
     pub(crate) command: Vec<String>,
     pub(crate) cwd: PathBuf,
+    /// How often to run it again, `None` for once. Resolved from the
+    /// declaration by [`loads`], so the worker never reads a spec.
+    pub(crate) every: Option<Duration>,
+}
+
+/// What can be seen right now, which decides what is read at all.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct OnScreen {
+    /// The aside is open on the tab the declared panels mount in.
+    pub(crate) panels: bool,
+}
+
+impl OnScreen {
+    /// Whether a slot with a source is on screen. Status segments are always
+    /// painted, so they are always asked for.
+    pub(crate) fn shows_panels(self) -> bool {
+        self.panels
+    }
 }
 
 /// The last read of one declaration's data, as a paint finds it.
@@ -93,9 +131,10 @@ impl UiDataHost {
         lock(&self.cache).clone()
     }
 
-    /// Ask for the data of every declaration that has none yet, or of all of
-    /// them when `force` is set. A declaration whose read is already in flight is
-    /// not asked again, so a repaint cannot multiply a plugin's commands.
+    /// Declare what is on screen and how often each of it wants to be read. The
+    /// worker keeps that list as its whole schedule: what is not in it is never
+    /// run, and what is in it is re-read on its own cadence. `force` asks for
+    /// every answer again now, which is what a refresh click means.
     pub(crate) fn sync(&self, loads: Vec<Load>, context: Arc<Value>, force: bool) {
         let _ = self.commands.send(Request::Load {
             loads,
@@ -113,38 +152,103 @@ enum Request {
     },
 }
 
+/// One declaration the worker is responsible for: what to run, and when it is
+/// due next. `due: None` keeps the answer it has — a declaration that asked to
+/// be read once.
+struct Scheduled {
+    load: Load,
+    context: Arc<Value>,
+    due: Option<Instant>,
+}
+
+/// How long the worker may sleep when nothing is scheduled at all. Any request
+/// wakes it, so this only bounds a worker with an empty schedule.
+const IDLE: Duration = Duration::from_secs(3600);
+
 fn work(cache: Arc<Mutex<UiData>>, requests: Receiver<Request>, pulses: Sender<()>) {
-    while let Ok(Request::Load {
-        loads,
-        context,
-        force,
-    }) = requests.recv()
-    {
-        let pending: Vec<Load> = {
-            let mut state = lock(&cache);
-            if force {
-                state.entries.clear();
+    let mut schedule: HashMap<String, Scheduled> = HashMap::new();
+    loop {
+        let wait = schedule
+            .values()
+            .filter_map(|entry| entry.due)
+            .map(|due| due.saturating_duration_since(Instant::now()))
+            .min()
+            .unwrap_or(IDLE);
+        match requests.recv_timeout(wait) {
+            Ok(Request::Load {
+                loads,
+                context,
+                force,
+            }) => {
+                if force {
+                    // Asking for a refresh means: every declaration on screen is
+                    // read again now, whether or not its turn had come.
+                    lock(&cache).entries.clear();
+                    for entry in schedule.values_mut() {
+                        entry.due = Some(Instant::now());
+                    }
+                }
+                // The list is the schedule: a declaration that left the screen
+                // stops being read, and its last answer goes with it.
+                schedule.retain(|id, _| loads.iter().any(|load| &load.id == id));
+                for load in loads {
+                    match schedule.get_mut(&load.id) {
+                        Some(entry) => {
+                            entry.context = context.clone();
+                            entry.load = load;
+                        }
+                        None => {
+                            schedule.insert(
+                                load.id.clone(),
+                                Scheduled {
+                                    load,
+                                    context: context.clone(),
+                                    due: Some(Instant::now()),
+                                },
+                            );
+                        }
+                    }
+                }
             }
-            loads
-                .into_iter()
-                .filter(|load| !state.entries.contains_key(&load.id))
-                .collect()
-        };
-        if pending.is_empty() {
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+        run_due(&cache, &mut schedule, &pulses);
+    }
+}
+
+/// Read every declaration whose turn it is. An answer already on screen is kept
+/// while its replacement runs, so a heartbeat does not blank a panel.
+fn run_due(cache: &Mutex<UiData>, schedule: &mut HashMap<String, Scheduled>, pulses: &Sender<()>) {
+    let now = Instant::now();
+    let due: Vec<String> = schedule
+        .iter()
+        .filter(|(_, entry)| entry.due.is_some_and(|due| due <= now))
+        .map(|(id, _)| id.clone())
+        .collect();
+    if due.is_empty() {
+        return;
+    }
+    for id in due {
+        let Some(entry) = schedule.get_mut(&id) else {
             continue;
-        }
+        };
         {
-            let mut state = lock(&cache);
-            for load in &pending {
-                state.entries.insert(load.id.clone(), Data::Loading);
+            let mut state = lock(cache);
+            // Only a declaration with no answer at all says "reading": a
+            // re-read is not a state change a viewer needs to see.
+            if !state.entries.contains_key(&id) {
+                state.entries.insert(id.clone(), Data::Loading);
+                let _ = pulses.try_send(());
             }
         }
+        let data = read(&entry.load, &entry.context);
+        lock(cache).entries.insert(id.clone(), data);
         let _ = pulses.try_send(());
-        for load in pending {
-            let data = read(&load, &context);
-            lock(&cache).entries.insert(load.id, data);
-            let _ = pulses.try_send(());
-        }
+        entry.due = entry
+            .load
+            .every
+            .and_then(|every| entry.due.map(|due| due + every));
     }
 }
 
@@ -314,23 +418,37 @@ pub(crate) fn context(snapshot: Option<&ClientShellSnapshot>) -> Value {
 }
 
 /// Every source the mounted contributions name, in the order they mount.
-pub(crate) fn loads(ui: &UiContributions) -> Vec<Load> {
+pub(crate) fn loads(ui: &UiContributions, screen: OnScreen) -> Vec<Load> {
     let mut loads = Vec::new();
-    loads.extend(ui.panels.iter().filter_map(|panel| {
-        panel.source.as_ref().map(|source| Load {
-            id: panel.qualified_id(),
-            command: source.command.clone(),
-            cwd: panel.plugin_root.clone(),
-        })
-    }));
+    if screen.shows_panels() {
+        loads.extend(ui.panels.iter().filter_map(|panel| {
+            panel.source.as_ref().map(|source| Load {
+                id: panel.qualified_id(),
+                command: source.command.clone(),
+                cwd: panel.plugin_root.clone(),
+                every: every(panel.refresh_s),
+            })
+        }));
+    }
     loads.extend(ui.status_items.iter().filter_map(|item| {
         item.source.as_ref().map(|source| Load {
             id: item.qualified_id(),
             command: source.command.clone(),
             cwd: item.plugin_root.clone(),
+            every: every(item.refresh_s),
         })
     }));
     loads
+}
+
+/// How often a declaration's command runs again. `refresh_s` is the author's
+/// answer; absent is the host's default, and `0` is "once".
+fn every(refresh_s: Option<u64>) -> Option<Duration> {
+    match refresh_s {
+        Some(0) => None,
+        Some(seconds) => Some(Duration::from_secs(seconds).min(MAX_EVERY)),
+        None => Some(DEFAULT_EVERY),
+    }
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -353,6 +471,7 @@ mod tests {
             id: id.to_owned(),
             command: command.iter().map(|part| (*part).to_owned()).collect(),
             cwd: cwd.to_path_buf(),
+            every: None,
         };
         read(&load, &Value::Object(Map::new()))
     }
@@ -436,7 +555,7 @@ id = "quiet"
 title = "Quiet"
 "#,
         );
-        let loads = loads(&ui);
+        let loads = loads(&ui, OnScreen { panels: true });
         let ids: Vec<&str> = loads.iter().map(|load| load.id.as_str()).collect();
         assert_eq!(ids, vec!["a.b:panel:board", "a.b:status:wip"]);
         // Every load runs where the declaration lives.
@@ -445,6 +564,104 @@ title = "Quiet"
                 .iter()
                 .all(|load| load.cwd == Path::new("/tmp/zenix-ui-root"))
         );
+    }
+
+    /// The cadence is the declaration's to set and the host's to default: an
+    /// absent key means a heartbeat, `0` means once, and a huge number is
+    /// clamped rather than honoured.
+    #[test]
+    fn a_declaration_sets_its_own_cadence_and_the_host_sets_the_default() {
+        assert_eq!(every(None), Some(DEFAULT_EVERY));
+        assert_eq!(every(Some(0)), None);
+        assert_eq!(every(Some(2)), Some(Duration::from_secs(2)));
+        assert_eq!(every(Some(u64::MAX)), Some(MAX_EVERY));
+    }
+
+    /// A panel is read only while its slot is on screen; a status segment always
+    /// is, because the bar is never hidden.
+    #[test]
+    fn a_panel_is_read_only_while_its_slot_is_on_screen() {
+        let ui = UiContributions::parse(
+            "a.b",
+            std::path::Path::new("/tmp/zenix-ui-root"),
+            r#"
+[[panel]]
+id = "board"
+title = "Board"
+refresh_s = 0
+[panel.source]
+command = ["sh", "board.sh"]
+
+[[status_item]]
+id = "wip"
+format = "{count} WIP"
+source = { command = ["sh", "wip.sh"] }
+"#,
+        );
+        let hidden = loads(&ui, OnScreen { panels: false });
+        let ids: Vec<&str> = hidden.iter().map(|load| load.id.as_str()).collect();
+        assert_eq!(ids, vec!["a.b:status:wip"]);
+
+        let shown = loads(&ui, OnScreen { panels: true });
+        let ids: Vec<&str> = shown.iter().map(|load| load.id.as_str()).collect();
+        assert_eq!(ids, vec!["a.b:panel:board", "a.b:status:wip"]);
+        // The panel asked to be read once; the segment asked for nothing, which
+        // is the host's default.
+        assert_eq!(shown[0].every, None);
+        assert_eq!(shown[1].every, Some(DEFAULT_EVERY));
+    }
+
+    /// A declaration that asks for a cadence is read again on its own, without
+    /// anyone asking: that is what makes a board a board. The answer on screen is
+    /// kept while the re-read runs, so the panel does not blink.
+    #[test]
+    fn a_declaration_with_a_cadence_is_read_again_by_itself() {
+        let counter = std::env::temp_dir().join(format!(
+            "zenix-ui-data-heartbeat-{}.txt",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&counter);
+        let (host, pulses) = UiDataHost::start();
+        let script =
+            std::env::temp_dir().join(format!("zenix-ui-data-heartbeat-{}.sh", std::process::id()));
+        std::fs::write(
+            &script,
+            format!("echo run >> {}\necho '{{\"n\": 1}}'\n", counter.display()),
+        )
+        .expect("the fixture script is written");
+        host.sync(
+            vec![Load {
+                id: "a.b:panel:beat".to_owned(),
+                command: vec!["sh".to_owned(), script.display().to_string()],
+                cwd: std::env::temp_dir(),
+                every: Some(Duration::from_millis(200)),
+            }],
+            Arc::new(Value::Object(Map::new())),
+            false,
+        );
+        await_answer(&host, &pulses, "a.b:panel:beat");
+        // Two more turns of the same cadence.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut runs = 0;
+        while Instant::now() < deadline {
+            runs = std::fs::read_to_string(&counter)
+                .unwrap_or_default()
+                .lines()
+                .count();
+            if runs >= 3 {
+                break;
+            }
+            let _ = pulses.recv_timeout(Duration::from_millis(100));
+        }
+        let _ = std::fs::remove_file(&counter);
+        let _ = std::fs::remove_file(&script);
+        assert!(runs >= 3, "the heartbeat ran {runs} time(s)");
+        // It is still an answer, not a spinner: the panel never went back to
+        // "reading".
+        assert!(matches!(
+            host.state().get("a.b:panel:beat"),
+            Some(Data::Ready(_))
+        ));
     }
 
     /// A declaration's command runs in the plugin's own root: the daemon runs a
@@ -492,6 +709,7 @@ title = "Quiet"
                 "echo '{\"count\": 1}'".to_owned(),
             ],
             cwd: std::env::temp_dir(),
+            every: None,
         };
         host.sync(vec![load], Arc::new(Value::Object(Map::new())), false);
         let value = await_answer(&host, &pulses, "a.b:panel:x");
@@ -516,6 +734,7 @@ title = "Quiet"
                 format!("echo run >> {}", counter.display()),
             ],
             cwd: std::env::temp_dir(),
+            every: None,
         };
         host.sync(vec![load], Arc::new(Value::Object(Map::new())), false);
         // The command prints no JSON, so this only waits for the run to end.
@@ -525,6 +744,7 @@ title = "Quiet"
                 id: "a.b:panel:count".to_owned(),
                 command: vec!["sh".to_owned(), "-c".to_owned(), "true".to_owned()],
                 cwd: std::env::temp_dir(),
+                every: None,
             }],
             Arc::new(Value::Object(Map::new())),
             false,
@@ -547,6 +767,7 @@ title = "Quiet"
             id: "a.b:panel:forced".to_owned(),
             command: vec!["sh".to_owned(), script.display().to_string()],
             cwd: std::env::temp_dir(),
+            every: None,
         };
         std::fs::write(&script, "echo '{\"n\": 1}'\n").expect("the fixture script is written");
         host.sync(
