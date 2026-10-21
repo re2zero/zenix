@@ -31,7 +31,9 @@ use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{ActiveTheme, Icon, Theme, ThemeMode, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
-use herdr_client::protocol::{ClientShellSnapshot, ClientShellTab, ClientShellWorkspace};
+use herdr_client::protocol::{
+    AgentStatus, ClientShellSnapshot, ClientShellTab, ClientShellWorkspace,
+};
 
 use crate::ai::endpoint::ApiEndpoint;
 use crate::config::{self, ASIDE_WIDTH_DEFAULT, ConfigStore, SIDEBAR_WIDTH_DEFAULT};
@@ -1606,16 +1608,17 @@ fn status_segment(element: AnyElement, first: bool, theme: &Theme) -> AnyElement
         .into_any_element()
 }
 
-/// The activity rail: one button per sidebar view, the current one picked out.
-/// A click is a local request — the daemon has no opinion about what the client
-/// is looking at.
+/// The activity rail: one button per sidebar view, the current one marked by a
+/// bar on the rail's edge, a view with something away from idle wearing its
+/// count. The gear at the bottom is the settings surface's second entry — the
+/// palette and `cmd-,` are the first. A click is a local request — the daemon
+/// has no opinion about what the client is looking at.
 fn rail(current: SidebarView, invocation: &Invocation) -> AnyElement {
     let theme = invocation.theme;
     v_flex()
         .w(px(RAIL_WIDTH))
         .h_full()
         .flex_none()
-        .items_center()
         .py_1()
         .gap_0p5()
         .bg(theme.sidebar)
@@ -1625,32 +1628,122 @@ fn rail(current: SidebarView, invocation: &Invocation) -> AnyElement {
             let view = *view;
             let selected = view == current;
             let dispatch = invocation.dispatch.clone();
+            // The row spans the rail so the active bar can reach its edge; the
+            // button stays centered inside it.
             div()
-                .id(("rail", view as usize))
-                .w(px(30.))
+                .w_full()
                 .h(px(30.))
+                .relative()
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded_md()
-                .cursor_pointer()
-                .bg(if selected {
-                    theme.sidebar_accent
-                } else {
-                    theme.sidebar
+                .when(selected, |row| {
+                    row.child(
+                        div()
+                            .absolute()
+                            .left_0()
+                            .top(px(6.))
+                            .bottom(px(6.))
+                            .w(px(2.))
+                            .rounded_full()
+                            .bg(theme.sidebar_primary),
+                    )
                 })
-                .text_color(if selected {
-                    theme.sidebar_primary
-                } else {
-                    theme.muted_foreground
-                })
-                .hover(|style| style.bg(theme.sidebar_accent))
-                .on_click(move |_, window, cx| {
-                    dispatch(ShellRequest::ShowView(view), window, cx);
-                })
-                .child(Icon::default().data(view.icon()).w(px(16.)).h(px(16.)))
+                .child(
+                    div()
+                        .id(("rail", view as usize))
+                        .w(px(30.))
+                        .h(px(30.))
+                        .relative()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_md()
+                        .cursor_pointer()
+                        .bg(if selected {
+                            theme.sidebar_accent
+                        } else {
+                            theme.sidebar
+                        })
+                        .text_color(if selected {
+                            theme.sidebar_primary
+                        } else {
+                            theme.muted_foreground
+                        })
+                        .hover(|style| style.bg(theme.sidebar_accent))
+                        .on_click(move |_, window, cx| {
+                            dispatch(ShellRequest::ShowView(view), window, cx);
+                        })
+                        .child(Icon::default().data(view.icon()).w(px(16.)).h(px(16.)))
+                        .children(rail_badge(invocation.snapshot, view).map(|count| {
+                            div()
+                                .absolute()
+                                .top_0()
+                                .right_0()
+                                .min_w(px(13.))
+                                .h(px(13.))
+                                .px(px(3.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded_full()
+                                .bg(theme.info)
+                                .text_color(theme.info_foreground)
+                                .text_size(px(9.))
+                                .child(count.to_string())
+                        })),
+                )
         }))
+        // The rail's floor: the settings surface, reached from here the way the
+        // prototype reads — a chrome entry, not a sidebar view.
+        .child(div().flex_1())
+        .child(rail_gear(invocation))
         .into_any_element()
+}
+
+/// The rail's settings button. `active` never applies: it opens an overlay and
+/// nothing about the rail says the overlay is in front.
+fn rail_gear(invocation: &Invocation) -> AnyElement {
+    let theme = invocation.theme;
+    let dispatch = invocation.dispatch.clone();
+    div()
+        .id("rail-settings")
+        .w(px(30.))
+        .h(px(30.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_md()
+        .cursor_pointer()
+        .text_color(theme.muted_foreground)
+        .hover(|style| style.bg(theme.sidebar_accent))
+        .on_click(move |_, window, cx| {
+            dispatch(ShellRequest::Command(Command::ToggleSettings), window, cx);
+        })
+        .child(Icon::default().data(icons::GEAR).w(px(16.)).h(px(16.)))
+        .into_any_element()
+}
+
+/// The count a rail button wears: how many agents are away from idle, so the
+/// rail answers "is anything running?" without opening the view. The other
+/// views have nothing counted yet.
+fn rail_badge(snapshot: Option<&ClientShellSnapshot>, view: SidebarView) -> Option<usize> {
+    match view {
+        SidebarView::Agents => Some(
+            snapshot?
+                .agents
+                .iter()
+                .filter(|agent| {
+                    matches!(
+                        agent.agent_status,
+                        AgentStatus::Working | AgentStatus::Blocked
+                    )
+                })
+                .count(),
+        )
+        .filter(|&count| count > 0),
+        _ => None,
+    }
 }
 
 /// The cwd the layout block speaks for: the focused pane's, preferring the cwd the
@@ -1669,6 +1762,7 @@ mod icons {
     pub(crate) const CHEVRON: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>"#;
     pub(crate) const SIDEBAR: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>"#;
     pub(crate) const ASIDE: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>"#;
+    pub(crate) const GEAR: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.6"/><circle cx="12" cy="12" r="3.2"/><path d="M12 3.4v2.2M12 18.4v2.2M3.4 12h2.2M18.4 12h2.2"/></svg>"#;
 }
 
 /// The workspace the chrome speaks for: the one the daemon says is focused.
@@ -2148,5 +2242,58 @@ mod tests {
 
         let snapshot = workspace_snapshot(Some("gone"), &[("w1", "zenix", Some("main"))]);
         assert!(focused_workspace(&snapshot).is_none());
+    }
+
+    /// A snapshot with agents at the given statuses, so the rail's badge has
+    /// something to count.
+    fn agent_snapshot(statuses: &[&str]) -> ClientShellSnapshot {
+        serde_json::from_value(serde_json::json!({
+            "boot_id": "boot",
+            "revision": 1,
+            "update_install_command": "",
+            "latest_release_notes_available": false,
+            "integration_updates_available": false,
+            "worktree_directory": "",
+            "tab_bar_right_separator": "",
+            "tab_bar_right": [],
+            "agent_order": [],
+            "workspaces": [],
+            "tabs": [],
+            "panes": [],
+            "agents": statuses
+                .iter()
+                .enumerate()
+                .map(|(n, status)| serde_json::json!({
+                    "pane_id": format!("p{n}"),
+                    "workspace_id": "w1",
+                    "tab_id": "t1",
+                    "agent_status": status,
+                    "state_change_seq": 1,
+                    "state_labels": [],
+                    "tokens": [],
+                    "focused": false,
+                }))
+                .collect::<Vec<_>>(),
+            "commands": [],
+            "focused_tab_id": null,
+        }))
+        .expect("a snapshot with agents still deserializes")
+    }
+
+    /// The badge counts the agents that need attention — working or blocked —
+    /// and stays off the rail while everything is idle.
+    #[test]
+    fn the_agents_rail_badge_counts_the_agents_away_from_idle() {
+        let snapshot = agent_snapshot(&["working", "blocked", "idle"]);
+        assert_eq!(
+            rail_badge(Some(&snapshot), SidebarView::Agents),
+            Some(2),
+            "working and blocked wear the count, idle does not"
+        );
+        let idle = agent_snapshot(&["idle", "unknown"]);
+        assert_eq!(rail_badge(Some(&idle), SidebarView::Agents), None);
+        // A view without a count wears none, and no snapshot counts nothing.
+        assert_eq!(rail_badge(Some(&idle), SidebarView::Events), None);
+        assert_eq!(rail_badge(None, SidebarView::Agents), None);
     }
 }
