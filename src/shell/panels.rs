@@ -666,9 +666,9 @@ fn counted(count: usize, one: &str, many: &str) -> String {
 }
 
 /// The config file's problems, so a hand-edited value that had no effect is
-/// visible without opening the settings surface. The Config page of the
-/// settings panel lists them one by one.
-fn render_config(_: &Invocation, _: &mut Window, cx: &mut App) -> Option<AnyElement> {
+/// visible without opening the settings surface. The count is the click into
+/// that surface: the Config page is where the problems are listed one by one.
+fn render_config(invocation: &Invocation, _: &mut Window, cx: &mut App) -> Option<AnyElement> {
     let theme = cx.theme().clone();
     let diagnostics = crate::config::diagnostics(cx);
     if diagnostics.is_empty() {
@@ -679,10 +679,17 @@ fn render_config(_: &Invocation, _: &mut Window, cx: &mut App) -> Option<AnyElem
     } else {
         theme.warning
     };
+    let dispatch = invocation.dispatch.clone();
     Some(
         div()
+            .id("status-config")
             .text_xs()
             .text_color(color)
+            .cursor_pointer()
+            .hover(|style| style.text_color(theme.foreground))
+            .on_click(move |_, window, cx| {
+                dispatch(ShellRequest::Command(Command::ToggleSettings), window, cx);
+            })
             .child(
                 rust_i18n::t!("settings.config.problems_short", count = diagnostics.len())
                     .to_string(),
@@ -742,14 +749,23 @@ fn render_rejection(invocation: &Invocation, _: &mut Window, _: &mut App) -> Opt
 }
 
 /// The focused workspace's branch, so the bar names the checkout the grid is
-/// working in without repeating the sidebar's whole detail line.
+/// working in without repeating the sidebar's whole detail line. The click is
+/// the tree the branch lives in: the workspaces view, where every checkout is
+/// one row deep.
 fn render_branch(invocation: &Invocation, _: &mut Window, _: &mut App) -> Option<AnyElement> {
     let theme = invocation.theme;
     let branch = focused_branch(invocation.snapshot?)?;
+    let dispatch = invocation.dispatch.clone();
     Some(
         div()
+            .id("status-branch")
             .text_xs()
             .text_color(theme.muted_foreground)
+            .cursor_pointer()
+            .hover(|style| style.text_color(theme.foreground))
+            .on_click(move |_, window, cx| {
+                dispatch(ShellRequest::ShowView(SidebarView::Workspaces), window, cx);
+            })
             .child(branch.to_owned())
             .into_any_element(),
     )
