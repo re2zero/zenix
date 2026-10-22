@@ -172,6 +172,71 @@ pub(crate) struct Event {
     pub(crate) detail: String,
 }
 
+/// Which slice of the stream the panel shows: everything, the agents, what a
+/// plugin hooked, the session's structure, the layout. A view of the ring, not
+/// a second subscription — the stream keeps reading all of it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum EventFilter {
+    #[default]
+    All,
+    Agents,
+    Plugins,
+    Tabs,
+    Layout,
+}
+
+impl EventFilter {
+    /// The chips, in the order they are drawn.
+    pub(crate) const ALL: [Self; 5] = [
+        Self::All,
+        Self::Agents,
+        Self::Plugins,
+        Self::Tabs,
+        Self::Layout,
+    ];
+
+    /// The stable id the chip's element id and i18n key are built from.
+    pub(crate) fn id(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Agents => "agents",
+            Self::Plugins => "plugins",
+            Self::Tabs => "tabs",
+            Self::Layout => "layout",
+        }
+    }
+
+    /// What the chip is called, from the `shell.event_filter` section of the
+    /// locale file.
+    pub(crate) fn label(self) -> String {
+        crate::i18n::t(&format!("shell.event_filter.{}", self.id()))
+    }
+
+    /// Whether an event shows behind this chip. `hooked` answers whether an
+    /// installed plugin hooks a kind; the plugins module owns that question,
+    /// so it arrives rather than living here.
+    pub(crate) fn matches(self, event: &Event, hooked: &dyn Fn(&str) -> bool) -> bool {
+        self == Self::All || class(event, hooked) == self
+    }
+}
+
+/// The one chip an event sits behind, decided once so a row cannot appear
+/// under two of them: an agent event is the agent's, a layout event is the
+/// layout's, one an installed plugin hooked is the plugin's, and the session's
+/// own structure — workspaces, worktrees, tabs, panes — is what is left.
+pub(crate) fn class(event: &Event, hooked: &dyn Fn(&str) -> bool) -> EventFilter {
+    let kind = event.kind.as_str();
+    if kind.contains("agent") {
+        EventFilter::Agents
+    } else if kind.starts_with("layout.") {
+        EventFilter::Layout
+    } else if hooked(kind) {
+        EventFilter::Plugins
+    } else {
+        EventFilter::Tabs
+    }
+}
+
 /// What the stream has read, as one value the shell clones per paint.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct EventState {
@@ -179,6 +244,9 @@ pub(crate) struct EventState {
     pub(crate) events: VecDeque<Event>,
     /// Why the stream is not connected, until it is again.
     pub(crate) error: Option<String>,
+    /// Which slice the panel is showing. Read by the paint, written by the
+    /// dispatch — the worker below never touches it.
+    pub(crate) filter: EventFilter,
 }
 
 /// The stream: one worker thread, one cache, one pulse channel.
@@ -212,6 +280,12 @@ impl Stream {
     /// stopping one.
     pub(crate) fn clear(&self) {
         lock(&self.cache).events.clear();
+    }
+
+    /// Move the view's filter. The stream reads everything either way; this
+    /// decides what the panel shows of it.
+    pub(crate) fn set_filter(&self, filter: EventFilter) {
+        lock(&self.cache).filter = filter;
     }
 }
 
@@ -475,5 +549,52 @@ mod tests {
         assert_eq!(age(172_800_000, 1_000), "1d");
         // A clock that moved backwards must not print a negative age.
         assert_eq!(age(1_000, 9_000), "now");
+    }
+
+    /// An event sits behind exactly one chip: the agent's, the layout's, the
+    /// hooking plugin's, or the session structure's — decided once, so a row
+    /// cannot show twice.
+    #[test]
+    fn an_event_shows_behind_exactly_one_chip() {
+        let none = |_kind: &str| false;
+        let hooked = |kind: &str| kind == "tab.created";
+        let event = |kind: &str| Event {
+            at_unix_ms: 1,
+            kind: kind.to_owned(),
+            detail: String::new(),
+        };
+        assert_eq!(
+            class(&event("pane.agent_detected"), &none),
+            EventFilter::Agents
+        );
+        assert_eq!(class(&event("layout.applied"), &none), EventFilter::Layout);
+        assert_eq!(class(&event("tab.created"), &hooked), EventFilter::Plugins);
+        // An agent event stays the agent's even when a plugin hooks it, and
+        // the session's own structure is what no other claim leaves.
+        assert_eq!(
+            class(&event("pane.agent_detected"), &hooked),
+            EventFilter::Agents
+        );
+        assert_eq!(class(&event("workspace.created"), &none), EventFilter::Tabs);
+        // "All" shows everything; a specific chip shows only its own class.
+        assert!(EventFilter::All.matches(&event("workspace.created"), &none));
+        assert!(EventFilter::Tabs.matches(&event("workspace.created"), &none));
+        assert!(!EventFilter::Agents.matches(&event("workspace.created"), &none));
+        assert!(EventFilter::Plugins.matches(&event("tab.created"), &hooked));
+        assert!(!EventFilter::Plugins.matches(&event("tab.closed"), &hooked));
+    }
+
+    /// The filter is a view of the ring: the state carries it, the stream's
+    /// reads never overwrite it, and it starts at everything.
+    #[test]
+    fn the_filter_starts_at_everything_and_survives_a_read() {
+        let state = EventState::default();
+        assert_eq!(state.filter, EventFilter::All);
+        let read = EventState {
+            events: VecDeque::new(),
+            error: None,
+            filter: EventFilter::Plugins,
+        };
+        assert_eq!(read.filter, EventFilter::Plugins, "a read keeps the view");
     }
 }

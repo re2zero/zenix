@@ -921,6 +921,13 @@ impl ShellView {
                 self.events = self.event_stream.state();
                 cx.notify();
             }
+            // Filtering is local the same way: the stream reads everything and
+            // the panel decides what of it to show.
+            ShellRequest::SetEventFilter(filter) => {
+                self.event_stream.set_filter(filter);
+                self.events = self.event_stream.state();
+                cx.notify();
+            }
         }
     }
 
@@ -1184,6 +1191,7 @@ impl Render for ShellView {
                 | ShellRequest::SaveLayout
                 | ShellRequest::RestoreLayout
                 | ShellRequest::ClearEvents
+                | ShellRequest::SetEventFilter(_)
                 | ShellRequest::CompareFleet
                 | ShellRequest::ClearFleet) => {
                     entity.update(cx, |shell, cx| {

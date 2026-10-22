@@ -266,19 +266,70 @@ fn render_events(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyEle
         None,
         invocation,
     ));
+    // The chips are the view's own: the stream reads every kind either way,
+    // and this decides what of it the rows below show.
+    let filter = state.filter;
+    column = column.child(filter_chips(filter, invocation));
     if let Some(error) = state.error.as_deref() {
         column = column.child(line(error, theme.danger));
     }
+    let hooked = |kind: &str| {
+        invocation
+            .plugins
+            .plugins
+            .iter()
+            .any(|plugin| plugin.hooks_on(kind))
+    };
     let now = events::now_unix_ms();
     column = column.children(
         state
             .events
             .iter()
+            .filter(|event| filter.matches(event, &hooked))
             .take(EVENTS_SHOWN)
             .enumerate()
             .map(|(index, event)| event_row(index, event, now, invocation)),
     );
     column.into_any_element()
+}
+
+/// The view's chips: one per slice of the stream, the active one picked out.
+/// A click moves the filter; the ring underneath is untouched.
+fn filter_chips(active: events::EventFilter, invocation: &Invocation) -> AnyElement {
+    let theme = invocation.theme;
+    h_flex()
+        .w_full()
+        .flex_wrap()
+        .gap_1()
+        .px_1()
+        .py_0p5()
+        .children(
+            events::EventFilter::ALL
+                .iter()
+                .enumerate()
+                .map(|(index, filter)| {
+                    let dispatch = invocation.dispatch.clone();
+                    let on = *filter == active;
+                    div()
+                        .id(("event-filter", index))
+                        .px_1p5()
+                        .py_0p5()
+                        .rounded_full()
+                        .cursor_pointer()
+                        .text_xs()
+                        .bg(if on { theme.accent } else { theme.muted })
+                        .text_color(if on {
+                            theme.accent_foreground
+                        } else {
+                            theme.muted_foreground
+                        })
+                        .on_click(move |_, window, cx| {
+                            dispatch(ShellRequest::SetEventFilter(*filter), window, cx);
+                        })
+                        .child(filter.label())
+                }),
+        )
+        .into_any_element()
 }
 
 /// One event: when it arrived, what it was, and what it was about — then, under

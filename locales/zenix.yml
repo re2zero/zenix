@@ -260,6 +260,23 @@ shell:
     layout:
       en: "layout.export / layout.apply"
       zh-CN: "layout.export / layout.apply"
+  # The event view's chips: the slices the stream can be read through.
+  event_filter:
+    all:
+      en: "All"
+      zh-CN: "全部"
+    agents:
+      en: "Agents"
+      zh-CN: "智能体"
+    plugins:
+      en: "Plugins"
+      zh-CN: "插件"
+    tabs:
+      en: "Workspaces & tabs"
+      zh-CN: "工作区/标签"
+    layout:
+      en: "Layout"
+      zh-CN: "布局"
   workspaces:
     en: "Workspaces"
     zh-CN: "工作区"

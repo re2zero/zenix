@@ -351,6 +351,9 @@ pub(crate) enum ShellRequest {
     RestoreLayout,
     /// Drop the events read so far. The subscription itself keeps running.
     ClearEvents,
+    /// Show one slice of the event stream behind its chip. The stream reads
+    /// everything either way; this is the view, not the subscription.
+    SetEventFilter(crate::events::EventFilter),
     /// Read the tail of every running agent's pane, for the cockpit's
     /// side-by-side view.
     CompareFleet,
