@@ -2,7 +2,8 @@
 //!
 //! Ported from herdr-gpui (Apache-2.0) `crates/herdr-gpui/src/config/theme.rs`.
 //! Theme *file* loading (Ghostty themes, `light:`/`dark:` pairs, `available_themes`)
-//! stays upstream for now — M5 wires this into zenix's own theme system.
+//! stays upstream. The chrome's theme families live in `crate::config::theme`;
+//! the entries named after them pair a terminal palette with a family by hand.
 
 /// Colors are packed 24-bit RGB, without an alpha channel.
 #[derive(Clone, Debug, PartialEq)]
@@ -64,6 +65,12 @@ impl Theme {
         "Dracula",
         "Catppuccin Mocha",
         "Catppuccin Latte",
+        "Gruvbox",
+        "Gruvbox Light",
+        "Solarized",
+        "Solarized Light",
+        "Tokyo Night",
+        "Matrix",
     ];
 
     fn derive_chrome(&mut self) {
@@ -109,6 +116,58 @@ impl Theme {
                     0x6c6f85, 0xd20f39, 0x40a02b, 0xdf8e1d, 0x1e66f5, 0xea76cb, 0x179299, 0xbcc0cc,
                 ],
             ),
+            "Gruvbox" => (
+                0x282828,
+                0xebdbb2,
+                [
+                    0x3c3836, 0xcc241d, 0x98971a, 0xd79921, 0x458588, 0xb16286, 0x689d6a, 0xa89984,
+                    0x928374, 0xfb4934, 0xb8bb26, 0xfabd2f, 0x83a598, 0xd3869b, 0x8ec07c, 0xfbf1c7,
+                ],
+            ),
+            "Gruvbox Light" => (
+                0xfbf1c7,
+                0x3c3836,
+                [
+                    0x3c3836, 0xcc241d, 0x98971a, 0xd79921, 0x458588, 0xb16286, 0x689d6a, 0xa89984,
+                    0x928374, 0x9d0006, 0x79740e, 0xb57614, 0x076678, 0x8f3f71, 0x427b58, 0xd5c4a1,
+                ],
+            ),
+            // Solarized runs one accent set over both appearances; only the
+            // background and foreground swap.
+            "Solarized" => (
+                0x002b36,
+                0x839496,
+                [
+                    0x073642, 0xdc322f, 0x859900, 0xb58900, 0x268bd2, 0xd33682, 0x2aa198, 0xeee8d5,
+                    0x002b36, 0xcb4b16, 0x586e75, 0x657b83, 0x839496, 0x6c71c4, 0x93a1a1, 0xfdf6e3,
+                ],
+            ),
+            "Solarized Light" => (
+                0xfdf6e3,
+                0x657b83,
+                [
+                    0x073642, 0xdc322f, 0x859900, 0xb58900, 0x268bd2, 0xd33682, 0x2aa198, 0xeee8d5,
+                    0x002b36, 0xcb4b16, 0x586e75, 0x657b83, 0x839496, 0x6c71c4, 0x93a1a1, 0xfdf6e3,
+                ],
+            ),
+            "Tokyo Night" => (
+                0x1a1b26,
+                0xc0caf5,
+                [
+                    0x15161e, 0xf7768e, 0x9ece6a, 0xe0af68, 0x7aa2f7, 0xbb9af7, 0x7dcfff, 0xa9b1d6,
+                    0x414868, 0xf7768e, 0x9ece6a, 0xe0af68, 0x7aa2f7, 0xbb9af7, 0x7dcfff, 0xc0caf5,
+                ],
+            ),
+            // The chrome's Matrix set in terminal form: a green ramp all the
+            // way through, matching the family's fiction.
+            "Matrix" => (
+                0x020d02,
+                0x88ff88,
+                [
+                    0x113311, 0x00b32d, 0x00ff41, 0x7dff9a, 0x00cc41, 0x00ff99, 0x99ffcc, 0x88ff88,
+                    0x1a4d1a, 0x66ff66, 0xaaffaa, 0xd2ffd2, 0x4dff7d, 0x66ffbf, 0xccffee, 0xccffcc,
+                ],
+            ),
             _ => return None,
         };
         let mut theme = Self {
@@ -120,5 +179,38 @@ impl Theme {
         theme.palette[..16].copy_from_slice(&ansi);
         theme.derive_chrome();
         Some(theme)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A name the config's Choice field offers must resolve, and a light
+    /// palette must actually be light — the mode picker hands it the light
+    /// mode's panes, and a dark canvas there would break the pair. Latte is
+    /// the one light entry the set's naming does not mark.
+    #[test]
+    fn every_builtin_name_resolves_and_light_means_light() {
+        let light_names = ["Gruvbox Light", "Solarized Light", "Catppuccin Latte"];
+        for name in Theme::BUILTIN_NAMES {
+            let theme = Theme::builtin(name).unwrap_or_else(|| panic!("{name} must resolve"));
+            let channel = |shift: u32| (theme.background >> shift) & 255;
+            let light = channel(16) + channel(8) + channel(0);
+            let expected_light = light_names.contains(name);
+            assert_eq!(
+                light > 384,
+                expected_light,
+                "{name}: background 0x{:06x} {}",
+                theme.background,
+                if expected_light {
+                    "is not light"
+                } else {
+                    "is not dark"
+                }
+            );
+            assert_ne!(theme.surface, theme.background);
+            assert_ne!(theme.muted, theme.foreground);
+        }
     }
 }

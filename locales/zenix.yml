@@ -178,11 +178,29 @@ settings:
       en: "Appearance"
       zh-CN: "外观"
     description:
-      en: "How zenix itself is drawn. Both take effect at once and are remembered."
-      zh-CN: "zenix 自身的显示方式。两项都即时生效并被记住。"
+      en: "How zenix itself is drawn. All take effect at once and are remembered."
+      zh-CN: "zenix 自身的显示方式。各项都即时生效并被记住。"
+    family:
+      en: "Theme family"
+      zh-CN: "主题族"
+    family_default:
+      en: "Default"
+      zh-CN: "默认"
+    family_gruvbox:
+      en: "Gruvbox"
+      zh-CN: "Gruvbox"
+    family_solarized:
+      en: "Solarized"
+      zh-CN: "Solarized"
+    family_tokyonight:
+      en: "Tokyo Night"
+      zh-CN: "Tokyo Night"
+    family_matrix:
+      en: "Matrix"
+      zh-CN: "Matrix"
     theme:
-      en: "Theme"
-      zh-CN: "主题"
+      en: "Mode"
+      zh-CN: "明暗"
     theme_light:
       en: "Light"
       zh-CN: "浅色"

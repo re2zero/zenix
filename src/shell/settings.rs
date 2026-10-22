@@ -45,13 +45,36 @@ pub(crate) const SETTINGS_SECTIONS: &[SettingsSection] = &[
     SettingsSection { page: config_page },
 ];
 
-/// The chrome's own look: which mode it is drawn in, and in which language.
+/// The chrome's own look: which theme family draws it, which mode of that
+/// family, and in which language.
 fn appearance_page(_: &App) -> SettingPage {
+    let families: Vec<(SharedString, SharedString)> = config::theme::NAMES
+        .iter()
+        .map(|name| {
+            (
+                SharedString::from(*name),
+                t(&format!("settings.appearance.family_{name}")).into(),
+            )
+        })
+        .collect();
     SettingPage::new(t("settings.appearance.title"))
         .description(t("settings.appearance.description"))
         .group(
             SettingGroup::new()
                 .title(t("settings.appearance.title"))
+                .item(SettingItem::new(
+                    t("settings.appearance.family"),
+                    SettingField::dropdown(
+                        families,
+                        |cx: &App| SharedString::from(config::get(cx).appearance.theme.as_str()),
+                        |value: SharedString, cx: &mut App| {
+                            config::update(cx, |config| {
+                                config.appearance.theme = value.to_string()
+                            });
+                        },
+                    )
+                    .default_value("default"),
+                ))
                 .item(SettingItem::new(
                     t("settings.appearance.theme"),
                     SettingField::dropdown(

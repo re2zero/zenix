@@ -24,7 +24,7 @@
 //!
 //! ```jsonc
 //! {
-//!   "appearance": { "theme_mode": "light", "locale": "en" },
+//!   "appearance": { "theme": "gruvbox", "theme_mode": "light", "locale": "en" },
 //!   "terminal": { "palette_dark": "Default", "palette_light": "Catppuccin Latte" },
 //!   "layout": {
 //!     "sidebar_visible": true,
@@ -52,6 +52,7 @@
 
 pub mod jsonc;
 pub mod scanner;
+pub mod theme;
 
 use std::{
     fs,
@@ -59,7 +60,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use gpui_kit::component::{Theme, ThemeMode};
+use gpui_kit::component::ThemeMode;
 use gpui_kit::*;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -95,11 +96,14 @@ pub struct ConfigFile {
     pub layout: Layout,
 }
 
-/// What the chrome looks like. The mode is the only source of truth for
-/// light/dark: the terminal palette pair follows it (see `ShellView`).
+/// What the chrome looks like: which theme family draws it, the mode that
+/// picks the family's light or dark variant (an absent variant falls back to
+/// gpui-kit's built-in slot), and the UI language. The terminal palette pair
+/// follows the mode (see `ShellView`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Appearance {
+    pub theme: String,
     pub theme_mode: ThemeMode,
     pub locale: String,
 }
@@ -107,6 +111,7 @@ pub struct Appearance {
 impl Default for Appearance {
     fn default() -> Self {
         Self {
+            theme: "default".into(),
             theme_mode: ThemeMode::Light,
             locale: "en".into(),
         }
@@ -195,6 +200,7 @@ const SECTIONS: &[Section] = &[
     Section {
         name: "appearance",
         fields: &[
+            ("theme", Field::Choice(theme::NAMES)),
             ("theme_mode", Field::Choice(&["light", "dark"])),
             ("locale", Field::Choice(LOCALES)),
         ],
@@ -524,6 +530,7 @@ pub fn init(cx: &mut App) {
             diagnostic.message
         );
     }
+    theme::register(cx);
     apply(cx);
 }
 
@@ -559,16 +566,20 @@ pub fn save(cx: &mut App) {
     }
 }
 
-/// Put the client in step with the config: the chrome's mode and the locale
-/// are globals of their own, and are set from scratch on every change so a
-/// value can never be half-applied.
+/// Put the client in step with the config: the chrome's theme family, the
+/// mode and the locale are globals of their own, and are set from scratch on
+/// every change so a value can never be half-applied.
 fn apply(cx: &mut App) {
-    let (mode, locale) = {
+    let (theme, mode, locale) = {
         let appearance = &get(cx).appearance;
-        (appearance.theme_mode, appearance.locale.clone())
+        (
+            appearance.theme.clone(),
+            appearance.theme_mode,
+            appearance.locale.clone(),
+        )
     };
     crate::i18n::set_locale(&locale);
-    Theme::change(mode, None, cx);
+    theme::apply(&theme, mode, cx);
 }
 
 fn config_path() -> PathBuf {
@@ -616,6 +627,23 @@ mod tests {
         assert_eq!(config.terminal.palette_light, "Dracula");
         assert!(!config.layout.sidebar_visible);
         assert_eq!(config.layout.sidebar_width, 300.5);
+    }
+
+    #[test]
+    fn a_theme_family_is_kept_only_if_it_is_one_of_the_names() {
+        let (config, diagnostics) = parse(r#"{"appearance": { "theme": "solarized" }}"#);
+        assert_eq!(config.appearance.theme, "solarized");
+        assert!(diagnostics.is_empty());
+
+        let (config, diagnostics) = parse(r#"{"appearance": { "theme": "nord" }}"#);
+        assert_eq!(
+            config.appearance.theme, "default",
+            "an unknown family falls back"
+        );
+        assert_eq!(
+            kinds(&diagnostics),
+            vec![("appearance.theme".to_owned(), DiagnosticKind::WrongType)]
+        );
     }
 
     #[test]
