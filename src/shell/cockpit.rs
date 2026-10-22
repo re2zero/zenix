@@ -21,7 +21,7 @@ use gpui_kit::*;
 use herdr_client::protocol::{ClientShellAgent, ClientShellSnapshot};
 
 use super::panels::ordered_agents;
-use super::registry::{AsideBlock, AsideTab, Invocation, ShellRequest};
+use super::registry::{AsideBlock, AsideTab, Invocation, ShellRequest, SidebarBlock, SidebarView};
 use crate::events::age;
 use crate::fleet::{FleetState, Tail};
 use crate::i18n::t;
@@ -32,6 +32,49 @@ pub(crate) const ASIDE: &[AsideBlock] = &[AsideBlock {
     tab: AsideTab::Fleet,
     render,
 }];
+
+/// The sidebar's block: the fleet as the rail's sixth view. The roster and the
+/// transitions are the part that reads in a column; the tails stay with the
+/// aside's tab, where there is room to put them beside each other.
+pub(crate) const SIDEBAR: &[SidebarBlock] = &[SidebarBlock {
+    view: SidebarView::Fleet,
+    render: render_sidebar,
+}];
+
+/// The fleet view's block. One roster, uncut by a comparison mode: a column of
+/// agents with how long each status has held and where it came from.
+fn render_sidebar(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyElement {
+    let theme = invocation.theme;
+    let Some(snapshot) = invocation.snapshot else {
+        return crate::shell::panels::empty_view(
+            t("fleet.title"),
+            t("shell.views.empty.agents"),
+            theme,
+        );
+    };
+    if snapshot.agents.is_empty() {
+        return crate::shell::panels::empty_view(t("fleet.title"), t("fleet.empty"), theme);
+    }
+    let mut column = v_flex()
+        .w_full()
+        .px_1()
+        .py_1()
+        .gap_0p5()
+        .child(head(invocation));
+    // The column is the room the aside tab caps at five rows; the head's
+    // summary carries the "+n" for the rest either way.
+    column = column.children(
+        roster(snapshot)
+            .into_iter()
+            .take(ROSTER_SHOWN)
+            .enumerate()
+            .map(|(index, agent)| agent_row(index, agent, invocation.fleet, true, invocation)),
+    );
+    if let Some(error) = invocation.fleet.error.as_deref() {
+        column = column.child(line(error, theme.danger));
+    }
+    column.into_any_element()
+}
 
 /// Transitions one agent's row names before the timeline is cut off.
 const HISTORY: usize = 2;

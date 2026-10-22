@@ -32,6 +32,7 @@ use crate::plugins::views;
 pub(crate) enum SidebarView {
     Workspaces,
     Agents,
+    Fleet,
     Plugins,
     Events,
     Layout,
@@ -79,9 +80,10 @@ impl AsideTab {
 
 impl SidebarView {
     /// The rail's buttons, top to bottom.
-    pub(crate) const ALL: [Self; 5] = [
+    pub(crate) const ALL: [Self; 6] = [
         Self::Workspaces,
         Self::Agents,
+        Self::Fleet,
         Self::Plugins,
         Self::Events,
         Self::Layout,
@@ -92,6 +94,7 @@ impl SidebarView {
         match self {
             Self::Workspaces => "workspaces",
             Self::Agents => "agents",
+            Self::Fleet => "fleet",
             Self::Plugins => "plugins",
             Self::Events => "events",
             Self::Layout => "layout",
@@ -110,6 +113,9 @@ impl SidebarView {
         match self {
             Self::Workspaces => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M9 9v11"/></svg>"#,
             Self::Agents => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 13h.01M15 13h.01"/></svg>"#,
+            // The fleet's glyph is the aside tab's own, so the same drawing
+            // names the cockpit wherever it opens.
+            Self::Fleet => AsideTab::Fleet.icon(),
             Self::Plugins => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4h3a2 2 0 0 1 2 2v1.5a1.5 1.5 0 1 0 3 0V6h1a2 2 0 0 1 2 2v3h-1.5a1.5 1.5 0 1 0 0 3H20v3a2 2 0 0 1-2 2h-3v-1.5a1.5 1.5 0 1 0-3 0V19H9a2 2 0 0 1-2-2v-3H5.5a1.5 1.5 0 1 1 0-3H7V6a2 2 0 0 1 2-2Z"/></svg>"#,
             Self::Events => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2.5-6 4 12 2.5-6h5"/></svg>"#,
             Self::Layout => br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M12 9v11"/></svg>"#,
@@ -414,6 +420,9 @@ impl Registry {
     /// because a plugin's contributions appear and vanish with the plugin.
     pub(crate) fn new(ui: &UiContributions) -> Self {
         let mut panels = sidebar_blocks(super::panels::PANELS);
+        // The cockpit's own view is the rail's sixth: the roster with the
+        // transitions beside it, where the aside's tab holds the tails.
+        panels.extend(sidebar_blocks(super::cockpit::SIDEBAR));
         // The plugin host's own blocks are the shell's blocks: they report what
         // is installed and what it ran, and they mount before anything a plugin
         // declares about itself.

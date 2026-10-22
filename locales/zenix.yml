@@ -283,6 +283,9 @@ shell:
     agents:
       en: "Agents"
       zh-CN: "智能体"
+    fleet:
+      en: "Cockpit"
+      zh-CN: "驾驶舱"
     plugins:
       en: "Plugins"
       zh-CN: "插件"
@@ -317,6 +320,9 @@ shell:
     agents:
       en: "snapshot.agents · agent_order"
       zh-CN: "snapshot.agents · agent_order"
+    fleet:
+      en: "pane.agent_status_changed · per pane"
+      zh-CN: "pane.agent_status_changed · 逐 pane 订阅"
     plugins:
       en: "plugin.list · zenix-ui.toml"
       zh-CN: "plugin.list · zenix-ui.toml"

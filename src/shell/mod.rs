@@ -1706,6 +1706,14 @@ fn view_count(view: SidebarView, invocation: &Invocation) -> String {
     match view {
         SidebarView::Workspaces => workspaces_count(invocation.snapshot),
         SidebarView::Agents => agents_count(invocation.snapshot),
+        SidebarView::Fleet => rust_i18n::t!(
+            "fleet.summary",
+            agents = invocation
+                .snapshot
+                .map_or(0, |snapshot| snapshot.agents.len()),
+            blocked = invocation.fleet.count("blocked")
+        )
+        .to_string(),
         SidebarView::Plugins => plugins_count(invocation.plugins),
         SidebarView::Events => events_count(invocation.events),
         SidebarView::Layout => t("layout.file"),
