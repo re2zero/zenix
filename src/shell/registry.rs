@@ -87,6 +87,23 @@ impl SidebarView {
         Self::Layout,
     ];
 
+    /// The stable id the i18n keys for the view's head and foot are built from.
+    pub(crate) fn id(self) -> &'static str {
+        match self {
+            Self::Workspaces => "workspaces",
+            Self::Agents => "agents",
+            Self::Plugins => "plugins",
+            Self::Events => "events",
+            Self::Layout => "layout",
+        }
+    }
+
+    /// What the view is called, from the `shell.view` section of the locale
+    /// file, which is keyed by the view's own id.
+    pub(crate) fn label(self) -> String {
+        crate::i18n::t(&format!("shell.view.{}", self.id()))
+    }
+
     /// The button's glyph, inline so the rail needs no asset registration:
     /// `stroke="currentColor"` takes the button's own colour.
     pub(crate) fn icon(self) -> &'static [u8] {

@@ -44,7 +44,7 @@ use crate::herdr::api::ApiClient;
 use crate::i18n::t;
 use crate::layout::{self, LayoutState};
 use crate::plugins::actions::Catalog;
-use crate::plugins::host::PluginHost;
+use crate::plugins::host::{PluginHost, PluginState};
 use crate::plugins::manager::{self, Manager};
 use crate::plugins::model::Availability;
 use crate::plugins::trust_view::{self, TrustReview};
@@ -67,6 +67,10 @@ const TAB_STRIP_HEIGHT: f32 = 28.;
 const STATUS_BAR_HEIGHT: f32 = 26.;
 /// The activity rail: one column of view buttons, left of the sidebar.
 const RAIL_WIDTH: f32 = 44.;
+/// The sidebar's head: the view's identity strip, one row above its blocks.
+const SIDEBAR_HEAD_HEIGHT: f32 = 34.;
+/// The sidebar's foot: the one line naming where the view's rows come from.
+const SIDEBAR_FOOT_HEIGHT: f32 = 24.;
 
 pub(crate) struct ShellView {
     terminal: Entity<TerminalView>,
@@ -1240,11 +1244,16 @@ impl Render for ShellView {
                         SidebarDrag,
                         cx.listener(Self::reset_sidebar),
                     ))
+                    .child(sidebar_head(self.rail, &invocation))
                     .children(
                         self.registry
                             .panels_in(self.rail)
                             .map(|panel| panel.render(&invocation, window, cx)),
-                    ),
+                    )
+                    // The foot sits at the floor of the view, under whatever
+                    // the blocks leave: it names the source, not the content.
+                    .child(div().flex_1())
+                    .child(sidebar_foot(self.rail, &invocation)),
             );
         }
         // The grid takes what the two panels leave, so it is added between
@@ -1620,6 +1629,161 @@ fn status_segment(element: AnyElement, first: bool, theme: &Theme) -> AnyElement
             row.border_l_1().border_color(theme.status_bar_border)
         })
         .child(element)
+        .into_any_element()
+}
+
+/// The sidebar's head: the view's name, what it holds, and the one action the
+/// view carries — the prototype's identity strip above whatever blocks mount
+/// under it (PLAN.md §M11j).
+fn sidebar_head(view: SidebarView, invocation: &Invocation) -> AnyElement {
+    let theme = invocation.theme;
+    let dispatch = invocation.dispatch.clone();
+    h_flex()
+        .flex_none()
+        .w_full()
+        .h(px(SIDEBAR_HEAD_HEIGHT))
+        .px_2()
+        .gap_2()
+        .items_center()
+        .border_b_1()
+        .border_color(theme.sidebar_border)
+        .child(
+            div()
+                .text_sm()
+                .font_weight(FontWeight::SEMIBOLD)
+                .text_color(theme.sidebar_foreground)
+                .child(view.label()),
+        )
+        .child(
+            div()
+                .min_w_0()
+                .flex_1()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(view_count(view, invocation)),
+        )
+        // The manager is the plugins view's own action: what is installed is
+        // one registry read, and its page is where that read is shaped.
+        .when(view == SidebarView::Plugins, |head| {
+            head.child(
+                div()
+                    .id("sidebar-plugins-manager")
+                    .w(px(22.))
+                    .h(px(22.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded_sm()
+                    .cursor_pointer()
+                    .text_color(theme.muted_foreground)
+                    .hover(|style| style.bg(theme.sidebar_accent))
+                    .on_click(move |_, window, cx| {
+                        dispatch(ShellRequest::OpenPluginManager(None), window, cx);
+                    })
+                    .child(
+                        Icon::default()
+                            .data(SidebarView::Plugins.icon())
+                            .w(px(13.))
+                            .h(px(13.)),
+                    ),
+            )
+        })
+        .into_any_element()
+}
+
+/// What the view holds, as one dim count beside its name: how many of the thing
+/// the view is about exist right now. A count is the pushed truth, never a
+/// second source — each one reads the state its view's blocks read.
+fn view_count(view: SidebarView, invocation: &Invocation) -> String {
+    match view {
+        SidebarView::Workspaces => workspaces_count(invocation.snapshot),
+        SidebarView::Agents => agents_count(invocation.snapshot),
+        SidebarView::Plugins => plugins_count(invocation.plugins),
+        SidebarView::Events => events_count(invocation.events),
+        SidebarView::Layout => t("layout.file"),
+    }
+}
+
+/// The session's size, the way the prototype's head reads it: workspaces, then
+/// panes.
+fn workspaces_count(snapshot: Option<&ClientShellSnapshot>) -> String {
+    let (workspaces, panes) = snapshot
+        .map(|snapshot| (snapshot.workspaces.len(), snapshot.panes.len()))
+        .unwrap_or_default();
+    rust_i18n::t!(
+        "shell.head.workspaces",
+        workspaces = workspaces,
+        panes = panes
+    )
+    .to_string()
+}
+
+/// How many agents there are, and how many are away from idle — the same count
+/// the rail's badge wears.
+fn agents_count(snapshot: Option<&ClientShellSnapshot>) -> String {
+    let (agents, active) = snapshot
+        .map(|snapshot| {
+            (
+                snapshot.agents.len(),
+                snapshot
+                    .agents
+                    .iter()
+                    .filter(|agent| {
+                        matches!(
+                            agent.agent_status,
+                            AgentStatus::Working | AgentStatus::Blocked
+                        )
+                    })
+                    .count(),
+            )
+        })
+        .unwrap_or_default();
+    rust_i18n::t!("shell.head.agents", agents = agents, active = active).to_string()
+}
+
+/// What is linked, and how much of it is running with the daemon's blessing.
+fn plugins_count(plugins: &PluginState) -> String {
+    let enabled = plugins
+        .plugins
+        .iter()
+        .filter(|plugin| plugin.enabled)
+        .count();
+    rust_i18n::t!(
+        "shell.head.plugins",
+        plugins = plugins.plugins.len(),
+        enabled = enabled
+    )
+    .to_string()
+}
+
+/// Whether the event stream is where it should be, so a silent stream and a
+/// broken one do not read the same.
+fn events_count(events: &EventState) -> String {
+    match events.error.as_deref() {
+        Some(_) => t("shell.head.events_down"),
+        None => t("shell.head.events_live"),
+    }
+}
+
+/// The sidebar's foot: where this view's rows come from. One line, fixed per
+/// view — a data source is a fact about the view, not a running value.
+fn sidebar_foot(view: SidebarView, invocation: &Invocation) -> AnyElement {
+    let theme = invocation.theme;
+    h_flex()
+        .flex_none()
+        .w_full()
+        .h(px(SIDEBAR_FOOT_HEIGHT))
+        .px_2()
+        .items_center()
+        .border_t_1()
+        .border_color(theme.sidebar_border)
+        .child(
+            div()
+                .min_w_0()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(t(&format!("shell.foot.{}", view.id()))),
+        )
         .into_any_element()
 }
 
@@ -2359,5 +2523,75 @@ mod tests {
         );
         assert_eq!(tab_agent_status(agents, "t2"), Some(AgentStatus::Done));
         assert_eq!(tab_agent_status(agents, "t3"), None);
+    }
+
+    /// Each view's head count is the size of the thing the view is about, read
+    /// from the state its own blocks read — and a client with no snapshot yet
+    /// counts nothing rather than inventing a zero session.
+    #[test]
+    fn a_views_head_count_is_what_the_view_is_about() {
+        let watched = agent_snapshot(&[("t1", "working"), ("t2", "idle")]);
+        assert_eq!(
+            agents_count(Some(&watched)),
+            rust_i18n::t!("shell.head.agents", agents = 2, active = 1).to_string()
+        );
+        assert_eq!(
+            agents_count(None),
+            rust_i18n::t!("shell.head.agents", agents = 0, active = 0).to_string()
+        );
+
+        let mut mixed = snapshot(None, &[]);
+        mixed.workspaces =
+            workspace_snapshot(None, &[("w1", "a", None), ("w2", "b", None)]).workspaces;
+        mixed.panes.push(
+            serde_json::from_value(serde_json::json!(
+                {"pane_id": "w1:p1", "workspace_id": "w1", "tab_id": "w1:t1",
+                 "focused": true, "right_click_passthrough": false}
+            ))
+            .expect("a pane"),
+        );
+        assert_eq!(
+            workspaces_count(Some(&mixed)),
+            rust_i18n::t!("shell.head.workspaces", workspaces = 2, panes = 1).to_string()
+        );
+        assert_eq!(
+            workspaces_count(None),
+            rust_i18n::t!("shell.head.workspaces", workspaces = 0, panes = 0).to_string()
+        );
+
+        let mut plugins = crate::plugins::host::PluginState::default();
+        plugins.plugins = vec![
+            crate::plugins::model::InstalledPlugin {
+                plugin_id: "a".into(),
+                name: "a".into(),
+                version: "0.1.0".into(),
+                plugin_root: "/tmp/a".into(),
+                description: None,
+                enabled: true,
+                panes: vec![],
+                events: vec![],
+                warnings: vec![],
+            },
+            crate::plugins::model::InstalledPlugin {
+                plugin_id: "b".into(),
+                name: "b".into(),
+                version: "0.1.0".into(),
+                plugin_root: "/tmp/b".into(),
+                description: None,
+                enabled: false,
+                panes: vec![],
+                events: vec![],
+                warnings: vec![],
+            },
+        ];
+        assert_eq!(
+            plugins_count(&plugins),
+            rust_i18n::t!("shell.head.plugins", plugins = 2, enabled = 1).to_string()
+        );
+
+        let mut events = EventState::default();
+        assert_eq!(events_count(&events), t("shell.head.events_live"));
+        events.error = Some("gone".into());
+        assert_eq!(events_count(&events), t("shell.head.events_down"));
     }
 }

@@ -209,6 +209,57 @@ shell:
     search:
       en: "Search workspaces, commands, plugin actions…"
       zh-CN: "搜索工作区、命令、插件 action…"
+  # The sidebar views' own names, for the head strip above their blocks.
+  view:
+    workspaces:
+      en: "Workspaces"
+      zh-CN: "工作区"
+    agents:
+      en: "Agents"
+      zh-CN: "智能体"
+    plugins:
+      en: "Plugins"
+      zh-CN: "插件"
+    events:
+      en: "Events"
+      zh-CN: "事件"
+    layout:
+      en: "Layout"
+      zh-CN: "布局"
+  # What each view holds right now, as the head's dim count.
+  head:
+    workspaces:
+      en: "%{workspaces} · %{panes} panes"
+      zh-CN: "%{workspaces} 个 · %{panes} 个窗格"
+    agents:
+      en: "%{agents} · %{active} active"
+      zh-CN: "%{agents} 个 · %{active} 运行中"
+    plugins:
+      en: "%{plugins} · %{enabled} enabled"
+      zh-CN: "%{plugins} 个 · %{enabled} 启用"
+    events_live:
+      en: "subscribed"
+      zh-CN: "订阅中"
+    events_down:
+      en: "stream down"
+      zh-CN: "已断开"
+  # Where each view's rows come from, as the foot's one line.
+  foot:
+    workspaces:
+      en: "snapshot push · no polling"
+      zh-CN: "snapshot 推送 · 无轮询"
+    agents:
+      en: "snapshot.agents · agent_order"
+      zh-CN: "snapshot.agents · agent_order"
+    plugins:
+      en: "plugin.list · zenix-ui.toml"
+      zh-CN: "plugin.list · zenix-ui.toml"
+    events:
+      en: "events.subscribe · one stream"
+      zh-CN: "events.subscribe · 单个订阅"
+    layout:
+      en: "layout.export / layout.apply"
+      zh-CN: "layout.export / layout.apply"
   workspaces:
     en: "Workspaces"
     zh-CN: "工作区"
@@ -429,6 +480,10 @@ layout:
   title:
     en: "Layout"
     zh-CN: "布局"
+  # The file a project's layout travels in, as the head's count names it.
+  file:
+    en: ".zenix/layout.toml"
+    zh-CN: ".zenix/layout.toml"
   save:
     en: "save"
     zh-CN: "保存"
