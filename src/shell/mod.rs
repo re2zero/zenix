@@ -2332,8 +2332,9 @@ fn tab_button(tab: &ClientShellTab, index: usize, invocation: &Invocation) -> An
 
 /// The status a tab's dot wears: the one among its agents that most needs an
 /// eye — blocked, then working, then done; idle and unknown are the floor. A
-/// tab without agents wears no dot.
-fn tab_agent_status(agents: &[ClientShellAgent], tab_id: &str) -> Option<AgentStatus> {
+/// tab without agents wears no dot. The tab strip and the workspaces tree
+/// paint the same dot, so a status means one color everywhere it appears.
+pub(crate) fn tab_agent_status(agents: &[ClientShellAgent], tab_id: &str) -> Option<AgentStatus> {
     let rank = |status: AgentStatus| match status {
         AgentStatus::Blocked => 0,
         AgentStatus::Working => 1,
@@ -2346,6 +2347,7 @@ fn tab_agent_status(agents: &[ClientShellAgent], tab_id: &str) -> Option<AgentSt
         .map(|agent| agent.agent_status)
         .min_by_key(|status| rank(*status))
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;

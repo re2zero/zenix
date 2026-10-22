@@ -8,12 +8,13 @@
 
 use std::path::{Path, PathBuf};
 
-use gpui_kit::component::{ActiveTheme, Theme, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Icon, Theme, h_flex, v_flex};
 use gpui_kit::*;
 use herdr_client::protocol::{
-    AgentStatus, ClientShellAgent, ClientShellSnapshot, ClientShellWorkspace,
+    AgentStatus, ClientShellAgent, ClientShellSnapshot, ClientShellTab, ClientShellWorkspace,
 };
 
+use super::commands::Command;
 use super::registry::{
     Invocation, ShellRequest, SidebarBlock, SidebarView, StatusAlign, StatusSegment,
 };
@@ -100,28 +101,27 @@ pub(crate) fn empty_view(title: String, body: String, theme: &Theme) -> AnyEleme
         .into_any_element()
 }
 
-/// Every workspace the daemon knows, the focused one picked out. Selection is
-/// not a local field: it is the `focused` flag the snapshot carries.
+/// Every workspace the daemon knows, the focused one picked out and opened
+/// into its tabs. Selection is not a local field: it is the `focused` flag the
+/// snapshot carries, and the tree reads it the same way the daemon does — the
+/// focused workspace is the one whose tabs are on show.
 fn render_workspaces(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyElement {
-    let theme = invocation.theme;
-    let mut column = v_flex().w_full().px_1().py_1().gap_0p5().child(
-        div()
-            .px_1()
-            .pb_1()
-            .text_xs()
-            .text_color(theme.muted_foreground)
-            .child(t("shell.workspaces")),
-    );
+    let mut column = v_flex().w_full().px_1().py_1().gap_0p5().child(header(
+        "workspaces-header",
+        &t("shell.workspaces"),
+        // The directory names the action; the button is its one sidebar mount.
+        &t("command.workspace.new"),
+        ShellRequest::Command(Command::NewWorkspace),
+        None,
+        invocation,
+    ));
     let mut count = 0;
     if let Some(snapshot) = invocation.snapshot {
         count = snapshot.workspaces.len();
-        column = column.children(
-            snapshot
-                .workspaces
-                .iter()
-                .enumerate()
-                .map(|(index, workspace)| workspace_row(index, workspace, snapshot, invocation)),
-        );
+        column =
+            column.children(snapshot.workspaces.iter().enumerate().flat_map(
+                |(index, workspace)| workspace_rows(index, workspace, snapshot, invocation),
+            ));
     }
     // The column is the gap after the last row: a drop no row claimed lands
     // here and appends, which is how a workspace reaches the end.
@@ -140,6 +140,117 @@ fn render_workspaces(invocation: &Invocation, _: &mut Window, _: &mut App) -> An
             }
         })
         .into_any_element()
+}
+
+/// One workspace, then — when it is the focused one — its tabs as nested rows:
+/// the tree opens the place the user is working and leaves the rest folded.
+fn workspace_rows(
+    index: usize,
+    workspace: &ClientShellWorkspace,
+    snapshot: &ClientShellSnapshot,
+    invocation: &Invocation,
+) -> Vec<AnyElement> {
+    let mut rows = vec![workspace_row(index, workspace, snapshot, invocation)];
+    if workspace.focused {
+        rows.extend(
+            workspace_tabs(snapshot, &workspace.workspace_id)
+                .into_iter()
+                .enumerate()
+                .map(|(tab_index, tab)| tab_sub_row(tab_index, tab, snapshot, invocation)),
+        );
+    }
+    rows
+}
+
+/// A workspace's tabs, in the daemon's own numbering.
+fn workspace_tabs<'a>(
+    snapshot: &'a ClientShellSnapshot,
+    workspace_id: &str,
+) -> Vec<&'a ClientShellTab> {
+    let mut tabs: Vec<&ClientShellTab> = snapshot
+        .tabs
+        .iter()
+        .filter(|tab| tab.workspace_id == workspace_id)
+        .collect();
+    tabs.sort_by_key(|tab| tab.number);
+    tabs
+}
+
+/// How many panes a tab holds, as the sub-row's trailing count.
+fn tab_pane_count(snapshot: &ClientShellSnapshot, tab_id: &str) -> usize {
+    snapshot
+        .panes
+        .iter()
+        .filter(|pane| pane.tab_id == tab_id)
+        .count()
+}
+
+/// The glyph a nested tab row leads with, the same inline-svg shape the rest of
+/// the chrome draws its icons with: a pane, since that is what a tab opens.
+const TAB_ICON: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M12 15h5"/></svg>"#;
+
+/// One nested tab row: a click focuses the tab, the same request the tab strip's
+/// pills answer, and its trail is what the tab is holding — its agents' dot and
+/// its pane count.
+fn tab_sub_row(
+    index: usize,
+    tab: &ClientShellTab,
+    snapshot: &ClientShellSnapshot,
+    invocation: &Invocation,
+) -> AnyElement {
+    let theme = invocation.theme;
+    let dispatch = invocation.dispatch.clone();
+    let tab_id = tab.tab_id.clone();
+    let active = Some(tab.tab_id.as_str()) == snapshot.focused_tab_id.as_deref();
+    let row = h_flex()
+        .id(("workspace-tab", index))
+        .w_full()
+        .pl_4()
+        .pr_1()
+        .py_0p5()
+        .gap_1()
+        .items_center()
+        .rounded_sm()
+        .cursor_pointer()
+        .hover(|style| style.bg(theme.sidebar_accent))
+        .on_click(move |_, window, cx| dispatch(ShellRequest::FocusTab(tab_id.clone()), window, cx))
+        .child(
+            div()
+                .flex_none()
+                .text_color(theme.muted_foreground)
+                .child(Icon::default().data(TAB_ICON).w(px(12.)).h(px(12.))),
+        )
+        .child(
+            div()
+                .min_w_0()
+                .flex_1()
+                .text_sm()
+                .text_color(if active {
+                    theme.foreground
+                } else {
+                    theme.sidebar_foreground
+                })
+                .child(tab.label.clone()),
+        )
+        .children(
+            super::tab_agent_status(&snapshot.agents, &tab.tab_id).map(|status| {
+                div()
+                    .id(("workspace-tab-dot", index))
+                    .child(status_dot(status, theme))
+            }),
+        )
+        .child(
+            div()
+                .flex_none()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(tab_pane_count(snapshot, &tab.tab_id).to_string()),
+        );
+    if active {
+        row.bg(theme.selection).into_any_element()
+    } else {
+        row.into_any_element()
+    }
 }
 
 fn workspace_row(
@@ -772,6 +883,47 @@ mod tests {
         snapshot.agents[0].terminal_title_stripped = None;
         snapshot.agents[0].title = None;
         assert_eq!(agent_detail(&snapshot.agents[0]), "working · w1");
+    }
+
+    /// The tree opens the focused workspace into its tabs, in the daemon's own
+    /// numbering; another workspace stays folded.
+    #[test]
+    fn the_focused_workspace_opens_into_its_tabs_in_daemon_order() {
+        let mut snapshot = snapshot_with_panes();
+        snapshot.tabs = serde_json::from_value(serde_json::json!([
+            {"tab_id": "w1:t2", "workspace_id": "w1", "number": 2,
+             "label": "second", "custom_label": false, "zoomed": false,
+             "focused": false, "agent_status": "idle"},
+            {"tab_id": "w1:t1", "workspace_id": "w1", "number": 1,
+             "label": "first", "custom_label": false, "zoomed": false,
+             "focused": true, "agent_status": "idle"},
+            {"tab_id": "w2:t1", "workspace_id": "w2", "number": 1,
+             "label": "elsewhere", "custom_label": false, "zoomed": false,
+             "focused": false, "agent_status": "idle"}
+        ]))
+        .expect("the fixture tabs deserialize");
+        let tabs: Vec<&str> = workspace_tabs(&snapshot, "w1")
+            .iter()
+            .map(|tab| tab.tab_id.as_str())
+            .collect();
+        assert_eq!(tabs, ["w1:t1", "w1:t2"], "daemon numbering, not list order");
+        assert!(workspace_tabs(&snapshot, "w9").is_empty());
+        // The focused pane's tab is the tree's own active row.
+        let active = workspace_tabs(&snapshot, "w1")
+            .into_iter()
+            .find(|tab| Some(tab.tab_id.as_str()) == snapshot.focused_tab_id.as_deref());
+        assert_eq!(
+            active.expect("the focused tab is among them").label,
+            "first"
+        );
+    }
+
+    /// A sub-row's trail counts the tab's own panes, not the workspace's.
+    #[test]
+    fn a_tab_rows_count_is_its_own_panes() {
+        let snapshot = snapshot_with_panes();
+        assert_eq!(tab_pane_count(&snapshot, "w1:t1"), 2);
+        assert_eq!(tab_pane_count(&snapshot, "w1:t9"), 0);
     }
 
     #[test]
