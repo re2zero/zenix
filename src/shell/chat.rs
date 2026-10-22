@@ -35,7 +35,9 @@ use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
-use gpui_kit::component::{ActiveTheme as _, IndexPath, Sizable as _, Size, Theme, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Icon, IndexPath, Sizable as _, Size, Theme, h_flex, v_flex,
+};
 use gpui_kit::prelude::*;
 use gpui_kit::*;
 
@@ -520,19 +522,7 @@ fn message_row(
     cx: &mut Context<ChatPanel>,
 ) -> AnyElement {
     let theme = cx.theme().clone();
-    let mut row = v_flex().w_full().gap_1().child(
-        h_flex()
-            .w_full()
-            .gap_2()
-            .items_center()
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(role_label(&message.role)),
-            )
-            .child(div().flex_1()),
-    );
+    let mut row = v_flex().w_full().gap_1().child(who_row(message, &theme));
     if let Some(reasoning) = message.reasoning_text.as_deref() {
         row = row.child(reasoning_block(index, reasoning, message, open, cx));
     }
@@ -632,11 +622,18 @@ fn tool_card(
     let toggle =
         cx.listener(move |panel, _: &ClickEvent, _window, cx| panel.toggle(id.clone(), cx));
     let summary = arguments_summary(&call.args);
+    // A call still running carries the accent on its edge, so a turn that is
+    // waiting on a tool reads before its status word does.
+    let border = if call.status == ToolCallStatus::Running {
+        theme.accent
+    } else {
+        theme.border
+    };
     let mut card = v_flex()
         .w_full()
         .rounded_sm()
         .border_1()
-        .border_color(theme.border)
+        .border_color(border)
         .bg(theme.muted)
         .child(
             h_flex()
@@ -797,16 +794,32 @@ fn context_line(panel: &ChatPanel, theme: &Theme, cx: &mut Context<ChatPanel>) -
         .into_any_element()
 }
 
-/// The button that sends what is in the box; disabled while a turn runs.
+/// The button that sends what is in the box: the prototype's round trigger,
+/// lit while there is something to send and dead while a turn runs. Enter
+/// sends the same turn, so the button is the mouse-shaped way of asking.
 fn send_button(panel: &ChatPanel, theme: &Theme, cx: &mut Context<ChatPanel>) -> AnyElement {
     let send = cx.listener(|panel, _: &ClickEvent, window, cx| panel.send(window, cx));
-    button(
-        "chat-send",
-        t("ai.chat.send"),
-        !panel.is_streaming(),
-        send,
-        theme,
-    )
+    let ready = !panel.is_streaming() && !panel.input.read(cx).value().trim().is_empty();
+    div()
+        .id("chat-send")
+        .size(px(26.))
+        .rounded_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .flex_none()
+        .when(ready, |button| {
+            button
+                .bg(theme.accent)
+                .text_color(theme.accent_foreground)
+                .cursor_pointer()
+                .on_click(send)
+        })
+        .when(!ready, |button| {
+            button.bg(theme.muted).text_color(theme.muted_foreground)
+        })
+        .child(Icon::default().data(ARROW_UP_ICON).w(px(14.)).h(px(14.)))
+        .into_any_element()
 }
 
 /// The last failure and the last compaction, above the message box where they
@@ -887,6 +900,9 @@ fn button(
         .child(label)
         .into_any_element()
 }
+
+/// The composer's send trigger, the same stroke the prototype draws there.
+const ARROW_UP_ICON: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg>"#;
 
 /// What one stream event did, for the panel to act on beyond the message.
 enum Folded {
@@ -1127,8 +1143,62 @@ fn persist(message: &ChatMessage) {
 /// reader expects.
 fn role_label(role: &str) -> String {
     match role {
-        "user" => "you".to_owned(),
-        _ => "assistant".to_owned(),
+        "user" => t("ai.chat.role_you"),
+        _ => t("ai.chat.role_assistant"),
+    }
+}
+
+/// A message's who row, the prototype's: the sender's mark, its name, and the
+/// minute it was written. The mark is the brand initial for the orchestrator
+/// and the reader's own for a user turn, so a scroll-back reads at a glance.
+fn who_row(message: &ChatMessage, theme: &Theme) -> AnyElement {
+    let user = message.role == "user";
+    let (mark, mark_bg, mark_fg) = if user {
+        (t("ai.chat.self"), theme.list_active, theme.foreground)
+    } else {
+        ("z".to_owned(), theme.magenta.opacity(0.22), theme.magenta)
+    };
+    h_flex()
+        .w_full()
+        .gap_1p5()
+        .items_center()
+        .child(
+            div()
+                .size(px(16.))
+                .rounded_sm()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(mark_bg)
+                .text_color(mark_fg)
+                .text_size(px(9.))
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(mark),
+        )
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(role_label(&message.role)),
+        )
+        .children(clock_of(&message.timestamp).map(|minute| {
+            div()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(minute)
+        }))
+        .into_any_element()
+}
+
+/// The minute a message was written, out of the store's timestamp — the
+/// `HH:MM` between the `T` and the second mark. Anything else the field might
+/// hold reads as no time at all rather than a wrong one.
+fn clock_of(timestamp: &str) -> Option<String> {
+    let bytes = timestamp.as_bytes();
+    if bytes.len() >= 16 && bytes[10] == b'T' {
+        Some(timestamp[11..16].to_owned())
+    } else {
+        None
     }
 }
 
@@ -1203,6 +1273,16 @@ mod tests {
     /// The empty assistant message a turn streams into.
     fn a_placeholder() -> ChatMessage {
         message("session", "orchestrator", String::new(), 2)
+    }
+
+    /// The who row names the minute out of the store's timestamp, and a
+    /// timestamp that is not the store's shape names nothing rather than a
+    /// wrong time.
+    #[test]
+    fn the_clock_is_the_minute_of_the_timestamp() {
+        assert_eq!(clock_of("2026-10-23T12:04:31"), Some("12:04".to_owned()));
+        assert_eq!(clock_of(""), None);
+        assert_eq!(clock_of("not-a-timestamp"), None);
     }
 
     #[test]
@@ -1343,9 +1423,9 @@ mod tests {
 
     #[test]
     fn the_store_s_roles_are_labelled_for_a_reader() {
-        assert_eq!(role_label("user"), "you");
-        assert_eq!(role_label("orchestrator"), "assistant");
-        assert_eq!(role_label("anything-else"), "assistant");
+        assert_eq!(role_label("user"), t("ai.chat.role_you"));
+        assert_eq!(role_label("orchestrator"), t("ai.chat.role_assistant"));
+        assert_eq!(role_label("anything-else"), t("ai.chat.role_assistant"));
     }
 
     /// The API is told `assistant` where the store says `orchestrator`: a turn

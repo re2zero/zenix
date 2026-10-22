@@ -63,6 +63,9 @@ settings:
   close:
     en: "Close"
     zh-CN: "关闭"
+  effective:
+    en: "Every change takes effect at once, and each load walks the file against the schema."
+    zh-CN: "写入即生效 · 每次加载都按 schema 校验"
   layout:
     title:
       en: "Layout"
@@ -252,9 +255,6 @@ ai:
     new_session:
       en: "+ New"
       zh-CN: "+ 新建"
-    send:
-      en: "Send"
-      zh-CN: "发送"
     stop:
       en: "Stop"
       zh-CN: "停止"
@@ -264,6 +264,15 @@ ai:
     effort:
       en: "Reasoning effort"
       zh-CN: "推理力度"
+    self:
+      en: "Me"
+      zh-CN: "我"
+    role_you:
+      en: "You"
+      zh-CN: "你"
+    role_assistant:
+      en: "zenix · orchestrator"
+      zh-CN: "zenix · 编排器"
   # The composer's reasoning-effort picker: one label per `ThinkingLevel`, keyed
   # by the level's wire spelling.
   effort:
@@ -389,6 +398,12 @@ shell:
     hints:
       en: "↑↓ move · enter run · esc close"
       zh-CN: "↑↓ 选择 · Enter 运行 · Esc 关闭"
+    source:
+      en: "Plugin actions come from plugin.action.list and run the same path a built-in command does."
+      zh-CN: "插件 action 来自 plugin.action.list，与内置命令同一条路径"
+    tab_count:
+      en: "%{count} tabs"
+      zh-CN: "%{count} 个标签"
   plugins:
     title:
       en: "Plugins"
@@ -632,6 +647,34 @@ fleet:
   tail_empty:
     en: "(no output yet)"
     zh-CN: "（暂无输出）"
+  focus:
+    en: "Focus"
+    zh-CN: "聚焦"
+  tail:
+    en: "tail"
+    zh-CN: "tail"
+  tail_compare:
+    en: "Tail compare"
+    zh-CN: "TAIL 对比"
+  tail_count:
+    en: "%{count} pane(s) read"
+    zh-CN: "已读 %{count} 个窗格"
+  status:
+    working:
+      en: "Working"
+      zh-CN: "运行中"
+    blocked:
+      en: "Blocked"
+      zh-CN: "等待输入"
+    done:
+      en: "Done"
+      zh-CN: "完成"
+    idle:
+      en: "Idle"
+      zh-CN: "空闲"
+    unknown:
+      en: "Unknown"
+      zh-CN: "未知"
 
 # The command directory. This section is keyed by each command's own id, which is
 # what `CommandInfo::label` resolves against, so a key that does not match an id

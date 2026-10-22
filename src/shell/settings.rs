@@ -441,11 +441,26 @@ pub(crate) fn overlay(
                 .w_full()
                 .px_3()
                 .py_2()
-                .justify_between()
+                .gap_2()
                 .items_center()
                 .border_b_1()
                 .border_color(theme.border)
                 .child(div().text_sm().child(t("settings.title")))
+                // The file every page writes, where a first-time look for it
+                // ends: one chip, the path as the Config page spells it.
+                .child(
+                    div()
+                        .px_1p5()
+                        .py(px(1.))
+                        .rounded_full()
+                        .border_1()
+                        .border_color(theme.border)
+                        .bg(theme.muted)
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(config::path_of(cx).display().to_string()),
+                )
+                .child(div().flex_1())
                 .child(
                     div()
                         .id("settings-close")
@@ -467,6 +482,22 @@ pub(crate) fn overlay(
                 Settings::new("zenix-settings")
                     .pages(sections.iter().map(|section| (section.page)(cx))),
             ),
+        )
+        // The one promise the surface makes, where the prototype puts it: a
+        // change is live and checked the moment it is made, which is what every
+        // field above is a view of.
+        .child(
+            h_flex()
+                .flex_none()
+                .w_full()
+                .px_3()
+                .py_1p5()
+                .items_center()
+                .border_t_1()
+                .border_color(theme.border)
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(t("settings.effective")),
         )
         .into_any_element()
 }

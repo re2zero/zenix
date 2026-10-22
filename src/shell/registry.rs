@@ -363,6 +363,9 @@ pub(crate) enum ShellRequest {
     /// Read the tail of every running agent's pane, for the cockpit's
     /// side-by-side view.
     CompareFleet,
+    /// Read one agent's tail into the comparison: a fleet card's own tail
+    /// button, which asks about that agent alone.
+    ReadTail(String),
     /// Drop the fleet's transitions. The subscriptions themselves keep running.
     ClearFleet,
 }

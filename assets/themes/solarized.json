@@ -44,7 +44,18 @@
         "base.yellow": "#756e58",
         "base.blue": "#586975",
         "base.magenta": "#755866",
-        "base.cyan": "#587573"
+        "base.cyan": "#587573",
+        "sidebar.background": "#f4ecd7",
+        "sidebar.foreground": "#93a1a1",
+        "sidebar.border": "#DCD4BC",
+        "sidebar.accent.background": "#DCD4BC88",
+        "sidebar.accent.foreground": "#073642",
+        "sidebar.primary.background": "#586E75",
+        "sidebar.primary.foreground": "#FDF6E3",
+        "status_bar.background": "#f4ecd7",
+        "status_bar.border": "#DCD4BC",
+        "list.hover.background": "#DCD4BC88",
+        "selection.background": "#586E7533"
       },
       "highlight": {
         "editor.foreground": "#586E75",
@@ -184,7 +195,19 @@
         "base.yellow": "#7d650d",
         "base.blue": "#0d507d",
         "base.magenta": "#7d0d43",
-        "base.cyan": "#0d7d70"
+        "base.cyan": "#0d7d70",
+        "sidebar.background": "#09323d",
+        "sidebar.foreground": "#839496",
+        "sidebar.border": "#16404b",
+        "sidebar.accent.background": "#073945",
+        "sidebar.accent.foreground": "#fdf6e3",
+        "sidebar.primary.background": "#0d667d",
+        "sidebar.primary.foreground": "#fdf6e3",
+        "status_bar.background": "#09323d",
+        "status_bar.border": "#16404b",
+        "tab.background": "#073642",
+        "list.hover.background": "#073945",
+        "selection.background": "#0d667d25"
       },
       "highlight": {
         "editor.foreground": "#DDDDDD",

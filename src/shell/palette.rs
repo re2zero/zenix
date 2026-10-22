@@ -14,7 +14,7 @@
 //! The query is typed straight into the palette: it holds the keyboard while it
 //! is open, so the shell needs no text input and no IME client here.
 
-use gpui_kit::component::{ActiveTheme, Theme, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Icon, Theme, h_flex, v_flex};
 use gpui_kit::*;
 
 use std::sync::Arc;
@@ -35,10 +35,13 @@ pub(crate) enum Entry {
     /// A workspace of the session: picking one is the same focus request the
     /// sidebar's rows make, so the palette reaches a workspace the sidebar
     /// cannot show (it may belong to another rail view or be scrolled away).
+    /// The tab count rides along because the row is the prototype's "how big is
+    /// it" line: it is what tells three workspaces apart before picking one.
     Workspace {
         workspace_id: String,
         label: String,
         branch: Option<String>,
+        tabs: usize,
     },
     Plugin(Arc<Exposed>),
 }
@@ -85,11 +88,14 @@ impl Entry {
     /// The keystroke that reaches this row without the palette. A plugin's
     /// chord is shown the way it is pressed: claimed outright when it carries a
     /// modifier of its own, after the prefix when it is a bare key — see
-    /// [`crate::shell::keymap`].
+    /// [`crate::shell::keymap`]. A workspace carries no chord; its right-hand
+    /// slot says how many tabs it holds instead.
     fn hint(&self, keymap: &Keymap) -> Option<String> {
         match self {
             Self::Plugin(entry) => entry.chord().map(|key| keymap.chord_label(key)),
-            Self::Workspace { .. } => None,
+            Self::Workspace { tabs, .. } => {
+                Some(rust_i18n::t!("shell.palette.tab_count", count = tabs).to_string())
+            }
             Self::Command(command) => {
                 let info = COMMANDS.iter().find(|info| info.command == *command)?;
                 if let Some(direct) = info.direct.first() {
@@ -299,29 +305,54 @@ pub(crate) fn overlay(
         // means here, and stops it before the pane below sees it.
         .on_key_down(key)
         .child(
-            div()
+            h_flex()
                 .w_full()
                 .px_2()
                 .py_1()
+                .gap_2()
+                .items_center()
                 .border_b_1()
                 .border_color(theme.border)
-                .child(query),
+                .child(
+                    Icon::default()
+                        .data(super::icons::SEARCH)
+                        .w(px(14.))
+                        .h(px(14.))
+                        .text_color(theme.muted_foreground),
+                )
+                .child(query)
+                .child(div().flex_1())
+                .child(
+                    div()
+                        .px_1()
+                        .rounded_xs()
+                        .border_1()
+                        .border_color(theme.border)
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child("Esc"),
+                ),
         )
         .child(div().w_full().flex_1().min_h_0().child(list))
         // The keyboard path, where a first-time look for it ends: the same
-        // three keys the rows above answer to. It carries the background so a
-        // row the height cap clips does not bleed through it.
+        // three keys the rows above answer to, and the one fact that keeps the
+        // plugin section from reading like a second command system. It carries
+        // the background so a row the height cap clips does not bleed through.
         .child(
-            div()
+            h_flex()
                 .w_full()
                 .px_2()
                 .py_1()
+                .gap_2()
+                .items_center()
                 .bg(theme.background)
                 .border_t_1()
                 .border_color(theme.border)
                 .text_xs()
                 .text_color(theme.muted_foreground)
-                .child(t("shell.palette.hints")),
+                .child(t("shell.palette.hints"))
+                .child(div().flex_1())
+                .child(t("shell.palette.source")),
         );
     h_flex()
         .id("palette-scrim")
@@ -378,6 +409,16 @@ fn row(
         .on_click(move |_, window, cx| {
             cx.stop_propagation();
             run(request.clone(), window, cx);
+        })
+        // A plugin row wears its source badge, the same mark every other
+        // contribution of that plugin carries: the section header already says
+        // where the rows come from, the badge says which one.
+        .children(match entry {
+            Entry::Plugin(entry) => Some(crate::plugins::views::source_badge(
+                theme,
+                &entry.action.plugin_id,
+            )),
+            _ => None,
         })
         .child(
             v_flex()
@@ -567,6 +608,7 @@ key = "{key}"
             workspace_id: "w2".into(),
             label: "BitFun".into(),
             branch: Some("feat/x".into()),
+            tabs: 2,
         };
         assert_eq!(row.label(), "BitFun");
         assert_eq!(row.detail(), "feat/x");
@@ -576,8 +618,11 @@ key = "{key}"
             ShellRequest::FocusWorkspace(id) => assert_eq!(id, "w2"),
             _ => panic!("a workspace row focuses a workspace"),
         }
-        // No chord reaches a workspace: it is a palette row or a sidebar row.
-        assert_eq!(row.hint(&Keymap::default()), None);
+        // No chord reaches a workspace: its right-hand slot is the tab count.
+        assert_eq!(
+            row.hint(&Keymap::default()),
+            Some(rust_i18n::t!("shell.palette.tab_count", count = 2).to_string())
+        );
 
         let mut palette = Palette::default();
         palette.open();

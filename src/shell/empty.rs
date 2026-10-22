@@ -135,14 +135,16 @@ fn palette_line(invocation: &Invocation) -> AnyElement {
         })
         .child(Icon::default().data(SEARCH_ICON).w(px(15.)).h(px(15.)))
         .child(div().flex_1().text_sm().child(t("shell.empty.palette")))
-        .child(
-            div()
-                .px_1()
-                .rounded_sm()
-                .border_1()
-                .border_color(theme.border)
-                .text_xs()
-                .child("Ctrl K"),
+        .children(
+            super::keymap::direct_label(Command::TogglePalette).map(|chord| {
+                div()
+                    .px_1()
+                    .rounded_sm()
+                    .border_1()
+                    .border_color(theme.border)
+                    .text_xs()
+                    .child(chord)
+            }),
         )
         .into_any_element()
 }

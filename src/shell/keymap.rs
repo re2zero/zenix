@@ -190,6 +190,15 @@ impl Keymap {
     }
 }
 
+/// The label a directory command's first direct chord wears, the way the
+/// chrome's key caps show it. A direct chord carries a modifier of its own —
+/// that is what makes it direct rather than a chord behind the prefix — so the
+/// label is the chord as the directory spells it.
+pub(crate) fn direct_label(command: Command) -> Option<String> {
+    let info = COMMANDS.iter().find(|info| info.command == command)?;
+    Some((*info.direct.first()?).to_owned())
+}
+
 /// Bind every direct keystroke to its command.
 pub(crate) fn bind_keys(cx: &mut App) {
     cx.bind_keys(

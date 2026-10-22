@@ -68,7 +68,7 @@ fn render_sidebar(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyEl
             .into_iter()
             .take(ROSTER_SHOWN)
             .enumerate()
-            .map(|(index, agent)| agent_row(index, agent, invocation.fleet, true, invocation)),
+            .map(|(index, agent)| agent_row(index, agent, invocation.fleet, invocation)),
     );
     if let Some(error) = invocation.fleet.error.as_deref() {
         column = column.child(line(error, theme.danger));
@@ -89,12 +89,17 @@ const TAILS_SHOWN: usize = 2;
 /// How much of a tail line a comparison card shows, in characters.
 const TAIL_COLUMNS: usize = 96;
 
+/// How many transitions a card's strip carries before the status it holds now:
+/// three reached statuses plus the current one, which is the history the eye
+/// can read in four pixels of height.
+const TIMELINE_SEGS: usize = 4;
+
 fn render(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyElement {
     let theme = invocation.theme;
     let Some(snapshot) = invocation.snapshot else {
         return div().into_any_element();
     };
-    // The tab is the block's whole room now, so it fills it and scrolls rather
+    // The tab is the block's whole room, so it fills it and scrolls rather
     // than sitting under the conversation. `overflow_y_scrollbar` wraps the
     // column in gpui-component's `Scrollable`, which owns the handle (per
     // window, keyed by this id) and the wheel — tracking a handle of our own
@@ -113,16 +118,14 @@ fn render(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyElement {
         column = column.child(line(&t("fleet.empty"), theme.muted_foreground));
     } else {
         let fleet = invocation.fleet;
-        // A comparison is the panel in its other mode: the rows keep their
-        // status, and the room the timelines took goes to the tails. Reading
-        // both at once is what the height cannot afford.
-        let timeline = invocation.tails.is_empty();
+        // The timeline rides on every card: it is four pixels of height, and
+        // the tails it once gave way to live in their own section below.
         column = column.children(
             roster(snapshot)
                 .into_iter()
                 .take(ROSTER_SHOWN)
                 .enumerate()
-                .map(|(index, agent)| agent_row(index, agent, fleet, timeline, invocation)),
+                .map(|(index, agent)| fleet_card(index, agent, fleet, invocation)),
         );
     }
     if let Some(error) = invocation.fleet.error.as_deref() {
@@ -208,13 +211,13 @@ fn roster(snapshot: &ClientShellSnapshot) -> Vec<&ClientShellAgent> {
     blocked.into_iter().chain(rest).collect()
 }
 
-/// One agent: its status and how long it has held it, and the transitions that
-/// led there.
+/// One agent in the sidebar's compact column: its status and how long it has
+/// held it, and the transitions that led there as dim lines. The aside's card
+/// ([`fleet_card`]) is the same facts in the roomier shape.
 fn agent_row(
     index: usize,
     agent: &ClientShellAgent,
     fleet: &FleetState,
-    timeline: bool,
     invocation: &Invocation,
 ) -> AnyElement {
     let theme = invocation.theme;
@@ -261,82 +264,266 @@ fn agent_row(
                     div()
                         .text_xs()
                         .text_color(status_color(status, theme))
-                        .child(format!("{status}{held}")),
+                        .child(format!("{}{held}", status_label(status))),
                 ),
         );
-    if timeline {
-        for transition in fleet.history(&agent.pane_id, HISTORY) {
-            // The first status this client saw has no predecessor; a row that
-            // said so would be naming the client's own arrival rather than the
-            // agent's.
-            let arrow = match transition.from.as_deref() {
-                Some(from) => format!("{from} -> {}", transition.to),
-                None => format!("-> {}", transition.to),
-            };
-            row = row.child(
-                div()
-                    .pl_3()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(format!("{arrow} · {}", age(now, transition.at_unix_ms))),
-            );
-        }
+    for transition in fleet.history(&agent.pane_id, HISTORY) {
+        // The first status this client saw has no predecessor; a row that
+        // said so would be naming the client's own arrival rather than the
+        // agent's.
+        let arrow = match transition.from.as_deref() {
+            Some(from) => format!("{from} -> {}", transition.to),
+            None => format!("-> {}", transition.to),
+        };
+        row = row.child(
+            div()
+                .pl_3()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(format!("{arrow} · {}", age(now, transition.at_unix_ms))),
+        );
     }
     row.into_any_element()
 }
 
-/// The tails of every agent, one card each, so a fan-out is read side by side.
+/// One agent as the prototype's fleet card: who it is and what it is doing now
+/// (name, status label, how long the status has held), the pane it lives in,
+/// the transitions it went through as one segmented strip, and the two things a
+/// reader does from here — focus the pane, or read its tail beside the others.
+/// Sending a prompt is the orchestrator's job, not the card's.
+fn fleet_card(
+    index: usize,
+    agent: &ClientShellAgent,
+    fleet: &FleetState,
+    invocation: &Invocation,
+) -> AnyElement {
+    let theme = invocation.theme;
+    let focus = invocation.dispatch.clone();
+    let tail = invocation.dispatch.clone();
+    let pane_id = agent.pane_id.clone();
+    let pane_for_tail = agent.pane_id.clone();
+    let status = status_word(agent);
+    let now = crate::events::now_unix_ms();
+    let held = fleet
+        .watched(&agent.pane_id)
+        .map(|watched| age(now, watched.since_unix_ms))
+        .unwrap_or_default();
+    v_flex()
+        .w_full()
+        .gap_1()
+        .px_2()
+        .py_1p5()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.background)
+        .child(
+            h_flex()
+                .w_full()
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .text_sm()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(agent_label(agent)),
+                )
+                .child(status_tag(status, theme))
+                .child(div().flex_1())
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(held),
+                ),
+        )
+        .child(
+            div()
+                .w_full()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(agent.pane_id.clone()),
+        )
+        .child(timeline(agent, fleet, theme))
+        .child(
+            h_flex()
+                .w_full()
+                .gap_1()
+                .items_center()
+                .child(
+                    div()
+                        .id(("fleet-focus", index))
+                        .px_1p5()
+                        .py(px(1.))
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(theme.border)
+                        .text_xs()
+                        .cursor_pointer()
+                        .hover(|style| style.border_color(theme.muted_foreground))
+                        .on_click(move |_, window, cx| {
+                            focus(ShellRequest::FocusPane(pane_id.clone()), window, cx);
+                        })
+                        .child(t("fleet.focus")),
+                )
+                .child(div().flex_1())
+                .child(
+                    div()
+                        .id(("fleet-tail", index))
+                        .px_1p5()
+                        .py(px(1.))
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(theme.border)
+                        .text_xs()
+                        .cursor_pointer()
+                        .hover(|style| style.border_color(theme.muted_foreground))
+                        .on_click(move |_, window, cx| {
+                            tail(ShellRequest::ReadTail(pane_for_tail.clone()), window, cx);
+                        })
+                        .child(t("fleet.tail")),
+                ),
+        )
+        .into_any_element()
+}
+
+/// A status as the prototype's tag reads: the dot and the word beside it, both
+/// in the status's own color.
+fn status_tag(status: &str, theme: &Theme) -> AnyElement {
+    h_flex()
+        .gap_1()
+        .items_center()
+        .child(status_dot(status, theme))
+        .child(
+            div()
+                .text_xs()
+                .text_color(status_color(status, theme))
+                .child(status_label(status)),
+        )
+        .into_any_element()
+}
+
+/// The transitions one card strip-ifies: one segment per status this client has
+/// seen the pane reach, then the status it holds now. A pane the stream has not
+/// seen move is one quiet segment rather than a history invented for it.
+fn timeline(agent: &ClientShellAgent, fleet: &FleetState, theme: &Theme) -> AnyElement {
+    let mut strip = h_flex().w_full().h(px(4.)).gap_0p5();
+    for transition in fleet.history(&agent.pane_id, TIMELINE_SEGS - 1) {
+        strip = strip.child(seg(&transition.to, theme));
+    }
+    strip
+        .child(seg(status_word(agent), theme))
+        .into_any_element()
+}
+
+/// One segment of the strip: the status's color, at the strip's full height.
+fn seg(status: &str, theme: &Theme) -> AnyElement {
+    div()
+        .flex_1()
+        .h_full()
+        .rounded_full()
+        .bg(status_color(status, theme))
+        .into_any_element()
+}
+
+/// The tails read so far, the prototype's TAIL 对比: a head naming the section
+/// and how much it holds, then the cards side by side, two across — a third
+/// column would be too narrow to read a line of output in. A pane with no tail
+/// yet is not a hole; it appears when its card's tail button, or the head's
+/// compare, reads it.
 fn tails<'a>(
     invocation: &Invocation,
     agents: impl Iterator<Item = &'a ClientShellAgent>,
 ) -> AnyElement {
     let theme = invocation.theme;
-    let mut column = v_flex()
+    let shown: Vec<&ClientShellAgent> = agents
+        .filter(|agent| invocation.tails.contains_key(&agent.pane_id))
+        .take(TAILS_SHOWN)
+        .collect();
+    let count = invocation.tails.len();
+    let mut section = v_flex()
         .w_full()
         .pt_1()
         .gap_1()
         .border_t_1()
-        .border_color(theme.border);
-    for agent in agents.take(TAILS_SHOWN) {
-        let Some(tail) = invocation.tails.get(&agent.pane_id) else {
-            continue;
-        };
-        column = column.child(tail_card(agent, tail, theme));
+        .border_color(theme.border)
+        .child(
+            h_flex()
+                .w_full()
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(t("fleet.tail_compare")),
+                )
+                .child(div().flex_1())
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(rust_i18n::t!("fleet.tail_count", count = count).to_string()),
+                ),
+        );
+    for pair in shown.chunks(2) {
+        section = section.child(h_flex().w_full().items_stretch().children(pair.iter().map(
+            |agent| {
+                let tail = invocation
+                    .tails
+                    .get(&agent.pane_id)
+                    .expect("the filter kept only panes with a tail");
+                tail_card(agent, tail, theme)
+            },
+        )));
     }
-    column.into_any_element()
+    section.into_any_element()
 }
 
 fn tail_card(agent: &ClientShellAgent, tail: &Tail, theme: &Theme) -> AnyElement {
-    let mut card = v_flex().w_full().gap_0p5().child(
-        h_flex()
-            .w_full()
-            .gap_1()
-            .items_center()
-            .child(
-                div()
-                    .min_w_0()
-                    .flex_1()
-                    .text_xs()
-                    .text_color(theme.foreground)
-                    .child(agent_label(agent)),
-            )
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(age(crate::events::now_unix_ms(), tail.at_unix_ms)),
-            ),
-    );
+    let card = v_flex()
+        .flex_1()
+        .min_w_0()
+        .rounded_md()
+        .border_1()
+        .border_color(theme.border)
+        .overflow_hidden()
+        .child(
+            h_flex()
+                .w_full()
+                .gap_1()
+                .items_center()
+                .px_1p5()
+                .py_0p5()
+                .border_b_1()
+                .border_color(theme.border)
+                .child(status_dot(status_word(agent), theme))
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex_1()
+                        .text_xs()
+                        .text_color(theme.foreground)
+                        .child(agent_label(agent)),
+                )
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(age(crate::events::now_unix_ms(), tail.at_unix_ms)),
+                ),
+        );
+    let mut body = v_flex().w_full().px_1p5().py_1().gap_0p5();
     if let Some(error) = tail.error.as_deref() {
-        return card.child(line(error, theme.danger)).into_any_element();
+        body = body.child(line(error, theme.danger));
+        return card.child(body).into_any_element();
     }
     if tail.lines.is_empty() {
-        return card
-            .child(line(&t("fleet.tail_empty"), theme.muted_foreground))
-            .into_any_element();
+        body = body.child(line(&t("fleet.tail_empty"), theme.muted_foreground));
+        return card.child(body).into_any_element();
     }
     for row in &tail.lines {
-        card = card.child(
+        body = body.child(
             div()
                 .w_full()
                 .min_w_0()
@@ -345,7 +532,7 @@ fn tail_card(agent: &ClientShellAgent, tail: &Tail, theme: &Theme) -> AnyElement
                 .child(cut(row, TAIL_COLUMNS)),
         );
     }
-    card.into_any_element()
+    card.child(body).into_any_element()
 }
 
 /// One dim line of text inside the block.
@@ -388,6 +575,19 @@ fn status_word(agent: &ClientShellAgent) -> &'static str {
         herdr_client::protocol::AgentStatus::Idle => "idle",
         herdr_client::protocol::AgentStatus::Unknown => "unknown",
     }
+}
+
+/// The status in the reader's language: the daemon's word decides the color
+/// and the sort, the label is what the fleet says.
+fn status_label(status: &str) -> String {
+    let key = match status {
+        "working" => "fleet.status.working",
+        "blocked" => "fleet.status.blocked",
+        "done" => "fleet.status.done",
+        "idle" => "fleet.status.idle",
+        _ => "fleet.status.unknown",
+    };
+    t(key)
 }
 
 fn status_color(status: &str, theme: &Theme) -> Hsla {
@@ -460,6 +660,17 @@ mod tests {
         assert_eq!(status_word(&agent_of("b", "pi", "working")), "working");
         assert_eq!(status_word(&agent_of("c", "pi", "idle")), "idle");
         assert_eq!(status_word(&agent_of("d", "pi", "done")), "done");
+    }
+
+    /// Every status the daemon can report has a label in the reader's language,
+    /// and the daemon's word is still what picks it.
+    #[test]
+    fn every_status_word_has_its_label() {
+        for word in ["working", "blocked", "done", "idle", "unknown"] {
+            let label = status_label(word);
+            assert_ne!(label, "", "{word} has a blank label");
+            assert!(!label.starts_with("fleet."), "{word} has no translation");
+        }
     }
 
     fn agent_of(name: &str, cli: &str, status: &str) -> ClientShellAgent {

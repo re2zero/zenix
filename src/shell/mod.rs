@@ -728,16 +728,18 @@ impl ShellView {
         // the entry order, and both the shell's directory and the plugins'
         // actions bracket the session.
         if let Some(snapshot) = self.terminal.read(cx).live().snapshot.as_deref() {
-            entries.extend(
-                snapshot
-                    .workspaces
-                    .iter()
-                    .map(|workspace| Entry::Workspace {
-                        workspace_id: workspace.workspace_id.clone(),
-                        label: workspace.label.clone(),
-                        branch: workspace.branch.clone(),
-                    }),
-            );
+            entries.extend(snapshot.workspaces.iter().map(|workspace| {
+                Entry::Workspace {
+                    workspace_id: workspace.workspace_id.clone(),
+                    label: workspace.label.clone(),
+                    branch: workspace.branch.clone(),
+                    tabs: snapshot
+                        .tabs
+                        .iter()
+                        .filter(|tab| tab.workspace_id == workspace.workspace_id)
+                        .count(),
+                }
+            }));
         }
         entries.extend(
             Catalog::build(&plugins.actions, &plugins.ui)
@@ -911,6 +913,7 @@ impl ShellView {
             ShellRequest::SaveLayout => self.save_layout(cx),
             ShellRequest::RestoreLayout => self.restore_layout(cx),
             ShellRequest::CompareFleet => self.compare_fleet(cx),
+            ShellRequest::ReadTail(pane_id) => self.read_tail(pane_id, cx),
             // Clearing is local, like the events ring's: the subscription keeps
             // running and the next status change arrives into an empty list.
             ShellRequest::ClearFleet => self.clear_fleet(cx),
@@ -1011,6 +1014,25 @@ impl ShellView {
         self.fleet = self.fleet_stream.state();
         self.tails.clear();
         cx.notify();
+    }
+
+    /// Read one agent's tail into the comparison: a fleet card's tail button
+    /// asks about that agent alone, where the head's compare reads them all.
+    /// The answer lands in the same map, so a card and the compare cannot show
+    /// two different truths about one pane.
+    fn read_tail(&mut self, pane_id: String, cx: &mut Context<Self>) {
+        let endpoint = ApiEndpoint::local();
+        cx.spawn(async move |shell, cx| {
+            let tails = cx
+                .background_executor()
+                .spawn(async move { read_tails(&endpoint, &[pane_id]) })
+                .await;
+            let _ = shell.update(cx, |shell, cx| {
+                shell.tails.extend(tails);
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Whether an overlay of the shell's holds the keyboard right now. Each one
@@ -1193,6 +1215,7 @@ impl Render for ShellView {
                 | ShellRequest::ClearEvents
                 | ShellRequest::SetEventFilter(_)
                 | ShellRequest::CompareFleet
+                | ShellRequest::ReadTail(_)
                 | ShellRequest::ClearFleet) => {
                     entity.update(cx, |shell, cx| {
                         shell.dispatch(request, window, cx);
@@ -1958,6 +1981,7 @@ mod icons {
     pub(crate) const SIDEBAR: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>"#;
     pub(crate) const ASIDE: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>"#;
     pub(crate) const GEAR: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.6"/><circle cx="12" cy="12" r="3.2"/><path d="M12 3.4v2.2M12 18.4v2.2M3.4 12h2.2M18.4 12h2.2"/></svg>"#;
+    pub(crate) const SPLIT: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>"#;
 }
 
 /// The workspace the chrome speaks for: the one the daemon says is focused.
@@ -2250,6 +2274,47 @@ fn tab_strip(invocation: &Invocation) -> AnyElement {
         });
     strip
         .child(toggle_button("new-tab", "+", Command::NewTab, invocation))
+        .child(strip_button(
+            "strip-split",
+            icons::SPLIT,
+            Command::SplitRight,
+            invocation,
+        ))
+        .child(strip_button(
+            "strip-palette",
+            icons::SEARCH,
+            Command::TogglePalette,
+            invocation,
+        ))
+        .into_any_element()
+}
+
+/// One of the strip's quiet icon buttons — the split and the palette triggers
+/// that sit beside the new-tab button. Neither holds a state, so unlike the
+/// title bar's toggles there is nothing to light.
+fn strip_button(
+    id: &'static str,
+    icon: &'static [u8],
+    command: Command,
+    invocation: &Invocation,
+) -> AnyElement {
+    let theme = invocation.theme;
+    let dispatch = invocation.dispatch.clone();
+    div()
+        .id(id)
+        .w(px(22.))
+        .h(px(22.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .rounded_sm()
+        .cursor_pointer()
+        .text_color(theme.muted_foreground)
+        .hover(|style| style.bg(theme.list_hover).text_color(theme.foreground))
+        .on_click(move |_, window, cx| {
+            dispatch(ShellRequest::Command(command), window, cx);
+        })
+        .child(Icon::default().data(icon).w(px(14.)).h(px(14.)))
         .into_any_element()
 }
 

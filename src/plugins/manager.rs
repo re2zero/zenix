@@ -210,6 +210,19 @@ fn list(manager: &Manager, state: &PluginState, theme: &Theme, dispatch: &Dispat
                         .text_xs()
                         .text_color(theme.muted_foreground)
                         .child(plugin.version.clone()),
+                )
+                // The word beside the dot, as the prototype's list spells it: a
+                // stopped plugin is easy to mistake for a broken one.
+                .child(
+                    div()
+                        .flex_none()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(if plugin.enabled {
+                            t("shell.manager.enabled")
+                        } else {
+                            t("shell.manager.disabled")
+                        }),
                 ),
         )
         .child(
