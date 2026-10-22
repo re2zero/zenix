@@ -10,6 +10,7 @@ rust_i18n::i18n!("locales");
 use std::borrow::Cow;
 use std::sync::OnceLock;
 
+use gpui_kit::component::TitleBar;
 use gpui_kit::*;
 
 /// Handle to the tokio runtime created by [`run`].
@@ -116,9 +117,16 @@ pub fn run() {
                     window_min_size: Some(size(px(640.), px(400.))),
                     titlebar: Some(TitlebarOptions {
                         title: Some("zenix".into()),
-                        ..Default::default()
+                        ..TitleBar::title_bar_options()
                     }),
-                    ..Default::default()
+                    // The chrome draws the whole frame itself, controls
+                    // included; where the platform cannot honor it (on X11,
+                    // a compositor that does not advertise GTK frame
+                    // extents — KWin with desktop effects off among them)
+                    // gpui falls back to the window manager's own
+                    // decorations and the TitleBar hides our controls.
+                    window_decorations: Some(WindowDecorations::Client),
+                    ..TitleBar::window_options()
                 },
                 cx,
                 |window, cx| {

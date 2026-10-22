@@ -28,7 +28,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui_kit::component::scroll::ScrollableElement;
-use gpui_kit::component::{ActiveTheme, Icon, Theme, ThemeMode, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme, Icon, Theme, ThemeMode, TitleBar, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use herdr_client::protocol::{
@@ -1971,10 +1971,13 @@ fn focused_workspace(snapshot: &ClientShellSnapshot) -> Option<&ClientShellWorks
 
 /// The chrome above the grid, the prototype's five-part shell's first part:
 /// who this window is (brand, workspace, daemon), the one search that reaches
-/// every command, and the local toggles. The settings and theme entries live
-/// on the rail and in the settings surface; window controls stay the
-/// platform's until there is a frameless window to draw them on (the M7
-/// decision).
+/// every command, and the local toggles — with the window controls at the end.
+/// The strip is gpui-kit's `TitleBar`: it owns the dragging, the double-click
+/// zoom and the min/max/close cluster, drawing the latter only when the
+/// window is client-decorated (a compositor manager's server decorations
+/// already bring their own). The settings and theme entries live on the rail
+/// and in the settings surface; the M7 note that left controls to the
+/// platform is superseded by the frameless window they were waiting for.
 fn title_bar(
     invocation: &Invocation,
     sidebar_visible: bool,
@@ -1982,16 +1985,12 @@ fn title_bar(
     palette_hint: Option<String>,
 ) -> AnyElement {
     let theme = invocation.theme;
-    let mut bar = h_flex()
-        .flex_none()
-        .w_full()
+    let mut bar = TitleBar::new()
         .h(px(TITLE_BAR_HEIGHT))
         .pl_2()
         .pr_1()
         .gap_2()
-        .items_center()
         .bg(theme.title_bar)
-        .border_b_1()
         .border_color(theme.title_bar_border)
         // The window says its name before anything else.
         .child(
