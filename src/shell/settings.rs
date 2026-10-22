@@ -239,6 +239,8 @@ fn plugins_page(_: &App) -> SettingPage {
     SettingPage::new(t("settings.plugins.title"))
         .description(t("settings.plugins.description"))
         .group(
+            // One group: the settings nav grows a row per group, so a second
+            // one would read as a second page.
             SettingGroup::new()
                 .title(t("settings.plugins.title"))
                 .item(SettingItem::new(
@@ -256,11 +258,7 @@ fn plugins_page(_: &App) -> SettingPage {
                 .item(SettingItem::new(
                     t("settings.plugins.review"),
                     text_field(t("settings.plugins.review_value")),
-                )),
-        )
-        .group(
-            SettingGroup::new()
-                .title(t("settings.plugins.sandbox"))
+                ))
                 .item(SettingItem::new(
                     t("settings.plugins.sandbox"),
                     text_field(t("settings.plugins.sandbox_value")),
