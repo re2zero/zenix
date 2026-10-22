@@ -82,6 +82,72 @@ settings:
     aside_width:
       en: "Chat panel width"
       zh-CN: "对话面板宽度"
+  keys:
+    title:
+      en: "Keys"
+      zh-CN: "键位"
+    description:
+      en: "The prefix and the chords that reach the shell, read from the command directory. Chords a plugin declares live in the plugin view."
+      zh-CN: "前缀键与到达壳的键位，读自命令目录。插件声明的键位在插件视图里。"
+    prefix:
+      en: "Prefix key"
+      zh-CN: "前缀键"
+  plugins:
+    title:
+      en: "Plugins"
+      zh-CN: "插件"
+    description:
+      en: "Plugins are the daemon's. zenix reads their manifests, renders what they declare, and reviews a directory before it is linked."
+      zh-CN: "插件归 daemon 所有。zenix 读它们的清单、渲染它们声明的内容，并在链接前审查目录。"
+    host:
+      en: "Host"
+      zh-CN: "插件宿主"
+    host_value:
+      en: "the herdr daemon · plugin.list"
+      zh-CN: "herdr daemon · plugin.list"
+    daemon_config:
+      en: "Daemon config"
+      zh-CN: "daemon 配置"
+    declarations:
+      en: "UI declarations"
+      zh-CN: "UI 声明"
+    declarations_value:
+      en: "<plugin root>/zenix-ui.toml — rows, panels and status segments, drawn by this client"
+      zh-CN: "<插件根>/zenix-ui.toml —— 行、面板与状态段，由本客户端绘制"
+    review:
+      en: "Review before linking"
+      zh-CN: "链接前审查"
+    review_value:
+      en: "always: every argv the directory would run is shown first"
+      zh-CN: "强制：先展示目录将要执行的每一条 argv"
+    sandbox:
+      en: "No sandbox"
+      zh-CN: "无沙箱"
+    sandbox_value:
+      en: "a plugin runs with the daemon's permissions; the review is the only gate"
+      zh-CN: "插件与 daemon 同权限运行；审查面是唯一的闸门"
+  mcp:
+    title:
+      en: "MCP"
+      zh-CN: "MCP"
+    description:
+      en: "What this window offers an agent while it is open, and what a shell-less agent reaches back through."
+      zh-CN: "窗口开启期间向 agent 提供的工具，以及没有 shell 的 agent 反向进入的桥。"
+    orchestrator:
+      en: "Orchestrator socket"
+      zh-CN: "编排器 socket"
+    tools:
+      en: "Tools"
+      zh-CN: "工具面"
+    tools_value:
+      en: "the orchestrator's own tools, plus one per runnable plugin action"
+      zh-CN: "编排器自有工具 + 每个可运行的插件 action 一个"
+    bridge:
+      en: "Reverse bridge"
+      zh-CN: "反向桥"
+    bridge_value:
+      en: "zenix mcp-agent · one tool: agent_send · windowless stdio"
+      zh-CN: "zenix mcp-agent · 单工具 agent_send · 无窗口 stdio"
   config:
     title:
       en: "Config file"

@@ -17,7 +17,8 @@ use gpui_kit::component::setting::{
 use gpui_kit::component::{ActiveTheme, ThemeMode, h_flex, v_flex};
 use gpui_kit::*;
 
-use super::commands::Command;
+use super::commands::{self, Command};
+use super::keymap::Keymap;
 use super::registry::{Dispatch, SettingsSection, ShellRequest};
 use crate::config::{
     self, ASIDE_WIDTH_DEFAULT, ASIDE_WIDTH_MAX, ASIDE_WIDTH_MIN, SIDEBAR_WIDTH_DEFAULT,
@@ -28,7 +29,8 @@ use crate::platform;
 use crate::terminal::Theme as TerminalTheme;
 
 /// The built-in pages, in the order the settings sidebar lists them: one per
-/// config section, then the file itself.
+/// config section, the reference pages the prototype puts between them, then
+/// the file itself.
 pub(crate) const SETTINGS_SECTIONS: &[SettingsSection] = &[
     SettingsSection {
         page: appearance_page,
@@ -37,6 +39,9 @@ pub(crate) const SETTINGS_SECTIONS: &[SettingsSection] = &[
         page: terminal_page,
     },
     SettingsSection { page: layout_page },
+    SettingsSection { page: keys_page },
+    SettingsSection { page: plugins_page },
+    SettingsSection { page: mcp_page },
     SettingsSection { page: config_page },
 ];
 
@@ -192,6 +197,111 @@ fn layout_page(_: &App) -> SettingPage {
                     .default_value(f64::from(ASIDE_WIDTH_DEFAULT)),
                 )),
         )
+}
+
+/// The keystrokes that reach the shell, read off the command directory — the
+/// one table the keymap, the palette and this page all read, so a row here
+/// cannot name a chord that does not run. The page writes nothing: chords are
+/// the directory's, and a plugin's declared ones live in the plugin view.
+fn keys_page(_: &App) -> SettingPage {
+    let keymap = Keymap::default();
+    let mut group = SettingGroup::new()
+        .title(t("settings.keys.title"))
+        .item(SettingItem::new(
+            t("settings.keys.prefix"),
+            text_field(keymap.prefix_label()),
+        ));
+    for info in commands::COMMANDS {
+        let mut chords: Vec<String> = info
+            .direct
+            .iter()
+            .map(|key| keymap.chord_label(key))
+            .collect();
+        chords.extend(info.prefixed.iter().map(|key| keymap.chord_label(key)));
+        if chords.is_empty() {
+            continue;
+        }
+        group = group.item(SettingItem::new(
+            info.label(),
+            text_field(chords.join("  ")),
+        ));
+    }
+    SettingPage::new(t("settings.keys.title"))
+        .description(t("settings.keys.description"))
+        .group(group)
+}
+
+/// What a plugin is on this client, and the one gate between its directory and
+/// a run: the review. There are no toggles here because the client offers no
+/// choice to toggle — declarations are read, and a link is only a link after
+/// its argv has been shown.
+fn plugins_page(_: &App) -> SettingPage {
+    SettingPage::new(t("settings.plugins.title"))
+        .description(t("settings.plugins.description"))
+        .group(
+            SettingGroup::new()
+                .title(t("settings.plugins.title"))
+                .item(SettingItem::new(
+                    t("settings.plugins.host"),
+                    text_field(t("settings.plugins.host_value")),
+                ))
+                .item(SettingItem::new(
+                    t("settings.plugins.daemon_config"),
+                    text_field(platform::herdr_config_path().display().to_string()),
+                ))
+                .item(SettingItem::new(
+                    t("settings.plugins.declarations"),
+                    text_field(t("settings.plugins.declarations_value")),
+                ))
+                .item(SettingItem::new(
+                    t("settings.plugins.review"),
+                    text_field(t("settings.plugins.review_value")),
+                )),
+        )
+        .group(
+            SettingGroup::new()
+                .title(t("settings.plugins.sandbox"))
+                .item(SettingItem::new(
+                    t("settings.plugins.sandbox"),
+                    text_field(t("settings.plugins.sandbox_value")),
+                )),
+        )
+}
+
+/// What this window offers an agent, and what a shell-less agent can reach
+/// back through: the orchestrator's socket, the tools, and the reverse bridge.
+fn mcp_page(_: &App) -> SettingPage {
+    SettingPage::new(t("settings.mcp.title"))
+        .description(t("settings.mcp.description"))
+        .group(
+            SettingGroup::new()
+                .title(t("settings.mcp.title"))
+                .item(SettingItem::new(
+                    t("settings.mcp.orchestrator"),
+                    text_field(crate::mcp::orchestrator_socket_path().display().to_string()),
+                ))
+                .item(SettingItem::new(
+                    t("settings.mcp.tools"),
+                    text_field(t("settings.mcp.tools_value")),
+                ))
+                .item(SettingItem::new(
+                    t("settings.mcp.bridge"),
+                    text_field(t("settings.mcp.bridge_value")),
+                )),
+        )
+}
+
+/// One read-only line: where a settings row has nothing to set, the fact is
+/// the value. Paths and names are copied from where they live, so they cannot
+/// drift from the code that uses them.
+fn text_field(text: String) -> SettingField<SharedString> {
+    SettingField::render(move |_: &_, _, cx: &mut App| {
+        let theme = cx.theme().clone();
+        div()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(text.clone())
+    })
 }
 
 /// The file itself, and what was wrong with it: the one place a hand-edited
