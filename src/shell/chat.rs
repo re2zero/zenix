@@ -35,6 +35,7 @@ use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, Textar
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
+use gpui_kit::component::text::TextView;
 use gpui_kit::component::{
     ActiveTheme as _, Icon, IndexPath, Sizable as _, Size, Theme, h_flex, v_flex,
 };
@@ -817,10 +818,39 @@ fn message_row(
     for call in &message.tool_calls {
         row = row.child(tool_card(index, call, open, cx));
     }
-    for line in message.content.split('\n') {
-        row = row.child(div().w_full().text_size(px(12.5)).child(line.to_owned()));
+    // What the model says is markdown — fenced code, lists, headings; what
+    // the user typed is their own text, shown as they wrote it. A turn still
+    // streaming draws nothing here until its first token lands.
+    if message.role == "user" {
+        for line in message.content.split('\n') {
+            row = row.child(div().w_full().text_size(px(12.5)).child(line.to_owned()));
+        }
+    } else if !message.content.is_empty() {
+        row = row.child(markdown_block(index, &message.content));
     }
     row.into_any_element()
+}
+
+/// The model's answer as markdown, with a copy control on every fenced code
+/// block: what the model wrote is what lands on the clipboard.
+fn markdown_block(index: usize, content: &str) -> AnyElement {
+    TextView::markdown(SharedString::from(format!("md-{index}")), content)
+        .text_size(px(12.5))
+        .code_block_actions(|block, _window, _cx| {
+            let code = block.code().to_string();
+            div()
+                .id("code-copy")
+                .px(px(4.))
+                .rounded(px(3.))
+                .cursor_pointer()
+                .text_size(px(10.))
+                .on_click(move |_, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(code.clone()))
+                })
+                .child(t("ai.chat.copy_code"))
+                .into_any_element()
+        })
+        .into_any_element()
 }
 
 /// The reasoning a turn thought with, folded away until it is asked for: it is

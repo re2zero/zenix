@@ -370,6 +370,9 @@ ai:
     retry:
       en: "Retry"
       zh-CN: "重试"
+    copy_code:
+      en: "Copy"
+      zh-CN: "复制"
   # The composer's reasoning-effort picker: one label per `ThinkingLevel`, keyed
   # by the level's wire spelling.
   effort:
