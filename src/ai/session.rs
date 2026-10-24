@@ -341,6 +341,20 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Refresh a session's `updated_at` without touching anything else, so
+    /// the history list orders by the last turn rather than the first.
+    pub fn touch_session(&self, id: &str, updated_at: &str) -> Result<()> {
+        self.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE sessions SET updated_at = ?2 WHERE id = ?1",
+                params![id, updated_at],
+            )
+            .context("touch session")?;
+        Ok(())
+    }
+
     /// Associated messages are removed via `ON DELETE CASCADE`.
     pub fn delete_session(&self, id: &str) -> Result<()> {
         self.conn
@@ -716,6 +730,45 @@ mod tests {
 
         let hits = mgr.search_messages("special", None).unwrap();
         assert!(!hits.is_empty(), "should find 'special'");
+    }
+
+    /// A touched session sorts by its last turn: `updated_at` moves without
+    /// touching anything else.
+    #[test]
+    fn test_touch_session_moves_it_to_the_top() {
+        let mgr = SessionManager::open_in_memory().unwrap();
+
+        let old = make_session("touch-old", "Old");
+        let new = make_session("touch-new", "New");
+        mgr.create_session(&old).unwrap();
+        mgr.create_session(&new).unwrap();
+
+        mgr.touch_session("touch-old", "2026-10-24T12:00:00")
+            .unwrap();
+
+        let sessions = mgr.list_sessions().unwrap();
+        assert_eq!(sessions[0].id, "touch-old");
+        assert_eq!(sessions[0].updated_at, "2026-10-24T12:00:00");
+        // The untouched one keeps its own stamp.
+        assert_eq!(sessions[1].id, "touch-new");
+    }
+
+    /// Renaming writes the title only: the stamps a row shows come from turns,
+    /// not from edits.
+    #[test]
+    fn test_rename_writes_the_title_only() {
+        let mgr = SessionManager::open_in_memory().unwrap();
+
+        let mut session = make_session("rename-1", "First");
+        mgr.create_session(&session).unwrap();
+
+        session.title = "Renamed".to_string();
+        mgr.update_session(&session).unwrap();
+
+        let read = mgr.get_session("rename-1").unwrap().unwrap();
+        assert_eq!(read.title, "Renamed");
+        assert_eq!(read.created_at, session.created_at);
+        assert_eq!(read.updated_at, session.updated_at);
     }
 
     #[test]

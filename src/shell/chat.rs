@@ -31,7 +31,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
+use gpui_kit::component::input::{Input, InputEvent, InputState, Textarea, TextareaState};
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
@@ -99,6 +99,9 @@ struct ChatPanel {
     reasoning_started: Option<u64>,
     /// The session the messages are saved under; created with the first send.
     session_id: Option<String>,
+    /// The session history while the user has it open; it replaces the
+    /// conversation on screen until a session is picked or it is closed.
+    history: Option<History>,
     /// The running turn's engine task, so Stop can end it.
     turn: Option<tokio::task::JoinHandle<()>>,
     /// The task draining the turn's events.
@@ -211,6 +214,7 @@ impl ChatPanel {
             compacted: None,
             reasoning_started: None,
             session_id: None,
+            history: None,
             turn: None,
             drain: None,
             open: Vec::new(),
@@ -272,6 +276,8 @@ impl ChatPanel {
         self.error = None;
         self.compacted = None;
         self.reasoning_started = None;
+        // A sent message is the conversation again: the history stands down.
+        self.history = None;
 
         let session_id = self.ensure_session(&text, &provider);
         let sequence = self.messages.last().map_or(1, |last| last.sequence + 1);
@@ -427,6 +433,15 @@ impl ChatPanel {
             );
             persist(message);
         }
+        // The store's rows order by `updated_at`: a finished turn moves this
+        // session to the top of the history the next time it opens.
+        if let Some(session_id) = self.session_id.clone()
+            && let Err(error) = SessionManager::open().and_then(|manager| {
+                manager.touch_session(&session_id, &crate::util::timestamp_now())
+            })
+        {
+            tracing::warn!(target: "zenix-chat", %error, "the session was not marked as touched");
+        }
         cx.notify();
     }
 
@@ -451,6 +466,7 @@ impl ChatPanel {
         self.error = None;
         self.compacted = None;
         self.session_id = None;
+        self.history = None;
         cx.notify();
     }
 
@@ -481,6 +497,206 @@ impl ChatPanel {
         self.session_id = Some(id.clone());
         id
     }
+
+    // ── Session history ────────────────────────────────────────────────
+
+    /// Open the history over the conversation, or close it. Opening reads the
+    /// store once; the rows stay until the list is opened again.
+    fn toggle_history(&mut self, cx: &mut Context<Self>) {
+        if self.history.take().is_some() {
+            cx.notify();
+            return;
+        }
+        let sessions = SessionManager::open()
+            .and_then(|manager| manager.list_sessions())
+            .unwrap_or_default();
+        self.history = Some(History {
+            sessions,
+            rename: None,
+            confirm: None,
+            scroll: ScrollHandle::new(),
+        });
+        cx.notify();
+    }
+
+    /// Re-read the store into the open history, after a rename or a delete.
+    fn refresh_history(&mut self, cx: &mut Context<Self>) {
+        let Some(history) = self.history.as_mut() else {
+            return;
+        };
+        history.sessions = SessionManager::open()
+            .and_then(|manager| manager.list_sessions())
+            .unwrap_or_default();
+        cx.notify();
+    }
+
+    /// Load a session's turns onto the screen. A running turn belongs to the
+    /// conversation being replaced, so it is stopped first.
+    fn open_session(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_streaming() {
+            self.stop(cx);
+        }
+        let manager = match SessionManager::open() {
+            Ok(manager) => manager,
+            Err(error) => {
+                self.error = Some(error.to_string());
+                cx.notify();
+                return;
+            }
+        };
+        let messages = match manager.get_messages(id) {
+            Ok(messages) => messages,
+            Err(error) => {
+                self.error = Some(error.to_string());
+                cx.notify();
+                return;
+            }
+        };
+        let session = manager.get_session(id).ok().flatten();
+        self.history = None;
+        self.messages = messages;
+        self.streaming = None;
+        self.session_id = Some(id.to_owned());
+        self.open.clear();
+        self.error = None;
+        self.compacted = None;
+        self.reasoning_started = None;
+        if let Some(session) = session {
+            self.restore_composer(&session, window, cx);
+        }
+        self.scroll.scroll_to_bottom();
+        cx.notify();
+    }
+
+    /// Point the composer at the session's provider and reasoning level, when
+    /// that provider is still in the catalog. The record names the level and
+    /// the provider; the model of the next turn is the picker's — a provider
+    /// edited since the session is honored as it is now.
+    fn restore_composer(&mut self, session: &Session, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(mut provider) = usable_providers()
+            .into_iter()
+            .find(|candidate| candidate.name == session.provider_id)
+        else {
+            return;
+        };
+        if let Some(level) = level_of(&session.thinking_level) {
+            provider.thinking_level = level;
+        }
+        let model_value: SharedString = provider.name.clone().into();
+        let effort_value: SharedString = provider.thinking_level.as_str().to_owned().into();
+        self.provider = Some(provider);
+        self.model_select.update(cx, |select, cx| {
+            select.set_selected_value(&model_value, window, cx);
+        });
+        self.effort_select.update(cx, |select, cx| {
+            select.set_selected_value(&effort_value, window, cx);
+        });
+    }
+
+    /// Put a row into its rename editor, prefilled with the title it has.
+    fn start_rename(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(history) = self.history.as_ref() else {
+            return;
+        };
+        let Some(session) = history.sessions.iter().find(|session| session.id == id) else {
+            return;
+        };
+        let title = session.title.clone();
+        let input = cx.new(|cx| InputState::new(window, cx));
+        input.update(cx, |input, cx| input.set_value(title, window, cx));
+        let focus = input.read(cx).focus_handle(cx).clone();
+        let history = self.history.as_mut().expect("history checked above");
+        history.rename = Some((id.to_owned(), input));
+        history.confirm = None;
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    /// Put the row's editor's text into the store. An empty editor cancels
+    /// rather than wiping the title.
+    fn commit_rename(&mut self, cx: &mut Context<Self>) {
+        let Some((id, input)) = self
+            .history
+            .as_ref()
+            .and_then(|history| history.rename.as_ref())
+            .map(|(id, input)| (id.clone(), input.clone()))
+        else {
+            return;
+        };
+        let title = input.read(cx).value().trim().to_owned();
+        if let Some(history) = self.history.as_mut() {
+            history.rename = None;
+        }
+        if title.is_empty() {
+            cx.notify();
+            return;
+        }
+        if let Err(error) = SessionManager::open().and_then(|manager| {
+            manager
+                .get_session(&id)?
+                .ok_or_else(|| anyhow::anyhow!("no such session"))
+                .and_then(|mut session| {
+                    session.title = title;
+                    manager.update_session(&session)
+                })
+        }) {
+            tracing::warn!(target: "zenix-chat", %error, "the session was not renamed");
+        }
+        self.refresh_history(cx);
+    }
+
+    /// Leave the rename editor without writing anything.
+    fn cancel_rename(&mut self, cx: &mut Context<Self>) {
+        if let Some(history) = self.history.as_mut() {
+            history.rename = None;
+        }
+        cx.notify();
+    }
+
+    /// Delete a session: the first click asks, the second means it. The
+    /// conversation on screen cannot outlive its session.
+    fn delete_session(&mut self, id: &str, cx: &mut Context<Self>) {
+        let pending = self
+            .history
+            .as_ref()
+            .and_then(|history| history.confirm.clone());
+        if pending.as_deref() != Some(id) {
+            if let Some(history) = self.history.as_mut() {
+                history.confirm = Some(id.to_owned());
+            }
+            cx.notify();
+            return;
+        }
+        if let Some(history) = self.history.as_mut() {
+            history.confirm = None;
+        }
+        if self.session_id.as_deref() == Some(id) {
+            if self.is_streaming() {
+                self.stop(cx);
+            }
+            self.messages.clear();
+            self.open.clear();
+            self.session_id = None;
+        }
+        if let Err(error) = SessionManager::open().and_then(|manager| manager.delete_session(id)) {
+            tracing::warn!(target: "zenix-chat", %error, "the session was not deleted");
+        }
+        self.refresh_history(cx);
+    }
+}
+
+/// The session history, when the user has it open: the store's sessions as
+/// rows, replacing the conversation until one is picked or the list is closed.
+struct History {
+    /// The store's rows, most recently touched first.
+    sessions: Vec<Session>,
+    /// The row being renamed: the session's id and the editor holding the
+    /// title it is becoming.
+    rename: Option<(String, Entity<InputState>)>,
+    /// The row whose delete button has been clicked once and is waiting for
+    /// its second click to mean it.
+    confirm: Option<String>,
+    scroll: ScrollHandle,
 }
 
 impl Render for ChatPanel {
@@ -499,7 +715,9 @@ impl Render for ChatPanel {
             .w_full()
             .bg(theme.sidebar)
             .text_color(theme.foreground);
-        if rows.is_empty() {
+        if let Some(history) = self.history.as_ref() {
+            column = column.child(history_block(self, history, &theme, cx));
+        } else if rows.is_empty() {
             column = column.child(empty_state(self, &theme));
         } else {
             column = column.child(
@@ -712,6 +930,7 @@ fn tool_card(
 fn composer(panel: &ChatPanel, theme: &Theme, cx: &mut Context<ChatPanel>) -> AnyElement {
     let fresh = cx.listener(|panel, _: &ClickEvent, _window, cx| panel.new_session(cx));
     let stop = cx.listener(|panel, _: &ClickEvent, _window, cx| panel.stop(cx));
+    let hist = cx.listener(|panel, _: &ClickEvent, _window, cx| panel.toggle_history(cx));
     v_flex()
         .flex_none()
         .w_full()
@@ -726,7 +945,7 @@ fn composer(panel: &ChatPanel, theme: &Theme, cx: &mut Context<ChatPanel>) -> An
                 .bg(theme.muted)
                 .p(px(9.))
                 .gap_1()
-                .child(context_line(panel, theme, fresh, stop))
+                .child(context_line(panel, theme, fresh, stop, hist))
                 // The prototype's 52px message box, which grows with the text
                 // up to six rows: a pasted error or a list keeps its lines
                 // instead of being flattened into one.
@@ -784,6 +1003,7 @@ fn context_line(
     theme: &Theme,
     fresh: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     stop: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    hist: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
 ) -> AnyElement {
     let detail = match panel.provider.as_ref() {
         Some(provider) if panel.is_streaming() => {
@@ -819,6 +1039,12 @@ fn context_line(
             t("ai.chat.new_session"),
             theme,
             fresh,
+        ))
+        .child(quiet_button(
+            "chat-history",
+            t("ai.chat.history"),
+            theme,
+            hist,
         ))
         .children(
             panel
@@ -919,6 +1145,199 @@ fn empty_state(panel: &ChatPanel, theme: &Theme) -> AnyElement {
                 .text_xs()
                 .text_color(theme.muted_foreground)
                 .child(hint),
+        )
+        .into_any_element()
+}
+
+/// The session history: one 28px row per session, in the store's own order.
+/// A row loads its session; its two quiet controls rename and delete it, and
+/// they light only when the row is hovered, the way a tab's close does.
+fn history_block(
+    panel: &ChatPanel,
+    history: &History,
+    theme: &Theme,
+    cx: &mut Context<ChatPanel>,
+) -> AnyElement {
+    let now = crate::util::timestamp_now();
+    let today = now.get(..10).unwrap_or_default().to_owned();
+    let mut column = v_flex()
+        .id("chat-history")
+        .flex_1()
+        .min_h_0()
+        .w_full()
+        .px_2()
+        .py_2()
+        .gap_0p5()
+        .track_scroll(&history.scroll)
+        .overflow_y_scrollbar();
+    if history.sessions.is_empty() {
+        column = column.child(
+            div()
+                .flex_1()
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(t("ai.chat.history_empty")),
+        );
+        return column.into_any_element();
+    }
+    for session in &history.sessions {
+        column = column.child(history_row(panel, history, session, &today, theme, cx));
+    }
+    column.into_any_element()
+}
+
+fn history_row(
+    panel: &ChatPanel,
+    history: &History,
+    session: &Session,
+    today: &str,
+    theme: &Theme,
+    cx: &mut Context<ChatPanel>,
+) -> AnyElement {
+    let loaded = panel.session_id.as_deref() == Some(session.id.as_str());
+    let element = SharedString::from(format!("history-row-{}", session.id));
+    if let Some((rename_id, input)) = &history.rename
+        && rename_id == &session.id
+    {
+        return h_flex()
+            .id(SharedString::from(format!("history-rename-{}", session.id)))
+            .w_full()
+            .h(px(28.))
+            .px_2()
+            .items_center()
+            .rounded(px(4.))
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.muted)
+            .on_key_down(cx.listener(|panel, event: &KeyDownEvent, _window, cx| {
+                match event.keystroke.key.as_str() {
+                    "enter" => {
+                        cx.stop_propagation();
+                        panel.commit_rename(cx);
+                    }
+                    "escape" => {
+                        cx.stop_propagation();
+                        panel.cancel_rename(cx);
+                    }
+                    _ => {}
+                }
+            }))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(Input::new(input).appearance(false).bordered(false)),
+            )
+            .into_any_element();
+    }
+    let open_id = session.id.clone();
+    let rename_id = session.id.clone();
+    let delete_id = session.id.clone();
+    let confirming = history.confirm.as_deref() == Some(session.id.as_str());
+    let stamp = history_stamp(&session.updated_at, today).unwrap_or_default();
+    let open = cx.listener(move |panel, _: &ClickEvent, window, cx| {
+        panel.open_session(&open_id, window, cx)
+    });
+    // A row control must not also load the session: the click stops here.
+    let rename = cx.listener(move |panel, _: &ClickEvent, window, cx| {
+        cx.stop_propagation();
+        panel.start_rename(&rename_id, window, cx)
+    });
+    let delete = cx.listener(move |panel, _: &ClickEvent, _window, cx| {
+        cx.stop_propagation();
+        panel.delete_session(&delete_id, cx)
+    });
+    h_flex()
+        .id(element)
+        .relative()
+        .group("history-row")
+        .w_full()
+        .h(px(28.))
+        .px_2()
+        .gap_1p5()
+        .items_center()
+        .rounded(px(4.))
+        .cursor_pointer()
+        .hover(|style| style.bg(theme.sidebar_accent))
+        .on_click(open)
+        // The loaded session carries the tree's 2px selection bar.
+        .when(loaded, |row| {
+            row.child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .top(px(8.))
+                    .bottom(px(8.))
+                    .w(px(2.))
+                    .rounded_full()
+                    .bg(theme.primary),
+            )
+        })
+        .child(
+            div()
+                .min_w_0()
+                .flex_1()
+                .truncate()
+                .text_size(px(12.))
+                .text_color(if loaded {
+                    theme.foreground
+                } else {
+                    theme.sidebar_foreground
+                })
+                .child(session.title.clone()),
+        )
+        .child(
+            div()
+                .flex_none()
+                .font_family(theme.mono_font_family.clone())
+                .text_size(px(10.))
+                .text_color(theme.muted_foreground)
+                .child(stamp),
+        )
+        .child(
+            div()
+                .id(SharedString::from(format!("history-rename-{}", session.id)))
+                .flex_none()
+                .px(px(4.))
+                .rounded(px(3.))
+                .cursor_pointer()
+                .text_size(px(10.))
+                .text_color(theme.muted_foreground)
+                .opacity(0.)
+                .group_hover("history-row", |style| style.opacity(1.))
+                .hover(|style| style.bg(theme.muted).text_color(theme.foreground))
+                .on_click(rename)
+                .child(t("ai.chat.rename")),
+        )
+        .child(
+            div()
+                .id(SharedString::from(format!("history-delete-{}", session.id)))
+                .flex_none()
+                .px(px(4.))
+                .rounded(px(3.))
+                .cursor_pointer()
+                .text_size(px(10.))
+                .when(confirming, |button| {
+                    button
+                        .text_color(theme.danger)
+                        .bg(theme.danger.opacity(0.12))
+                })
+                .when(!confirming, |button| {
+                    button
+                        .text_color(theme.muted_foreground)
+                        .opacity(0.)
+                        .group_hover("history-row", |style| style.opacity(1.))
+                        .hover(|style| style.bg(theme.muted).text_color(theme.danger))
+                })
+                .on_click(delete)
+                .child(if confirming {
+                    t("ai.chat.delete_confirm")
+                } else {
+                    t("ai.chat.delete")
+                }),
         )
         .into_any_element()
 }
@@ -1229,6 +1648,22 @@ fn clock_of(timestamp: &str) -> Option<String> {
     }
 }
 
+/// The stamp a history row shows: the minute of the session's last turn, with
+/// its date in front when that day is not today. A store that holds something
+/// else shows nothing rather than a wrong date.
+fn history_stamp(updated_at: &str, today: &str) -> Option<String> {
+    let bytes = updated_at.as_bytes();
+    if bytes.len() < 16 || bytes[10] != b'T' {
+        return None;
+    }
+    let time = updated_at.get(11..16)?;
+    match updated_at.get(..10) {
+        Some(day) if day == today => Some(time.to_owned()),
+        Some(day) => Some(format!("{day} {time}")),
+        None => None,
+    }
+}
+
 /// The role the API is spoken to with. The store says `orchestrator` where the
 /// wire says `assistant` (`ChatMessageRef` documents the four it accepts), and
 /// the store keeps only these two.
@@ -1312,6 +1747,23 @@ mod tests {
         assert_eq!(clock_of("not-a-timestamp"), None);
         // The byte at 16 falls inside a character: no time, not a panic.
         assert_eq!(clock_of("2026-10-23T早早早"), None);
+    }
+
+    /// A history row shows the minute when the session was touched today and
+    /// the date in front when it was not; anything else the store holds shows
+    /// as nothing.
+    #[test]
+    fn the_history_stamp_names_the_day_when_it_is_not_today() {
+        assert_eq!(
+            history_stamp("2026-10-24T12:04:31", "2026-10-24"),
+            Some("12:04".to_owned())
+        );
+        assert_eq!(
+            history_stamp("2026-06-13T08:06:34", "2026-10-24"),
+            Some("2026-06-13 08:06".to_owned())
+        );
+        assert_eq!(history_stamp("", "2026-10-24"), None);
+        assert_eq!(history_stamp("2026-10-23T早早早", "2026-10-24"), None);
     }
 
     #[test]

@@ -352,6 +352,21 @@ ai:
     role_assistant:
       en: "zenix · orchestrator"
       zh-CN: "zenix · 编排器"
+    history:
+      en: "History"
+      zh-CN: "历史"
+    history_empty:
+      en: "No conversations yet."
+      zh-CN: "还没有会话。"
+    rename:
+      en: "Rename"
+      zh-CN: "重命名"
+    delete:
+      en: "Delete"
+      zh-CN: "删除"
+    delete_confirm:
+      en: "Sure?"
+      zh-CN: "确认？"
   # The composer's reasoning-effort picker: one label per `ThinkingLevel`, keyed
   # by the level's wire spelling.
   effort:
