@@ -241,41 +241,13 @@ impl ChatPanel {
         if text.is_empty() {
             return;
         }
-        // A provider the composer already holds is the user's choice; the file
-        // is only read when there is none, so a picker cannot be overwritten
-        // between a click and the next turn.
-        if self.provider.is_none() {
-            self.provider = available_provider();
-        }
-        let Some(provider) = self.provider.clone() else {
+        let Some((provider, engine)) = self.prepare_turn(&text, cx) else {
             // The text stays in the box: nothing was sent.
-            self.error = Some(format!(
-                "{} {}",
-                t("ai.config_empty"),
-                t("ai.config_empty_hint")
-            ));
-            cx.notify();
             return;
         };
-        let engine = match engine_for(&provider, &text) {
-            Ok(engine) => engine,
-            Err(error) => {
-                self.error = Some(error);
-                cx.notify();
-                return;
-            }
-        };
-        let Some(runtime) = crate::TOKIO_HANDLE.get().cloned() else {
-            self.error = Some("no tokio runtime: the client started without one".to_owned());
-            cx.notify();
-            return;
-        };
-
         self.input
             .update(cx, |input, cx| input.set_value("", window, cx));
-        self.error = None;
-        self.compacted = None;
-        self.reasoning_started = None;
+        self.stand_down();
         // A sent message is the conversation again: the history stands down.
         self.history = None;
 
@@ -284,14 +256,90 @@ impl ChatPanel {
         let user = message(&session_id, "user", text.clone(), sequence);
         persist(&user);
         self.messages.push(user);
+        self.run_turn(&session_id, &provider, engine, cx);
+    }
 
+    /// Run the last user message again: whatever the failed turn left below
+    /// it is dropped — an answer with nothing in it was never saved — and
+    /// the engine gets the same history.
+    fn retry(&mut self, cx: &mut Context<Self>) {
+        if self.is_streaming() {
+            return;
+        }
+        let Some(user_index) = retry_target(&self.messages) else {
+            return;
+        };
+        let text = self.messages[user_index].content.clone();
+        let Some((provider, engine)) = self.prepare_turn(&text, cx) else {
+            return;
+        };
+        self.messages.truncate(user_index + 1);
+        self.stand_down();
+        let session_id = self.session_id.clone().unwrap_or_default();
+        self.run_turn(&session_id, &provider, engine, cx);
+    }
+
+    /// The provider and engine the next turn runs on, or the reason there is
+    /// none, on screen. The composer's own choice wins; the file is read only
+    /// when there is none, so a picker cannot be overwritten between a click
+    /// and the next turn.
+    fn prepare_turn(
+        &mut self,
+        first_message: &str,
+        cx: &mut Context<Self>,
+    ) -> Option<(ApiProviderConfig, OrchestratorEngine)> {
+        if self.provider.is_none() {
+            self.provider = available_provider();
+        }
+        let Some(provider) = self.provider.clone() else {
+            self.error = Some(format!(
+                "{} {}",
+                t("ai.config_empty"),
+                t("ai.config_empty_hint")
+            ));
+            cx.notify();
+            return None;
+        };
+        let engine = match engine_for(&provider, first_message) {
+            Ok(engine) => engine,
+            Err(error) => {
+                self.error = Some(error);
+                cx.notify();
+                return None;
+            }
+        };
+        if crate::TOKIO_HANDLE.get().cloned().is_none() {
+            self.error = Some("no tokio runtime: the client started without one".to_owned());
+            cx.notify();
+            return None;
+        }
+        Some((provider, engine))
+    }
+
+    /// Clear what the previous turn left on the panel: its failure note, its
+    /// compaction note, its reasoning clock.
+    fn stand_down(&mut self) {
+        self.error = None;
+        self.compacted = None;
+        self.reasoning_started = None;
+    }
+
+    /// Spawn the engine for a turn whose user message is already in the list:
+    /// an empty assistant message waits below it for the tokens.
+    fn run_turn(
+        &mut self,
+        session_id: &str,
+        provider: &ApiProviderConfig,
+        engine: OrchestratorEngine,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(runtime) = crate::TOKIO_HANDLE.get().cloned() else {
+            return;
+        };
+        let sequence = self.messages.last().map_or(1, |last| last.sequence + 1);
         let index = self.messages.len();
-        self.messages.push(message(
-            &session_id,
-            "orchestrator",
-            String::new(),
-            sequence + 1,
-        ));
+        self.messages
+            .push(message(session_id, "orchestrator", String::new(), sequence));
         self.streaming = Some(index);
 
         let history: Vec<ChatMessageRef> = self.messages[..index]
@@ -312,6 +360,7 @@ impl ChatPanel {
             session = %session_id,
             "turn started"
         );
+        let report = events.clone();
         self.turn = Some(runtime.spawn(async move {
             let tools = builtin_tools();
             let tools: Vec<&dyn Tool> = tools.iter().map(|tool| tool.as_ref()).collect();
@@ -327,13 +376,15 @@ impl ChatPanel {
                     &compactor,
                     MAX_TOOL_ROUNDS,
                     move |event| {
-                        let _ = events.send(event);
+                        let _ = report.send(event);
                     },
                 )
                 .await;
             if let Err(error) = outcome {
-                // A turn that fails inside the loop reports it through an
-                // event; this is the path where the failure is only logged.
+                // The panel can only act on what arrives through the channel:
+                // a failure that stays a log line leaves a turn that looks
+                // alive, so the failure goes out as an event first.
+                let _ = events.send(DispatchStreamEvent::Error(error.to_string()));
                 tracing::warn!(target: "zenix-chat", %error, "the turn did not finish");
             }
         }));
@@ -431,16 +482,25 @@ impl ChatPanel {
                 tools = message.tool_calls.len(),
                 "turn finished"
             );
-            persist(message);
-        }
-        // The store's rows order by `updated_at`: a finished turn moves this
-        // session to the top of the history the next time it opens.
-        if let Some(session_id) = self.session_id.clone()
-            && let Err(error) = SessionManager::open().and_then(|manager| {
-                manager.touch_session(&session_id, &crate::util::timestamp_now())
-            })
-        {
-            tracing::warn!(target: "zenix-chat", %error, "the session was not marked as touched");
+            // An answer with nothing in it — a turn that failed before its
+            // first token — is not a message anyone will want to read back:
+            // the retry drops it rather than saving it.
+            let said_something = !message.content.is_empty()
+                || !message.tool_calls.is_empty()
+                || message.reasoning_text.is_some();
+            if said_something {
+                persist(message);
+                // The store's rows order by `updated_at`: a finished turn
+                // moves this session to the top of the history the next time
+                // it opens.
+                if let Some(session_id) = self.session_id.clone()
+                    && let Err(error) = SessionManager::open().and_then(|manager| {
+                        manager.touch_session(&session_id, &crate::util::timestamp_now())
+                    })
+                {
+                    tracing::warn!(target: "zenix-chat", %error, "the session was not marked as touched");
+                }
+            }
         }
         cx.notify();
     }
@@ -735,7 +795,7 @@ impl Render for ChatPanel {
             );
         }
         column
-            .child(notes(self, &theme))
+            .child(notes(self, &theme, cx))
             .child(composer(self, &theme, cx))
             .into_any_element()
     }
@@ -1103,17 +1163,40 @@ fn send_button(panel: &ChatPanel, theme: &Theme, cx: &mut Context<ChatPanel>) ->
 }
 
 /// The last failure and the last compaction, above the message box where they
-/// cannot be mistaken for something the model said.
-fn notes(panel: &ChatPanel, theme: &Theme) -> AnyElement {
+/// cannot be mistaken for something the model said. A failure carries its own
+/// way back: the retry sends the same user message again.
+fn notes(panel: &ChatPanel, theme: &Theme, cx: &mut Context<ChatPanel>) -> AnyElement {
     let mut column = v_flex().w_full().gap_1();
     if let Some(error) = &panel.error {
+        let retry = cx.listener(|panel, _: &ClickEvent, _window, cx| panel.retry(cx));
         column = column.child(
-            div()
+            h_flex()
+                .w_full()
                 .px_2()
                 .py_1()
-                .text_xs()
-                .text_color(theme.danger)
-                .child(error.clone()),
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .text_xs()
+                        .text_color(theme.danger)
+                        .child(error.clone()),
+                )
+                .child(
+                    div()
+                        .id("chat-retry")
+                        .flex_none()
+                        .px(px(4.))
+                        .rounded(px(3.))
+                        .cursor_pointer()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .hover(|style| style.bg(theme.list_hover).text_color(theme.foreground))
+                        .on_click(retry)
+                        .child(t("ai.chat.retry")),
+                ),
         );
     }
     if let Some(note) = &panel.compacted {
@@ -1674,6 +1757,15 @@ fn wire_role(role: &str) -> &'static str {
     }
 }
 
+/// The message a retry sends again: the last user message that actually said
+/// something. Nothing after it survives the retry, so the failed turn's
+/// leftover placeholder is what gets cut.
+fn retry_target(messages: &[ChatMessage]) -> Option<usize> {
+    messages
+        .iter()
+        .rposition(|message| message.role == "user" && !message.content.is_empty())
+}
+
 /// A tool's arguments as one line: the keys the model filled in, with long
 /// values cut, rather than the raw JSON. A card that is opened shows the answer
 /// instead.
@@ -1916,6 +2008,29 @@ mod tests {
         assert_eq!(wire_role("user"), "user");
         assert_eq!(wire_role("orchestrator"), "assistant");
         assert_eq!(wire_role("anything-else"), "assistant");
+    }
+
+    /// A retry sends the last user message that said something: the failed
+    /// turn's leftover placeholder is what gets cut, and a conversation with
+    /// nothing of the user's in it has nothing to retry.
+    #[test]
+    fn the_retry_is_the_last_user_message_that_said_something() {
+        let turn = vec![a_user_message(), a_placeholder()];
+        assert_eq!(retry_target(&turn), Some(0));
+
+        let second_turn = vec![
+            a_user_message(),
+            a_placeholder(),
+            message("session", "user", "again".into(), 3),
+            a_placeholder(),
+        ];
+        assert_eq!(retry_target(&second_turn), Some(2));
+
+        // An empty user row is not a message to send again.
+        let empty_user = vec![message("session", "user", String::new(), 1)];
+        assert_eq!(retry_target(&empty_user), None);
+        assert_eq!(retry_target(&[a_placeholder()]), None);
+        assert_eq!(retry_target(&[]), None);
     }
 
     /// The composer's model picker is the configured providers, named by what
