@@ -313,6 +313,9 @@ pub(crate) enum ShellRequest {
     },
     /// Focus a pane, which also brings its workspace and tab forward.
     FocusPane(String),
+    /// Clear the status bar's unread count for terminal bells and
+    /// notifications that asked for attention.
+    AcknowledgeAlerts,
     /// Run one plugin action. `source` names where the click came from, which
     /// is the one part of the invocation context the daemon cannot know.
     PluginAction {
@@ -411,6 +414,10 @@ pub(crate) struct Invocation<'a> {
     /// The tails the cockpit last read, by pane. Read on demand, so this is a
     /// snapshot of the last ask rather than a live view.
     pub(crate) tails: &'a Tails,
+    /// Terminal bells and notifications that asked for attention, until the
+    /// status bar's alert segment is clicked.
+    pub(crate) bells: u64,
+    pub(crate) attention: u64,
     pub(crate) theme: &'a Theme,
     pub(crate) dispatch: &'a Dispatch,
 }

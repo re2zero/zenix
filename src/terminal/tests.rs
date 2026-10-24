@@ -1,6 +1,8 @@
 use super::*;
 
 mod bold_color;
+mod links;
+mod selection;
 mod wheel;
 
 #[test]
@@ -602,4 +604,12 @@ fn scrollbar_thumb_tracks_offset_to_the_pixel_and_round_trips() {
     // One line moves the thumb a fraction of a pixel, not a whole cell.
     let step = f32::from(bottom.thumb.top() - one.thumb.top());
     assert!(step > 0. && step < 1., "{step}");
+    // Dragging the thumb is the inverse of painting it: the top of the track
+    // is the oldest history and the bottom is the live screen.
+    assert_eq!(top.offset_at(f32::from(top.thumb.top())), 1978);
+    assert_eq!(bottom.offset_at(f32::from(bottom.thumb.top())), 0);
+    assert_eq!(one.offset_at(f32::from(one.thumb.top())), 1);
+    // A drag past either end clamps to the ends it cannot pass.
+    assert_eq!(top.offset_at(-100.), 1978);
+    assert_eq!(bottom.offset_at(10_000.), 0);
 }

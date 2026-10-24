@@ -2,14 +2,16 @@
 //! input events to the daemon's semantic `ClientPaneInputEvent`s.
 //!
 //! Ported from herdr-gpui (Apache-2.0) `crates/herdr-gpui/src/terminal.rs`.
-//! Selection, links and accessibility live upstream; they return with the
-//! features that need them.
+//! Selection and links live beside this module; copy mode, scrollback search
+//! and accessibility still wait for the features that need them.
 
 pub(crate) mod cards;
 pub(crate) mod error;
 pub(crate) mod input;
+pub(crate) mod links;
 pub(crate) mod painter;
 pub(crate) mod regions;
+pub(crate) mod selection;
 pub(crate) mod split_drag;
 pub(crate) mod splits;
 pub(crate) mod theme;
@@ -638,6 +640,15 @@ impl Scrollbar {
             ),
             max: scroll.max_offset_from_bottom,
         })
+    }
+    /// The offset from the bottom that puts the thumb's top at `top`.
+    pub(crate) fn offset_at(&self, top: f32) -> u64 {
+        let travel = f32::from(self.track.size.height - self.thumb.size.height);
+        if travel <= 0. {
+            return 0;
+        }
+        let fraction = ((top - f32::from(self.track.top())) / travel).clamp(0., 1.);
+        ((1. - fraction) * self.max as f32).round() as u64
     }
 }
 

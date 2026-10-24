@@ -2,9 +2,10 @@
 //! mapped onto the daemon's semantic input events.
 //!
 //! Ported in shape from herdr-gpui (Apache-2.0) `crates/herdr-gpui/src/{window.rs,
-//! window/input.rs, window/mouse.rs, window/render.rs, input.rs}`. Selection, links, copy mode,
-//! scrollbar dragging, split dragging and the chrome around the pane are not
-//! part of M3; the daemon draws the pane borders and focus separators as cells.
+//! window/input.rs, window/mouse.rs, window/render.rs, input.rs}`. The view
+//! owns local pointer selection and copy, link hover and activation, scrollbar
+//! dragging, reconnection chrome and split dragging (M16 Wave 1); copy mode and
+//! scrollback search are the Wave's remaining pieces.
 
 use std::cell::{Cell, RefCell};
 use std::ops::Range;
@@ -19,20 +20,24 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::component::ActiveTheme as _;
 use herdr_client::ConnectOptions;
 use herdr_client::ConnectTarget;
+use herdr_client::Method;
 use herdr_client::protocol::{
     ClientMouseButton, ClientMouseKind, ClientPaneInputEvent, PaneSurfaceFrame,
 };
+use serde_json::json;
 
 use crate::herdr::{Connection, LiveState, decode};
 use crate::terminal::cards;
+use crate::terminal::links::{LinkHit, activation_fallback, link_at};
 use crate::terminal::painter::TerminalPainter;
 use crate::terminal::regions::{Look, Regions};
+use crate::terminal::selection::Selection;
 use crate::terminal::split_drag::SplitDrag;
 use crate::terminal::splits;
 use crate::terminal::theme::Theme;
 use crate::terminal::{
-    CELL_HEIGHT, FONT_SIZE, InputTarget, WheelAccumulator, WheelTarget, input_area,
-    input_cursor_bounds, key_input, pane_at, viewport, wheel_target,
+    CELL_HEIGHT, FONT_SIZE, InputTarget, Scrollbar, WheelAccumulator, WheelTarget, input_area,
+    input_cursor_bounds, key_input, pane_at, popup_origin, viewport, wheel_target,
 };
 
 #[cfg(target_os = "linux")]
@@ -46,6 +51,23 @@ struct MouseGesture {
     hit: WheelTarget,
     button: MouseButton,
     boot: String,
+}
+
+/// A drag of a pane's native scrollbar. `grab` keeps the pointer's place on
+/// the thumb; `want` is the latest offset not yet sent to the daemon.
+struct ScrollbarDrag {
+    pane: String,
+    boot: String,
+    grab: f32,
+    held: bool,
+    want: Option<u64>,
+}
+
+/// A link activation waiting for the daemon's answer, and the row-local
+/// address to open when the daemon no longer reads one there.
+struct PendingActivation {
+    request: String,
+    fallback: Option<String>,
 }
 
 /// A GPUI button onto the daemon's wire form; Navigate buttons have none.
@@ -97,6 +119,17 @@ pub(crate) struct TerminalView {
     mouse_gesture: Option<MouseGesture>,
     /// A drag of the border between panes, if one is armed.
     split_drag: Option<SplitDrag>,
+    /// A drag of a pane's scrollbar, if one is armed.
+    scrollbar_drag: Option<ScrollbarDrag>,
+    /// The selection the pointer made, kept after release so a copy still
+    /// knows what it covers.
+    selection: Option<Selection>,
+    /// The link under the pointer while the link modifier is held.
+    hover_link: Option<LinkHit>,
+    /// The link a press landed on, which its release must match.
+    pressed_link: Option<LinkHit>,
+    /// A link activation the daemon has not answered yet.
+    pending_activation: Option<PendingActivation>,
     /// The cursor the border under the pointer asks for, so a press there is
     /// visible before it happens.
     split_cursor: Option<CursorStyle>,
@@ -112,8 +145,9 @@ impl TerminalView {
     pub(crate) fn new(cx: &mut Context<Self>) -> Self {
         let (pulse, pulses) = crossbeam_channel::unbounded::<()>();
         let connection = Connection::start(ConnectTarget::Local, move || {
-            // A full inbox already means "there is something to read".
-            let _ = pulse.try_send(());
+            // A closed inbox means the view that owns this connection is gone;
+            // the reader stops instead of retrying forever.
+            pulse.try_send(()).is_ok()
         });
 
         // The reader thread never touches GPUI: it pulses this foreground task,
@@ -149,10 +183,23 @@ impl TerminalView {
             wheel: WheelAccumulator::default(),
             mouse_gesture: None,
             split_drag: None,
+            scrollbar_drag: None,
+            selection: None,
+            hover_link: None,
+            pressed_link: None,
+            pending_activation: None,
             split_cursor: None,
             _events: events,
             regions: Regions::new(),
         }
+    }
+
+    /// Clear the unread count for terminal bells and attention notifications,
+    /// which the status bar shows until they are acknowledged. Pulls at once
+    /// so both this view and the shell see the zeroed count.
+    pub(crate) fn acknowledge_alerts(&mut self, cx: &mut Context<Self>) {
+        self.connection.acknowledge_alerts();
+        self.pull(cx);
     }
 
     pub(crate) fn focus_handle(&self) -> &FocusHandle {
@@ -197,15 +244,216 @@ impl TerminalView {
                 );
             }
         }
+        // Notifications the daemon asked the platform to show. Draining is
+        // unconditional, like the clipboard: the queue lives on the shared
+        // state, so a cloned `LiveState` cannot deliver one twice.
+        for notice in self.connection.take_notices() {
+            cx.show_system_notification(SystemNotification {
+                tag: notice.tag.into(),
+                title: notice.title.into(),
+                body: notice.body.into(),
+                actions: Vec::new(),
+            });
+        }
+        self.poll_activation(cx);
         let next = self.connection.state();
-        if next.revision != self.drawn_revision || next.status != self.live.status {
+        // A reconnect may reach a daemon with another boot: its surface has the
+        // geometry the *old* daemon was told, so the next paint must report the
+        // window's size again or the grid stays at the daemon's default.
+        let boot_changed = next.boot_id() != self.live.boot_id();
+        if next.revision != self.drawn_revision || next.status != self.live.status || boot_changed {
             self.drawn_revision = next.revision;
             self.live = next;
+            if boot_changed {
+                self.sent_options.set(None);
+                // Everything below names cells of the old boot's content; a
+                // selection or a link from it would read the new daemon's
+                // grid at the same coordinates.
+                self.selection = None;
+                self.hover_link = None;
+                self.pressed_link = None;
+                self.scrollbar_drag = None;
+                self.mouse_gesture = None;
+            }
             cx.notify();
+        }
+        // A drop retires a pending activation: its answer can never arrive,
+        // and the link it named is stale content now.
+        if self.live.status == crate::herdr::ConnectionStatus::Disconnected {
+            self.pending_activation = None;
         }
         // A split drag waiting for its answer continues here: an answer does not
         // change the revision, and it is exactly what frees the next ratio.
         self.flush_split();
+        // The same answer frees the scrollbar's next offset.
+        self.flush_scrollbar();
+    }
+
+    /// Fold a link activation's answer into the window: open the address the
+    /// daemon names (or the one the row read) unless a plugin handled it. A
+    /// drop retires the activation: its answer can never arrive.
+    fn poll_activation(&mut self, cx: &mut Context<Self>) {
+        if self.live.status == crate::herdr::ConnectionStatus::Disconnected {
+            self.pending_activation = None;
+            return;
+        }
+        let Some(pending) = self.pending_activation.as_ref() else {
+            return;
+        };
+        let Some(response) = self.connection.take_response(&pending.request) else {
+            // A rejection retires the request without a payload: open the
+            // row-local address rather than leaving the click unanswered.
+            if !self.connection.in_flight(&pending.request)
+                && let Some(pending) = self.pending_activation.take()
+                && let Some(url) = pending.fallback
+            {
+                cx.open_url(&url);
+            }
+            return;
+        };
+        let Some(pending) = self.pending_activation.take() else {
+            return;
+        };
+        if let Some(url) = activation_fallback(&response, pending.fallback.as_deref()) {
+            cx.open_url(&url);
+        }
+    }
+
+    /// Copy the selection to the system clipboard. `false` when there is
+    /// nothing to copy, so Ctrl-C still reaches the pane as an interrupt.
+    fn copy_selection(&mut self, cx: &mut Context<Self>) -> bool {
+        let Some(surface) = self.live.surface.as_deref() else {
+            return false;
+        };
+        let Some(selection) = self.selection.as_ref() else {
+            return false;
+        };
+        let Some(text) = selection.text(surface, self.cell_width.get()) else {
+            return false;
+        };
+        if text.is_empty() {
+            return false;
+        }
+        cx.write_to_clipboard(ClipboardItem::new_string(text));
+        true
+    }
+
+    /// Ask the connection to dial now rather than wait out its backoff.
+    fn retry_connection(&mut self, _: &ClickEvent, _: &mut Window, cx: &mut Context<Self>) {
+        self.connection.retry_now();
+        cx.notify();
+    }
+
+    /// The scrollbar of `pane`, in paint-origin pixels.
+    fn scrollbar(&self, pane: &str) -> Option<Scrollbar> {
+        let pane = self
+            .live
+            .surface
+            .as_deref()?
+            .panes
+            .iter()
+            .find(|candidate| candidate.pane_id == pane)?;
+        Scrollbar::new(pane, self.cell_width.get(), CELL_HEIGHT)
+    }
+
+    /// Grab the thumb where pressed, or jump it under the pointer when the
+    /// press lands on the track. `false` where no scrollbar owns the point so
+    /// the pane below it keeps the press.
+    fn press_scrollbar(&mut self, position: Point<Pixels>, cx: &mut Context<Self>) -> bool {
+        let Some(surface) = self.live.surface.as_deref().filter(|s| s.popup.is_none()) else {
+            return false;
+        };
+        let Some(boot) = self.live.boot_id().map(str::to_owned) else {
+            return false;
+        };
+        let local = position - self.bounds.get().origin;
+        let (pane, bar) = match surface.panes.iter().find_map(|pane| {
+            Scrollbar::new(pane, self.cell_width.get(), CELL_HEIGHT)
+                .filter(|bar| bar.track.contains(&local))
+                .map(|bar| (pane.pane_id.clone(), bar))
+        }) {
+            Some(hit) => hit,
+            None => return false,
+        };
+        let grab = if bar.thumb.contains(&local) {
+            f32::from(local.y - bar.thumb.top())
+        } else {
+            f32::from(bar.thumb.size.height) / 2.
+        };
+        self.scrollbar_drag = Some(ScrollbarDrag {
+            pane,
+            boot,
+            grab,
+            held: true,
+            want: None,
+        });
+        self.drag_scrollbar(position);
+        cx.stop_propagation();
+        cx.notify();
+        true
+    }
+
+    /// Follow the pointer with an armed scrollbar drag. `true` while the drag
+    /// owns the move event, so it never reaches an application.
+    fn drag_scrollbar(&mut self, position: Point<Pixels>) -> bool {
+        let Some(drag) = self.scrollbar_drag.as_ref().filter(|drag| drag.held) else {
+            return false;
+        };
+        let Some(bar) = self.scrollbar(&drag.pane) else {
+            self.scrollbar_drag = None;
+            return true;
+        };
+        let local = position - self.bounds.get().origin;
+        let top = f32::from(local.y) - drag.grab;
+        if let Some(drag) = self.scrollbar_drag.as_mut() {
+            drag.want = Some(bar.offset_at(top));
+        }
+        self.flush_scrollbar();
+        true
+    }
+
+    /// End an armed scrollbar drag. `true` while the release belongs to it.
+    fn release_scrollbar(&mut self, event: &MouseUpEvent, cx: &mut Context<Self>) -> bool {
+        if event.button != MouseButton::Left
+            || !self.scrollbar_drag.as_ref().is_some_and(|drag| drag.held)
+        {
+            return false;
+        }
+        if let Some(drag) = self.scrollbar_drag.as_mut() {
+            drag.held = false;
+        }
+        self.flush_scrollbar();
+        cx.notify();
+        true
+    }
+
+    /// Send the latest wanted offset once the previous request has answered,
+    /// and retire a released drag when nothing is left to send.
+    fn flush_scrollbar(&mut self) {
+        let Some(drag) = self.scrollbar_drag.as_mut() else {
+            return;
+        };
+        if self.live.boot_id() != Some(drag.boot.as_str()) {
+            self.scrollbar_drag = None;
+            return;
+        }
+        if self.connection.has_in_flight() {
+            return;
+        }
+        let Some(offset) = drag.want.take() else {
+            if !drag.held {
+                self.scrollbar_drag = None;
+            }
+            return;
+        };
+        let pane = drag.pane.clone();
+        let request = self.connection.request(
+            Method::PaneScroll,
+            json!({"pane_id": pane, "offset_from_bottom": offset}),
+        );
+        if request.is_none() {
+            self.scrollbar_drag = None;
+        }
     }
 
     /// The pane the daemon reports as focused. Input and focus requests name it.
@@ -264,6 +512,16 @@ impl TerminalView {
 
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
+        // Copy first: with a selection, Ctrl-C (the platform's copy chord) and
+        // Cmd-C copy it; without one Ctrl-C still reaches the pane as SIGINT.
+        // On macOS Ctrl is the terminal's own modifier, so only Cmd copies.
+        let copy_chord = keystroke.modifiers.platform
+            || (!cfg!(target_os = "macos") && keystroke.modifiers.control);
+        if copy_chord && keystroke.key.eq_ignore_ascii_case("c") && self.copy_selection(cx) {
+            cx.stop_propagation();
+            window.prevent_default();
+            return;
+        }
         // Paste is decided before the key mapping: Ctrl-Shift-V would
         // otherwise map to a literal `v` and type it into the pane. On Linux
         // `platform` is the Super key, so plain Ctrl-V stays a pane keystroke.
@@ -315,9 +573,18 @@ impl TerminalView {
     fn mouse_down(&mut self, event: &MouseDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         // A new press retires a forwarded one whose release was never observed.
         self.cancel_mouse_gesture();
-        // The border between panes belongs to the shell, before the pane below
-        // it has any say: upstream's order is the scrollbar, the split, then
-        // the pane's own application.
+        // Upstream's order: the scrollbar, the split, then the pane's own
+        // application. A link is client chrome too, so the link modifier takes
+        // a press before an application that reports the mouse.
+        if event.button == MouseButton::Left && self.press_scrollbar(event.position, cx) {
+            return;
+        }
+        if event.button == MouseButton::Left
+            && event.modifiers.secondary()
+            && self.press_link(event.position, window, cx)
+        {
+            return;
+        }
         if event.button == MouseButton::Left && self.press_split(event.position, cx) {
             return;
         }
@@ -325,8 +592,7 @@ impl TerminalView {
             .mouse_target_at(event.position)
             .filter(|hit| hit.mouse_reporting)
             // Shift bypasses the application's mouse mode, as in a real
-            // terminal; a local Shift action (selection) lands in a later
-            // milestone.
+            // terminal, and starts a local selection instead.
             .filter(|_| !event.modifiers.shift)
             .filter(|hit| {
                 event.button != MouseButton::Right
@@ -355,12 +621,13 @@ impl TerminalView {
             }
             return;
         }
-        // No application reported the mouse under the press: keep the M3
-        // behaviour, where only the left button moves pane focus.
+        // No application reported the mouse under the press: the left button
+        // selects locally and still moves pane focus.
         window.focus(&self.focus, cx);
         if event.button != MouseButton::Left {
             return;
         }
+        self.begin_selection(event.position, event.click_count, cx);
         let Some(surface) = self.live.surface.clone() else {
             return;
         };
@@ -380,8 +647,164 @@ impl TerminalView {
         self.connection.focus_pane(pane);
     }
 
+    /// Start a local selection at the pointer. `false` where no pane or popup
+    /// paints under it; the previous selection is dropped either way.
+    fn begin_selection(
+        &mut self,
+        position: Point<Pixels>,
+        clicks: usize,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(surface) = self.live.surface.clone() else {
+            self.selection = None;
+            return false;
+        };
+        let local = position - self.bounds.get().origin;
+        let selection = Selection::begin(
+            &surface,
+            f32::from(local.x),
+            f32::from(local.y),
+            self.cell_width.get(),
+            CELL_HEIGHT,
+            clicks,
+        );
+        let begun = selection.is_some();
+        self.selection = selection;
+        if begun {
+            cx.stop_propagation();
+        }
+        cx.notify();
+        begun
+    }
+
+    /// The link under a point, in the paint's own coordinates.
+    fn link_at(&self, position: Point<Pixels>) -> Option<LinkHit> {
+        let surface = self.live.surface.as_deref()?;
+        let local = position - self.bounds.get().origin;
+        link_at(
+            surface,
+            f32::from(local.x),
+            f32::from(local.y),
+            self.cell_width.get(),
+            CELL_HEIGHT,
+        )
+    }
+
+    /// Take the press on a link: it must not reach the application, and its
+    /// release is what opens the address.
+    fn press_link(
+        &mut self,
+        position: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(hit) = self.link_at(position) else {
+            return false;
+        };
+        window.focus(&self.focus, cx);
+        self.pressed_link = Some(hit);
+        cx.stop_propagation();
+        cx.notify();
+        true
+    }
+
+    /// Open the link a release landed on when it is the one its press took.
+    /// `true` while the release belongs to the link press.
+    fn release_link(&mut self, event: &MouseUpEvent, cx: &mut Context<Self>) -> bool {
+        if self.pressed_link.is_none() || event.button != MouseButton::Left {
+            return false;
+        }
+        let pressed = self.pressed_link.take();
+        let matched = pressed.as_ref().and_then(|pressed| {
+            self.link_at(event.position)
+                .filter(|hit| hit.same_link(pressed))
+        });
+        if let Some(hit) = matched {
+            self.activate_link(hit, cx);
+        }
+        cx.stop_propagation();
+        cx.notify();
+        true
+    }
+
+    /// Ask the daemon to activate the link a plugin may claim, opening the
+    /// row-local address when nothing does.
+    fn activate_link(&mut self, hit: LinkHit, cx: &mut Context<Self>) {
+        let fallback = Some(hit.label().to_owned());
+        if let Some(cell) = &hit.cell {
+            let (method, params) = cell.activate_request();
+            if let Some(request) = self.connection.request(method, params) {
+                self.pending_activation = Some(PendingActivation { request, fallback });
+                return;
+            }
+        }
+        if let Some(url) = fallback {
+            cx.open_url(&url);
+        }
+    }
+
+    /// Follow the link modifier over a pane: the link under the pointer is
+    /// underlined and takes a pointing hand.
+    fn track_hover(
+        &mut self,
+        position: Point<Pixels>,
+        modifiers: Modifiers,
+        cx: &mut Context<Self>,
+    ) {
+        let next = modifiers
+            .secondary()
+            .then(|| self.link_at(position))
+            .flatten();
+        if next != self.hover_link {
+            self.hover_link = next;
+            cx.notify();
+        }
+        if self.hover_link.is_none() {
+            self.track_split_cursor(position, cx);
+        }
+    }
+
     fn mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
+        // A held scrollbar owns the pointer before the split border under it.
+        if self.scrollbar_drag.as_ref().is_some_and(|drag| drag.held) {
+            if event.pressed_button == Some(MouseButton::Left) {
+                self.drag_scrollbar(event.position);
+            } else {
+                // The release was never seen: end the drag on the first move
+                // that says the button is up.
+                if let Some(drag) = self.scrollbar_drag.as_mut() {
+                    drag.held = false;
+                }
+                self.flush_scrollbar();
+            }
+            cx.stop_propagation();
+            return;
+        }
         if self.drag_split(event, cx) {
+            cx.stop_propagation();
+            return;
+        }
+        if self.selection.as_ref().is_some_and(Selection::dragging) {
+            if event.pressed_button != Some(MouseButton::Left) {
+                if let Some(selection) = self.selection.as_mut() {
+                    selection.release();
+                }
+            } else if let Some(surface) = self.live.surface.clone() {
+                let local = event.position - self.bounds.get().origin;
+                let cell_width = self.cell_width.get();
+                let changed = self.selection.as_mut().is_some_and(|selection| {
+                    selection.extend(
+                        &surface,
+                        f32::from(local.x),
+                        f32::from(local.y),
+                        cell_width,
+                        CELL_HEIGHT,
+                    )
+                });
+                if changed {
+                    cx.notify();
+                }
+            }
             cx.stop_propagation();
             return;
         }
@@ -412,10 +835,11 @@ impl TerminalView {
         // Hover belongs to the hit pane, unlike an owned drag. Shift keeps the
         // pointer local, as it does in other terminals with no app gesture.
         if event.pressed_button.is_none() && !event.modifiers.shift {
-            self.track_split_cursor(event.position, cx);
-            if let Some(hit) = self
-                .mouse_target_at(event.position)
-                .filter(|hit| hit.mouse_reporting)
+            self.track_hover(event.position, event.modifiers, cx);
+            if self.hover_link.is_none()
+                && let Some(hit) = self
+                    .mouse_target_at(event.position)
+                    .filter(|hit| hit.mouse_reporting)
             {
                 self.send_mouse(&hit, ClientMouseKind::Moved, event.modifiers);
             }
@@ -423,6 +847,12 @@ impl TerminalView {
     }
 
     fn mouse_up(&mut self, event: &MouseUpEvent, _: &mut Window, cx: &mut Context<Self>) {
+        if self.release_scrollbar(event, cx) {
+            return;
+        }
+        if self.release_link(event, cx) {
+            return;
+        }
         if self.release_split(event, cx) {
             cx.stop_propagation();
             return;
@@ -432,6 +862,23 @@ impl TerminalView {
             .as_ref()
             .is_none_or(|gesture| gesture.button != event.button)
         {
+            let released = self.selection.as_mut().is_some_and(Selection::release);
+            if released {
+                // A click that never left its half-cell selects nothing; keep
+                // no empty selection behind.
+                let empty = self
+                    .selection
+                    .as_ref()
+                    .zip(self.live.surface.as_deref())
+                    .is_some_and(|(selection, surface)| {
+                        selection.is_empty(surface, self.cell_width.get())
+                    });
+                if empty {
+                    self.selection = None;
+                }
+                cx.stop_propagation();
+                cx.notify();
+            }
             return;
         }
         cx.stop_propagation();
@@ -644,7 +1091,17 @@ impl TerminalView {
 }
 
 impl Render for TerminalView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // The daemon's window title while this view is the focused one; the
+        // app's own name when it reports none.
+        let title = self
+            .live
+            .title
+            .as_deref()
+            .filter(|title| !title.is_empty())
+            .map(str::to_owned)
+            .unwrap_or_else(|| rust_i18n::t!("terminal.title.fallback").to_string());
+        window.set_window_title(&title);
         let live = self.live.clone();
         // Each canvas closure takes its own handle: both outlive this render.
         let prepaint_painter = self.painter.clone();
@@ -686,6 +1143,57 @@ impl Render for TerminalView {
         // graphics placements (whose textures a replayed region would outlive)
         // or no surface at all.
         let whole = regions.is_empty();
+        // The over-paint chrome the canvas draws: what the pointer selected,
+        // the link it hovers, and which cursor those two ask for.
+        let selection_highlights = live
+            .surface
+            .as_deref()
+            .and_then(|surface| {
+                self.selection
+                    .as_ref()
+                    .map(|selection| selection.highlights(surface, cell_width))
+            })
+            .unwrap_or_default();
+        let hover_link = self.hover_link.clone();
+        let link_in_popup = live.surface.as_ref().is_some_and(|s| s.popup.is_some());
+        let cursor = if hover_link.is_some() {
+            Some(CursorStyle::PointingHand)
+        } else {
+            self.split_cursor
+        };
+        let disconnected = self.live.status == crate::herdr::ConnectionStatus::Disconnected;
+        let stale = self.live.stale();
+        // A handshake refused because one side is older names the command that
+        // fixes it; nothing is run for the user, because stopping the daemon
+        // would take the running agents with it.
+        let update_hint = self.live.version_mismatch.as_ref().map(|mismatch| {
+            use herdr_client::VersionMismatch;
+            match mismatch {
+                VersionMismatch::DaemonOutdated { .. } => {
+                    rust_i18n::t!("terminal.reconnect.update_daemon").to_string()
+                }
+                VersionMismatch::ClientOutdated { .. } => {
+                    rust_i18n::t!("terminal.reconnect.update_client").to_string()
+                }
+            }
+        });
+        let reason = self.live.error.clone().unwrap_or_default();
+        // The reconnect card is chrome, not terminal cells, so it wears the
+        // shell's tokens. Copied out because `cx.listener` borrows the context
+        // the theme was read from.
+        let (scrim, card_bg, card_border, card_fg, card_muted, card_error, accent, accent_fg) = {
+            let chrome = cx.theme();
+            (
+                chrome.background.opacity(0.82),
+                chrome.secondary,
+                chrome.border,
+                chrome.foreground,
+                chrome.muted_foreground,
+                chrome.danger,
+                chrome.primary,
+                chrome.primary_foreground,
+            )
+        };
 
         div()
             .size_full()
@@ -709,9 +1217,9 @@ impl Render for TerminalView {
                     .on_mouse_up(MouseButton::Right, cx.listener(Self::mouse_up))
                     .on_mouse_up(MouseButton::Middle, cx.listener(Self::mouse_up))
                     .on_mouse_move(cx.listener(Self::mouse_move))
-                    // The pane border is draggable, so it says so before a
-                    // press: a handle nobody can see is a handle nobody uses.
-                    .when_some(self.split_cursor, |grid, cursor| grid.cursor(cursor))
+                    // The pane border and a hovered link both change the
+                    // pointer, so the grid wears whichever is under it.
+                    .when_some(cursor, |grid, cursor| grid.cursor(cursor))
                     .child(
                         // Every card keeps this much background from the pane
                         // area's edges, so the grid is laid out in what is
@@ -856,6 +1364,74 @@ impl Render for TerminalView {
                                                         BorderStyle::Solid,
                                                     ));
                                                 }
+                                                // Selection and link chrome sit over the cells
+                                                // they were made in, popup included. A terminal
+                                                // tint keeps the glyphs readable on every theme;
+                                                // the hovered link gets a hairline, which is how
+                                                // it says "click me" without moving any text.
+                                                let popup_origin =
+                                                    surface.popup.as_deref().map(|popup| {
+                                                        bounds.origin
+                                                            + popup_origin(
+                                                                &surface.frame,
+                                                                &popup.frame,
+                                                                cell_width,
+                                                                CELL_HEIGHT,
+                                                            )
+                                                    });
+                                                let chrome_origin = |popup: bool| {
+                                                    if popup {
+                                                        popup_origin.unwrap_or(bounds.origin)
+                                                    } else {
+                                                        bounds.origin
+                                                    }
+                                                };
+                                                for highlight in &selection_highlights {
+                                                    let columns = &highlight.columns;
+                                                    if columns.is_empty() {
+                                                        continue;
+                                                    }
+                                                    let rect = Bounds::new(
+                                                        chrome_origin(highlight.popup)
+                                                            + point(
+                                                                px(f32::from(columns.start)
+                                                                    * cell_width),
+                                                                px(f32::from(highlight.row)
+                                                                    * CELL_HEIGHT),
+                                                            ),
+                                                        size(
+                                                            px(f32::from(
+                                                                columns.end - columns.start,
+                                                            ) * cell_width),
+                                                            px(CELL_HEIGHT),
+                                                        ),
+                                                    );
+                                                    window.paint_quad(fill(
+                                                        rect,
+                                                        rgba((theme.foreground << 8) | 0x59),
+                                                    ));
+                                                }
+                                                if let Some(link) = &hover_link {
+                                                    let columns = &link.columns;
+                                                    if !columns.is_empty() {
+                                                        let start =
+                                                            f32::from(columns.start) * cell_width;
+                                                        let width =
+                                                            f32::from(columns.end - columns.start)
+                                                                * cell_width;
+                                                        let top = f32::from(link.row) * CELL_HEIGHT
+                                                            + CELL_HEIGHT
+                                                            - 2.;
+                                                        window.paint_quad(fill(
+                                                            Bounds::new(
+                                                                chrome_origin(link_in_popup)
+                                                                    + point(px(start), px(top)),
+                                                                size(px(width), px(1.5)),
+                                                            ),
+                                                            rgb(theme.foreground),
+                                                        ));
+                                                    }
+                                                }
                                                 // Painted after the frame so the composition
                                                 // sits above the cells and the cursor.
                                                 if !marked.is_empty() {
@@ -883,7 +1459,69 @@ impl Render for TerminalView {
                                         .size_full(),
                                     ),
                             ),
-                    ),
+                    )
+                    // A dropped endpoint leaves the last picture up, dimmed,
+                    // with the reason and a way to dial now: a blank window
+                    // would hide the fact that a reconnect is under way.
+                    .children(disconnected.then(|| {
+                        div()
+                            .absolute()
+                            .inset_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .p(px(16.))
+                            .when(stale, |overlay| overlay.bg(scrim))
+                            .child(
+                                div()
+                                    .id("reconnect-card")
+                                    .flex()
+                                    .flex_col()
+                                    .gap_2()
+                                    .p(px(16.))
+                                    .w(px(440.))
+                                    .rounded_lg()
+                                    .border_1()
+                                    .border_color(card_border)
+                                    .bg(card_bg)
+                                    .text_color(card_fg)
+                                    .on_mouse_down(MouseButton::Left, |_, _, cx| {
+                                        cx.stop_propagation()
+                                    })
+                                    .child(div().font_weight(FontWeight::SEMIBOLD).child(
+                                        rust_i18n::t!("terminal.reconnect.title").to_string(),
+                                    ))
+                                    .child(div().text_size(px(12.5)).text_color(card_muted).child(
+                                        rust_i18n::t!("terminal.reconnect.body").to_string(),
+                                    ))
+                                    .children((!reason.is_empty()).then(|| {
+                                        div()
+                                            .text_size(px(11.5))
+                                            .text_color(card_error)
+                                            .child(reason.clone())
+                                    }))
+                                    .children(update_hint.clone().map(|hint| {
+                                        div().text_size(px(11.5)).text_color(card_muted).child(hint)
+                                    }))
+                                    .child(
+                                        div()
+                                            .id("reconnect-now")
+                                            .self_start()
+                                            .px(px(12.))
+                                            .py(px(5.))
+                                            .rounded_md()
+                                            .bg(accent)
+                                            .text_color(accent_fg)
+                                            .cursor_pointer()
+                                            .hover(|style| style.opacity(0.9))
+                                            .on_click(cx.listener(Self::retry_connection))
+                                            .child(
+                                                rust_i18n::t!("terminal.reconnect.retry")
+                                                    .to_string(),
+                                            ),
+                                    ),
+                            )
+                    })),
             )
     }
 }

@@ -8,6 +8,30 @@ _version: 2
 # Placeholders are `%{name}` — rust-i18n 4.2.4 substitutes only that form and
 # passes a bare `{name}` through verbatim (measured, see src/i18n.rs's test).
 
+# The terminal view's own chrome: the card drawn over a dropped connection and
+# the window title fallback.
+terminal:
+  reconnect:
+    title:
+      en: "Connection lost"
+      zh-CN: "连接已断开"
+    body:
+      en: "Showing the last picture while zenix reconnects. Keys and clicks are not sent until the daemon answers again."
+      zh-CN: "zenix 正在重连，当前画面是最后一次收到的内容。daemon 恢复前，按键与点击不会送达。"
+    retry:
+      en: "Reconnect now"
+      zh-CN: "立即重连"
+    update_daemon:
+      en: "The herdr daemon is out of date. Run `herdr update`, then reconnect."
+      zh-CN: "herdr daemon 版本过旧，请先执行 `herdr update`，再重连。"
+    update_client:
+      en: "zenix is out of date. Update the zenix package, then reopen the window."
+      zh-CN: "zenix 版本过旧，请更新 zenix 包后重新打开窗口。"
+  title:
+    fallback:
+      en: "zenix"
+      zh-CN: "zenix"
+
 status:
   connected:
     en: "Connected"

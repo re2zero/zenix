@@ -5,6 +5,7 @@
 //! is called after each applied event so a view can repaint without polling.
 //! Nothing here polls the daemon.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -15,12 +16,19 @@ use herdr_client::{
 };
 use serde_json::Value;
 
-use super::state::{ConnectionStatus, LiveState};
+use super::state::{ConnectionStatus, LiveState, Notice};
 use crate::client;
 
 /// How long to wait for a freshly spawned daemon to publish its endpoint.
 const DAEMON_STARTUP: Duration = Duration::from_secs(10);
 const DAEMON_POLL: Duration = Duration::from_millis(50);
+/// The first wait after a drop, doubled on each failed attempt up to the cap.
+/// A daemon that is gone for good is retried every half minute rather than
+/// busy-looping on its socket.
+const RECONNECT_INITIAL: Duration = Duration::from_secs(1);
+const RECONNECT_MAX: Duration = Duration::from_secs(30);
+/// How often a waiting reader checks whether the shell asked it to try now.
+const RETRY_POLL: Duration = Duration::from_millis(100);
 
 /// A running endpoint connection. Cloning shares the one reader and the one
 /// state.
@@ -29,34 +37,75 @@ pub(crate) struct Connection {
     /// The pushed state, cloned out for each paint.
     changed: Arc<Mutex<LiveState>>,
     handle: Arc<Mutex<Option<ClientHandle>>>,
+    /// Set by the shell's retry action: the reader stops waiting out its
+    /// backoff and dials at once.
+    retry: Arc<AtomicBool>,
 }
 
 impl Connection {
     /// Connect in the background. Returns immediately; `on_change` fires after
-    /// every applied event.
+    /// every applied event. A dropped endpoint is dialled again on a backoff,
+    /// so a restarted daemon heals without reopening the window.
     pub(crate) fn start(
         target: ConnectTarget,
-        on_change: impl Fn() + Send + 'static,
+        on_change: impl Fn() -> bool + Send + 'static,
     ) -> Connection {
         let changed = Arc::new(Mutex::new(LiveState::default()));
         let handle = Arc::new(Mutex::new(None));
+        let retry = Arc::new(AtomicBool::new(false));
 
         let connection = Connection {
             changed: changed.clone(),
             handle: handle.clone(),
+            retry: retry.clone(),
         };
 
         thread::Builder::new()
             .name("zenix-herdr".into())
-            .spawn(move || read_events(target, changed, handle, on_change))
+            .spawn(move || read_events(target, changed, handle, retry, on_change))
             .expect("failed to spawn the herdr reader thread");
 
         connection
     }
 
+    /// Ask the reader to dial now instead of waiting out its backoff.
+    pub(crate) fn retry_now(&self) {
+        self.retry.store(true, Ordering::Release);
+    }
+
     /// A copy of the current state, for one paint.
     pub(crate) fn state(&self) -> LiveState {
         lock(&self.changed).clone()
+    }
+
+    /// Remove and return the answer to `request_id`, if it has arrived.
+    pub(crate) fn take_response(&self, request_id: &str) -> Option<Value> {
+        lock(&self.changed).take_response(request_id)
+    }
+
+    /// Remove and return the notifications waiting for the platform.
+    pub(crate) fn take_notices(&self) -> Vec<Notice> {
+        lock(&self.changed).take_notices()
+    }
+
+    /// Whether `request_id` is still waiting for any answer. A rejected
+    /// request is retired without a `Response`, so a caller that must not
+    /// wait forever asks this after the answer slot came up empty.
+    pub(crate) fn in_flight(&self, request_id: &str) -> bool {
+        lock(&self.changed).in_flight.contains(request_id)
+    }
+
+    /// Clear the unread count for bells and attention notifications. The
+    /// counter lives on the shared state, so the next pulled copy is zeroed
+    /// too.
+    pub(crate) fn acknowledge_alerts(&self) {
+        let mut state = lock(&self.changed);
+        if state.bells == 0 && state.attention == 0 {
+            return;
+        }
+        state.bells = 0;
+        state.attention = 0;
+        state.revision += 1;
     }
 
     /// Remove and return the pending OSC 52 clipboard payloads, oldest first.
@@ -230,48 +279,103 @@ impl Connection {
     }
 }
 
-/// Ensure a daemon answers at `target`, then relay its events until it ends.
+/// Ensure a daemon answers at `target`, then relay its events. A dropped or
+/// refused endpoint is retried on a backoff until the reader thread is gone.
 fn read_events(
     target: ConnectTarget,
     state: Arc<Mutex<LiveState>>,
     handle_slot: Arc<Mutex<Option<ClientHandle>>>,
-    on_change: impl Fn(),
+    retry: Arc<AtomicBool>,
+    on_change: impl Fn() -> bool,
 ) {
+    // `false` means the view that owns this connection is gone: nothing is
+    // owed a retry, so the reader stops.
     let fail = |reason: String| {
         lock(&state).apply(ClientEvent::Disconnected { reason, ssh: None });
-        on_change();
+        on_change()
     };
 
-    if let Err(reason) = ensure_daemon(&target) {
-        fail(reason);
-        return;
-    }
-
-    let client = match connect(target, ConnectOptions::default()) {
-        Ok(client) => client,
-        Err(err) => {
-            fail(format!("endpoint connect failed: {err}"));
-            return;
+    let mut delay = RECONNECT_INITIAL;
+    loop {
+        if retry.swap(false, Ordering::AcqRel) {
+            delay = RECONNECT_INITIAL;
         }
-    };
-    *lock(&handle_slot) = Some(client.handle.clone());
-
-    while let Ok(event) = client.events.recv() {
-        lock(&state).apply(event);
-        on_change();
+        let connected = match ensure_daemon(&target) {
+            Err(reason) => {
+                if !fail(reason) {
+                    return;
+                }
+                false
+            }
+            Ok(()) => match connect(target.clone(), ConnectOptions::default()) {
+                Err(err) => {
+                    if !fail(format!("endpoint connect failed: {err}")) {
+                        return;
+                    }
+                    false
+                }
+                Ok(client) => {
+                    *lock(&handle_slot) = Some(client.handle.clone());
+                    let mut connected = false;
+                    while let Ok(event) = client.events.recv() {
+                        // A welcome proves the endpoint is up, so a later drop
+                        // starts the backoff from the first second again.
+                        if matches!(event, ClientEvent::Connected(_)) {
+                            connected = true;
+                            delay = RECONNECT_INITIAL;
+                        }
+                        lock(&state).apply(event);
+                        // A `false` means the view that owns this connection is
+                        // gone; a window that closed must not keep dialling.
+                        if !on_change() {
+                            lock(&handle_slot).take();
+                            return;
+                        }
+                    }
+                    lock(&handle_slot).take();
+                    {
+                        let mut live = lock(&state);
+                        if live.status != ConnectionStatus::Disconnected {
+                            live.apply(ClientEvent::Disconnected {
+                                reason: "the daemon closed the endpoint".into(),
+                                ssh: None,
+                            });
+                        }
+                    }
+                    if !on_change() {
+                        return;
+                    }
+                    connected
+                }
+            },
+        };
+        // A connection that never welcomed us earns a longer wait; one that
+        // worked resets the ladder.
+        if connected {
+            delay = RECONNECT_INITIAL;
+        }
+        if wait_out(&retry, delay) {
+            delay = RECONNECT_INITIAL;
+        } else {
+            delay = (delay * 2).min(RECONNECT_MAX);
+        }
     }
+}
 
-    lock(&handle_slot).take();
-    let reason = "the daemon closed the endpoint";
-    let mut live = lock(&state);
-    if live.status != ConnectionStatus::Disconnected {
-        live.apply(ClientEvent::Disconnected {
-            reason: reason.to_owned(),
-            ssh: None,
-        });
+/// Sleep for `delay`, waking early when the shell asked for a retry now.
+/// `true` when it did.
+fn wait_out(retry: &AtomicBool, delay: Duration) -> bool {
+    let deadline = Instant::now() + delay;
+    loop {
+        if retry.swap(false, Ordering::AcqRel) {
+            return true;
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return false;
+        }
+        thread::sleep(left.min(RETRY_POLL));
     }
-    drop(live);
-    on_change();
 }
 
 /// Start the daemon when nothing answers at the socket, and wait for its

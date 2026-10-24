@@ -840,6 +840,12 @@ impl ShellView {
                 insert_index,
             } => self.move_workspace(workspace_id, insert_index, cx),
             ShellRequest::FocusPane(pane_id) => self.connection.focus_pane(&pane_id),
+            // Clearing the unread count is the terminal's to do: it owns the
+            // counter the status bar paints.
+            ShellRequest::AcknowledgeAlerts => {
+                self.terminal
+                    .update(cx, |terminal, cx| terminal.acknowledge_alerts(cx));
+            }
             // A local command is the shell's own, so it goes back through
             // [`Self::run`]: a palette row and a chord must end in the same
             // place, and the directory is the only thing that knows which
@@ -1209,6 +1215,7 @@ impl Render for ShellView {
                 request @ (ShellRequest::ShowView(_)
                 | ShellRequest::ShowAsideTab(_)
                 | ShellRequest::ShowSettingsPage(_)
+                | ShellRequest::AcknowledgeAlerts
                 | ShellRequest::MoveTab { .. }
                 | ShellRequest::MoveWorkspace { .. }
                 | ShellRequest::PluginAction { .. }
@@ -1257,6 +1264,8 @@ impl Render for ShellView {
             events: &self.events,
             fleet: &self.fleet,
             tails: &self.tails,
+            bells: live.bells,
+            attention: live.attention,
             theme: &theme,
             dispatch: &dispatch,
         };
@@ -1649,7 +1658,46 @@ fn status_bar(
         cx,
         theme,
     );
-    bar.into_any_element()
+    // The client's own unread count comes last: bells and notifications that
+    // asked for attention, until the user acknowledges them here.
+    let unread = invocation.bells.saturating_add(invocation.attention);
+    bar.when(unread > 0, |bar| {
+        bar.child(status_segment(
+            alert_badge(unread, invocation),
+            false,
+            theme,
+        ))
+    })
+    .into_any_element()
+}
+
+/// The bell segment: how many bells and attention notifications are unread.
+/// A click clears them, which is the only way they go away.
+fn alert_badge(unread: u64, invocation: &Invocation<'_>) -> AnyElement {
+    let theme = invocation.theme;
+    let dispatch = invocation.dispatch.clone();
+    h_flex()
+        .id("status-alerts")
+        .gap_1()
+        .items_center()
+        .cursor_pointer()
+        .on_click(move |_, window, cx| {
+            dispatch(ShellRequest::AcknowledgeAlerts, window, cx);
+        })
+        .child(
+            Icon::default()
+                .data(icons::BELL)
+                .w(px(12.))
+                .h(px(12.))
+                .text_color(theme.warning),
+        )
+        .child(
+            div()
+                .text_size(px(11.))
+                .text_color(theme.muted_foreground)
+                .child(unread.to_string()),
+        )
+        .into_any_element()
 }
 
 /// One side of the bar, left to right in registry order.
@@ -2012,6 +2060,7 @@ mod icons {
     pub(crate) const ASIDE: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>"#;
     pub(crate) const GEAR: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.6"/><circle cx="12" cy="12" r="3.2"/><path d="M12 3.4v2.2M12 18.4v2.2M3.4 12h2.2M18.4 12h2.2"/></svg>"#;
     pub(crate) const SPLIT: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M12 4v16"/></svg>"#;
+    pub(crate) const BELL: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9a6 6 0 0 1 12 0c0 5 2 6 2 6H4s2-1 2-6"/><path d="M10 20a2 2 0 0 0 4 0"/></svg>"#;
 }
 
 /// The workspace the chrome speaks for: the one the daemon says is focused.
