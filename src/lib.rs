@@ -111,9 +111,23 @@ pub fn run() {
             ai::prompts::init();
             register_fonts(cx);
             shell::keymap::bind_keys(cx);
+            // The window opens the shape the last one closed with: its size
+            // and maximized state are the config's `window` section, written
+            // by the closing window itself. The position is the compositor's
+            // to choose.
+            let window_config = config::get(cx).window.clone();
+            let window_size = size(px(window_config.width), px(window_config.height));
+            let window_bounds = if window_config.maximized {
+                WindowBounds::Maximized(Bounds {
+                    origin: Default::default(),
+                    size: window_size,
+                })
+            } else {
+                WindowBounds::centered(window_size, cx)
+            };
             gpui_kit::open_window(
                 WindowOptions {
-                    window_bounds: Some(WindowBounds::centered(size(px(1100.), px(720.)), cx)),
+                    window_bounds: Some(window_bounds),
                     window_min_size: Some(size(px(640.), px(400.))),
                     titlebar: Some(TitlebarOptions {
                         title: Some("zenix".into()),
@@ -130,6 +144,15 @@ pub fn run() {
                 },
                 cx,
                 |window, cx| {
+                    // The window manager's close — a server-decorated window's
+                    // X, a WM kill — has no element of ours to hook, so the
+                    // geometry is saved here before the close proceeds. The
+                    // client-decorated strip's own button hooks into
+                    // `shell::save_window_bounds` directly.
+                    window.on_window_should_close(cx, |window, cx| {
+                        shell::save_window_bounds(window, cx);
+                        true
+                    });
                     let view = cx.new(shell::ShellView::new);
                     // The pane takes the keyboard as soon as the window opens, as
                     // upstream focuses in its constructor; without this, keys reach

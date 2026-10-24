@@ -19,8 +19,8 @@
 //!
 //! ## Schema
 //!
-//! Three sections, each a group in the settings panel, each key written by
-//! exactly one item there:
+//! The appearance, terminal and layout sections each are a group in the
+//! settings panel, each key written by exactly one item there:
 //!
 //! ```jsonc
 //! {
@@ -31,9 +31,13 @@
 //!     "sidebar_width": 232.0,
 //!     "aside_visible": false,
 //!     "aside_width": 380.0
-//!   }
+//!   },
+//!   "window": { "width": 1100.0, "height": 720.0, "maximized": false }
 //! }
 //! ```
+//!
+//! The `window` section is written by the closing window itself, not by the
+//! settings panel: the size it remembers is what the next launch opens into.
 //!
 //! The file may carry comments (JSONC: [`jsonc::parse_json_or_jsonc`]).
 //!
@@ -82,6 +86,13 @@ pub const ASIDE_WIDTH_MIN: f32 = 240.;
 /// The widest a stored right-hand panel width may be.
 pub const ASIDE_WIDTH_MAX: f32 = 4096.;
 
+/// The window's size on first launch, before any close has been remembered.
+pub const WINDOW_SIZE_DEFAULT: (f32, f32) = (1100., 720.);
+/// The narrowest a stored window may be: the window's own minimum.
+pub const WINDOW_SIZE_MIN: (f32, f32) = (640., 400.);
+/// The widest a stored window may be.
+pub const WINDOW_SIZE_MAX: f32 = 16384.;
+
 /// The locales this client ships strings for.
 const LOCALES: &[&str] = &["en", "zh-CN"];
 
@@ -94,6 +105,7 @@ pub struct ConfigFile {
     pub appearance: Appearance,
     pub terminal: TerminalConfig,
     pub layout: Layout,
+    pub window: Window,
 }
 
 /// What the chrome looks like: which theme family draws it, the mode that
@@ -176,6 +188,39 @@ impl Layout {
     }
 }
 
+/// The window's geometry, remembered when it closes and honored when it opens.
+/// The panes' arrangement is the daemon's own (`session.json`); this is the
+/// frame the chrome opens into. The position is not kept: Wayland leaves it
+/// to the compositor, and a stored X11 origin can come back off-screen.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Window {
+    pub width: f32,
+    pub height: f32,
+    pub maximized: bool,
+}
+
+impl Default for Window {
+    fn default() -> Self {
+        Self {
+            width: WINDOW_SIZE_DEFAULT.0,
+            height: WINDOW_SIZE_DEFAULT.1,
+            maximized: false,
+        }
+    }
+}
+
+impl Window {
+    /// Remember the closing window's size, as the schema allows it: whole
+    /// pixels inside the window's own minimum. A maximized window's bounds
+    /// are its restore size, so they are the ones the next launch opens at.
+    pub fn set_bounds(&mut self, width: f32, height: f32, maximized: bool) {
+        self.width = width.clamp(WINDOW_SIZE_MIN.0, WINDOW_SIZE_MAX).round();
+        self.height = height.clamp(WINDOW_SIZE_MIN.1, WINDOW_SIZE_MAX).round();
+        self.maximized = maximized;
+    }
+}
+
 // ── The file, walked against the schema ──────────────────────────────
 
 /// How a field is shaped in the file.
@@ -231,6 +276,26 @@ const SECTIONS: &[Section] = &[
                     max: ASIDE_WIDTH_MAX,
                 },
             ),
+        ],
+    },
+    Section {
+        name: "window",
+        fields: &[
+            (
+                "width",
+                Field::Size {
+                    min: WINDOW_SIZE_MIN.0,
+                    max: WINDOW_SIZE_MAX,
+                },
+            ),
+            (
+                "height",
+                Field::Size {
+                    min: WINDOW_SIZE_MIN.1,
+                    max: WINDOW_SIZE_MAX,
+                },
+            ),
+            ("maximized", Field::Flag),
         ],
     },
 ];

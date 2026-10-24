@@ -2177,6 +2177,24 @@ fn focused_workspace(snapshot: &ClientShellSnapshot) -> Option<&ClientShellWorks
 /// The chrome above the grid, the prototype's five-part shell's first part:
 /// who this window is (brand, workspace, daemon), the one search that reaches
 /// every command, and the local toggles — with the window controls at the end.
+/// The closing window's geometry goes into the config, so the next launch
+/// opens the shape this one closes with. Both close paths — the strip's own X
+/// (Linux) and the window manager's — come through here.
+pub(crate) fn save_window_bounds(window: &Window, cx: &mut App) {
+    let size = match window.window_bounds() {
+        WindowBounds::Windowed(bounds)
+        | WindowBounds::Maximized(bounds)
+        | WindowBounds::Fullscreen(bounds) => bounds.size,
+    };
+    config::update(cx, |config| {
+        config.window.set_bounds(
+            size.width.as_f32(),
+            size.height.as_f32(),
+            window.is_maximized(),
+        )
+    });
+}
+
 /// The strip is gpui-kit's `TitleBar`: it owns the dragging, the double-click
 /// zoom and the min/max/close cluster, drawing the latter only when the
 /// window is client-decorated (a compositor manager's server decorations
@@ -2197,6 +2215,14 @@ fn title_bar(
         .gap_2()
         .bg(theme.title_bar)
         .border_color(theme.title_bar_border)
+        // The strip's own close button would remove the window outright; the
+        // geometry goes into the config first, so the next launch opens the
+        // shape this one closes with. The window manager's close path — a
+        // server-decorated window's, or a WM's kill — is hooked in `lib.rs`.
+        .on_close_window(|_, window, cx| {
+            save_window_bounds(window, cx);
+            window.remove_window();
+        })
         // The window says its name before anything else.
         .child(
             div()
