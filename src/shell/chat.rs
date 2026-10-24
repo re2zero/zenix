@@ -31,7 +31,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use gpui_kit::component::input::{InputEvent, Textarea, TextareaState};
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::searchable_list::{SearchableListItem, SearchableVec};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
@@ -79,7 +79,7 @@ struct ChatPanel {
     /// is `streaming`.
     messages: Vec<ChatMessage>,
     streaming: Option<usize>,
-    input: Entity<InputState>,
+    input: Entity<TextareaState>,
     /// The provider the next turn runs on, and the one the composer names. Read
     /// once when the panel is built and then owned by the composer: a picker
     /// that re-read the file would forget what the user just chose.
@@ -113,12 +113,22 @@ struct ChatPanel {
 
 impl ChatPanel {
     fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder(t("ai.placeholder")));
+        // A multi-line composer: the input itself owns the Enter rule, so
+        // Shift+Enter inserts a newline while a plain Enter submits.
+        let input = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .placeholder(t("ai.placeholder"))
+                .submit_on_enter(true)
+                .auto_grow(1, 6)
+        });
         let subscription = cx.subscribe_in(
             &input,
             window,
             |panel: &mut Self, _input, event: &InputEvent, window, cx| match event {
-                InputEvent::PressEnter { .. } => panel.send(window, cx),
+                // Shift+Enter has already inserted its newline; only the plain
+                // Enter is the send path.
+                InputEvent::PressEnter { shift: false, .. } => panel.send(window, cx),
+                InputEvent::PressEnter { .. } => {}
                 InputEvent::Change => cx.notify(),
                 InputEvent::Focus | InputEvent::Blur => {}
             },
@@ -530,7 +540,7 @@ fn message_row(
         row = row.child(tool_card(index, call, open, cx));
     }
     for line in message.content.split('\n') {
-        row = row.child(div().w_full().text_sm().child(line.to_owned()));
+        row = row.child(div().w_full().text_size(px(12.5)).child(line.to_owned()));
     }
     row.into_any_element()
 }
@@ -612,7 +622,10 @@ fn tool_card(
     let element = SharedString::from(id.clone());
     let expanded = open.contains(&id);
     let (status, color) = match call.status {
-        ToolCallStatus::Running => ("running", theme.accent),
+        // The prototype's running card is the info blue, not the surface
+        // token `accent` (which is a fill this theme happens to share colors
+        // with nothing in the status vocabulary).
+        ToolCallStatus::Running => ("running", theme.info),
         ToolCallStatus::Completed => ("done", theme.success),
         ToolCallStatus::Failed => ("failed", theme.danger),
     };
@@ -625,7 +638,7 @@ fn tool_card(
     // A call still running carries the accent on its edge, so a turn that is
     // waiting on a tool reads before its status word does.
     let border = if call.status == ToolCallStatus::Running {
-        theme.accent
+        theme.info.opacity(0.4)
     } else {
         theme.border
     };
@@ -692,61 +705,86 @@ fn tool_card(
     .into_any_element()
 }
 
-/// The composer: what this conversation is running on, the message box, and the
-/// two pickers that decide the next turn. The pickers read the catalog this
-/// client actually has — the configured providers and the levels
-/// [`ThinkingLevel`] defines — so neither is a list invented here.
+/// The composer: the prototype's rounded card holding what the next turn runs
+/// on, the message box, and the two pickers that decide the turn. The pickers
+/// read the catalog this client actually has — the configured providers and the
+/// levels [`ThinkingLevel`] defines — so neither is a list invented here.
 fn composer(panel: &ChatPanel, theme: &Theme, cx: &mut Context<ChatPanel>) -> AnyElement {
+    let fresh = cx.listener(|panel, _: &ClickEvent, _window, cx| panel.new_session(cx));
+    let stop = cx.listener(|panel, _: &ClickEvent, _window, cx| panel.stop(cx));
     v_flex()
         .flex_none()
         .w_full()
-        .border_t_1()
-        .border_color(theme.border)
-        .child(context_line(panel, theme, cx))
+        .px_2()
+        .pb_2()
         .child(
-            h_flex()
+            v_flex()
                 .w_full()
-                .px_2()
-                .pt_1()
-                .gap_2()
-                .items_center()
-                .child(div().flex_1().min_w_0().child(Input::new(&panel.input)))
-                .child(send_button(panel, theme, cx)),
-        )
-        .child(
-            h_flex()
-                .w_full()
-                .px_2()
-                .py_1()
+                .rounded(px(16.))
+                .border_1()
+                .border_color(theme.border)
+                .bg(theme.muted)
+                .p(px(9.))
                 .gap_1()
-                .items_center()
-                // The model's name is the longer of the two, so it takes the
-                // room and the level keeps a fixed column.
+                .child(context_line(panel, theme, fresh, stop))
+                // The prototype's 52px message box, which grows with the text
+                // up to six rows: a pasted error or a list keeps its lines
+                // instead of being flattened into one.
                 .child(
-                    div().flex_1().min_w_0().child(
-                        Select::new(&panel.model_select)
-                            .with_size(Size::XSmall)
-                            .placeholder(t("ai.config_empty"))
-                            .menu_width(px(260.))
-                            .disabled(panel.provider.is_none()),
-                    ),
+                    h_flex()
+                        .w_full()
+                        .min_h(px(52.))
+                        .items_start()
+                        .pt(px(2.))
+                        .child(
+                            div().min_w_0().flex_1().child(
+                                Textarea::new(&panel.input)
+                                    .appearance(false)
+                                    .bordered(false),
+                            ),
+                        ),
                 )
                 .child(
-                    div().w(px(120.)).child(
-                        Select::new(&panel.effort_select)
-                            .with_size(Size::XSmall)
-                            .placeholder(t("ai.chat.effort"))
-                            .menu_width(px(180.))
-                            .disabled(panel.provider.is_none()),
-                    ),
+                    h_flex()
+                        .w_full()
+                        .gap_1()
+                        .items_center()
+                        .child(
+                            div().w(px(160.)).min_w_0().child(
+                                Select::new(&panel.model_select)
+                                    .appearance(false)
+                                    .with_size(Size::XSmall)
+                                    .placeholder(t("ai.chat.model"))
+                                    .menu_width(px(260.))
+                                    .disabled(panel.provider.is_none()),
+                            ),
+                        )
+                        .child(
+                            div().w(px(84.)).child(
+                                Select::new(&panel.effort_select)
+                                    .appearance(false)
+                                    .with_size(Size::XSmall)
+                                    .placeholder(t("ai.chat.effort"))
+                                    .menu_width(px(180.))
+                                    .disabled(panel.provider.is_none()),
+                            ),
+                        )
+                        .child(div().flex_1())
+                        .child(send_button(panel, theme, cx)),
                 ),
         )
         .into_any_element()
 }
 
-/// One line naming what the next turn runs on, and the two controls that act on
-/// the conversation rather than on its text.
-fn context_line(panel: &ChatPanel, theme: &Theme, cx: &mut Context<ChatPanel>) -> AnyElement {
+/// The line above the message box: what the next turn runs on, how much has
+/// been said, and the two controls that act on the conversation rather than on
+/// its text. All of it sits inside the composer card, as the prototype draws it.
+fn context_line(
+    panel: &ChatPanel,
+    theme: &Theme,
+    fresh: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    stop: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> AnyElement {
     let detail = match panel.provider.as_ref() {
         Some(provider) if panel.is_streaming() => {
             format!("{} · {}", provider.name, t("ai.chat.streaming"))
@@ -760,37 +798,53 @@ fn context_line(panel: &ChatPanel, theme: &Theme, cx: &mut Context<ChatPanel>) -
         .filter(|part| !part.is_empty())
         .collect::<Vec<&str>>()
         .join(" · "),
-        None => format!("{} {}", t("ai.config_empty"), t("ai.config_empty_hint")),
+        None => t("ai.config_empty"),
     };
-    let stop = cx.listener(|panel, _: &ClickEvent, _window, cx| panel.stop(cx));
-    let fresh = cx.listener(|panel, _: &ClickEvent, _window, cx| panel.new_session(cx));
+    let turns = rust_i18n::t!("ai.chat.turns", count = panel.messages.len()).to_string();
     h_flex()
         .flex_none()
         .w_full()
-        .px_2()
-        .pt_1()
-        .gap_2()
+        .px(px(2.))
+        .pb(px(2.))
+        .gap_1p5()
         .items_center()
-        .child(
-            div()
-                .min_w_0()
-                .flex_1()
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .child(detail),
-        )
-        .child(button(
+        .font_family(theme.mono_font_family.clone())
+        .text_size(px(10.))
+        .text_color(theme.muted_foreground)
+        .child(Icon::default().data(TERMINAL_ICON).w(px(10.)).h(px(10.)))
+        .child(div().min_w_0().flex_1().truncate().child(detail))
+        .child(div().flex_none().child(turns))
+        .child(quiet_button(
             "chat-new",
             t("ai.chat.new_session"),
-            true,
-            fresh,
             theme,
+            fresh,
         ))
         .children(
             panel
                 .is_streaming()
-                .then(|| button("chat-stop", t("ai.chat.stop"), true, stop, theme)),
+                .then(|| quiet_button("chat-stop", t("ai.chat.stop"), theme, stop)),
         )
+        .into_any_element()
+}
+
+/// A control that belongs to the conversation rather than to its text: no
+/// fill, no border, the composer's own mono type, lit on hover.
+fn quiet_button(
+    id: &'static str,
+    label: String,
+    theme: &Theme,
+    click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+) -> AnyElement {
+    div()
+        .id(id)
+        .px(px(4.))
+        .rounded(px(3.))
+        .cursor_pointer()
+        .text_color(theme.muted_foreground)
+        .hover(|style| style.bg(theme.list_hover).text_color(theme.foreground))
+        .on_click(click)
+        .child(label)
         .into_any_element()
 }
 
@@ -802,7 +856,7 @@ fn send_button(panel: &ChatPanel, theme: &Theme, cx: &mut Context<ChatPanel>) ->
     let ready = !panel.is_streaming() && !panel.input.read(cx).value().trim().is_empty();
     div()
         .id("chat-send")
-        .size(px(26.))
+        .size(px(28.))
         .rounded_full()
         .flex()
         .items_center()
@@ -810,8 +864,8 @@ fn send_button(panel: &ChatPanel, theme: &Theme, cx: &mut Context<ChatPanel>) ->
         .flex_none()
         .when(ready, |button| {
             button
-                .bg(theme.accent)
-                .text_color(theme.accent_foreground)
+                .bg(theme.primary)
+                .text_color(theme.primary_foreground)
                 .cursor_pointer()
                 .on_click(send)
         })
@@ -869,40 +923,11 @@ fn empty_state(panel: &ChatPanel, theme: &Theme) -> AnyElement {
         .into_any_element()
 }
 
-/// A card-styled button, as the shell's own title bar draws them. A disabled
-/// one keeps its shape but takes no clicks.
-fn button(
-    id: &'static str,
-    label: String,
-    enabled: bool,
-    click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
-    theme: &Theme,
-) -> AnyElement {
-    div()
-        .id(id)
-        .px_2()
-        .py_0p5()
-        .rounded_sm()
-        .text_xs()
-        .bg(if enabled {
-            theme.secondary
-        } else {
-            theme.muted
-        })
-        .text_color(if enabled {
-            theme.secondary_foreground
-        } else {
-            theme.muted_foreground
-        })
-        .when(enabled, move |button| {
-            button.cursor_pointer().on_click(click)
-        })
-        .child(label)
-        .into_any_element()
-}
-
 /// The composer's send trigger, the same stroke the prototype draws there.
 const ARROW_UP_ICON: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg>"#;
+
+/// The mark beside the composer's context line: the pane-shaped terminal.
+const TERMINAL_ICON: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></svg>"#;
 
 /// What one stream event did, for the panel to act on beyond the message.
 enum Folded {
@@ -1154,7 +1179,7 @@ fn role_label(role: &str) -> String {
 fn who_row(message: &ChatMessage, theme: &Theme) -> AnyElement {
     let user = message.role == "user";
     let (mark, mark_bg, mark_fg) = if user {
-        (t("ai.chat.self"), theme.list_active, theme.foreground)
+        (t("ai.chat.self"), theme.secondary, theme.foreground)
     } else {
         ("z".to_owned(), theme.magenta.opacity(0.22), theme.magenta)
     };
@@ -1196,7 +1221,9 @@ fn who_row(message: &ChatMessage, theme: &Theme) -> AnyElement {
 fn clock_of(timestamp: &str) -> Option<String> {
     let bytes = timestamp.as_bytes();
     if bytes.len() >= 16 && bytes[10] == b'T' {
-        Some(timestamp[11..16].to_owned())
+        // `get` rather than a range: a store that ever holds a non-ASCII
+        // timestamp reads as no time instead of panicking mid-render.
+        timestamp.get(11..16).map(str::to_owned)
     } else {
         None
     }
@@ -1283,6 +1310,8 @@ mod tests {
         assert_eq!(clock_of("2026-10-23T12:04:31"), Some("12:04".to_owned()));
         assert_eq!(clock_of(""), None);
         assert_eq!(clock_of("not-a-timestamp"), None);
+        // The byte at 16 falls inside a character: no time, not a panic.
+        assert_eq!(clock_of("2026-10-23T早早早"), None);
     }
 
     #[test]

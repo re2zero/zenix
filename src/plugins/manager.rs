@@ -87,31 +87,48 @@ pub(crate) fn overlay(
     let close = dispatch.clone();
     let mut boxed = v_flex()
         .id("plugin-manager")
-        .w(px(940.))
-        .h(px(600.))
+        .w(px(1060.))
+        .h(px(680.))
         .overflow_hidden()
-        .rounded_md()
+        .rounded(px(8.))
         .bg(theme.background)
         .text_color(theme.foreground)
         .border_1()
         .border_color(theme.border)
+        .shadow(vec![
+            BoxShadow::new(px(0.), px(18.), black().opacity(0.45)).blur_radius(px(48.)),
+            BoxShadow::new(px(0.), px(2.), black().opacity(0.3)).blur_radius(px(8.)),
+        ])
         .track_focus(focus)
         .on_key_down(key)
         .child(
             h_flex()
                 .w_full()
                 .flex_none()
-                .px_2()
-                .py_1()
+                .h(px(40.))
+                .px(px(12.))
                 .gap_2()
                 .items_center()
                 .border_b_1()
                 .border_color(theme.border)
-                .child(div().flex_none().text_sm().child(t("shell.manager.title")))
                 .child(
                     div()
                         .flex_none()
-                        .text_xs()
+                        .text_size(px(13.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(t("shell.manager.title")),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .px(px(6.))
+                        .py(px(1.))
+                        .rounded_full()
+                        .border_1()
+                        .border_color(theme.border)
+                        .bg(theme.muted)
+                        .font_family(theme.mono_font_family.clone())
+                        .text_size(px(10.5))
                         .text_color(theme.muted_foreground)
                         .child("plugin.list"),
                 )
@@ -136,7 +153,7 @@ pub(crate) fn overlay(
                 .p_3()
                 .text_sm()
                 .text_color(theme.muted_foreground)
-                .child(t("views.empty.plugins")),
+                .child(t("shell.views.empty.plugins")),
         ),
         Some(plugin) => boxed.child(
             h_flex()
@@ -156,8 +173,12 @@ pub(crate) fn overlay(
         .items_center()
         .justify_center()
         // The shell stays visible behind it: a plugin is what it contributes to
-        // what is already on screen.
-        .bg(theme.background.opacity(0.72))
+        // what is already on screen. The same scrim the settings dialog wears.
+        .bg(if theme.is_dark() {
+            black().opacity(0.45)
+        } else {
+            black().opacity(0.22)
+        })
         .child(boxed)
         .into_any_element()
 }
@@ -256,7 +277,7 @@ fn list(manager: &Manager, state: &PluginState, theme: &Theme, dispatch: &Dispat
     });
     v_flex()
         .id("plugin-manager-list")
-        .w(px(260.))
+        .w(px(290.))
         .h_full()
         .flex_none()
         .py_1()

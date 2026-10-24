@@ -1,8 +1,9 @@
 //! The chrome's theme families.
 //!
-//! Four gpui-component theme sets ride in the binary (`include_str!` over
-//! `assets/themes/`; the files are not packaged, nothing reads them from
-//! disk). [`register`] hands them to gpui-kit's [`ThemeRegistry`] once;
+//! Five theme sets ride in the binary (`include_str!` over `assets/themes/`;
+//! the files are not packaged, nothing reads them from disk): zenix's own pair,
+//! built from `docs/ui/prototype.html`'s token block, and the four embedded
+//! families. [`register`] hands them to gpui-kit's [`ThemeRegistry`] once;
 //! [`apply`] points the global theme's light and dark slots at the family's
 //! configs and lets [`Theme::change`] reload whichever mode is current.
 //!
@@ -13,11 +14,12 @@
 use gpui_kit::App;
 use gpui_kit::component::{Theme, ThemeMode, ThemeRegistry};
 
-/// The theme families a config can name, in picker order. `default` is
-/// gpui-kit's own light and dark pair.
+/// The theme families a config can name, in picker order. `default` is zenix's
+/// own pair, the design's token values; the others are the embedded sets.
 pub const NAMES: &[&str] = &["default", "gruvbox", "solarized", "tokyonight", "matrix"];
 
 const SETS: &[&str] = &[
+    include_str!("../../assets/themes/zenix.json"),
     include_str!("../../assets/themes/gruvbox.json"),
     include_str!("../../assets/themes/solarized.json"),
     include_str!("../../assets/themes/tokyonight.json"),
@@ -25,8 +27,14 @@ const SETS: &[&str] = &[
 ];
 
 /// The variant config a family carries for a mode, if it carries one at all.
+///
+/// `default` is zenix's own palette (the design's token values, embedded as
+/// `Zenix Dark`/`Zenix Light`), not gpui-kit's built-in pair: the chrome's
+/// default look is the design, and the picker's first entry says so.
 fn variant(family: &str, dark: bool) -> Option<&'static str> {
     match (family, dark) {
+        ("default", false) => Some("Zenix Light"),
+        ("default", true) => Some("Zenix Dark"),
         ("gruvbox", false) => Some("Gruvbox Light"),
         ("gruvbox", true) => Some("Gruvbox Dark"),
         ("solarized", false) => Some("Solarized Light"),
@@ -110,6 +118,8 @@ mod tests {
         assert_eq!(
             carried,
             vec![
+                ("Zenix Light".to_owned(), "light".to_owned()),
+                ("Zenix Dark".to_owned(), "dark".to_owned()),
                 ("Gruvbox Light".to_owned(), "light".to_owned()),
                 ("Gruvbox Dark".to_owned(), "dark".to_owned()),
                 ("Solarized Light".to_owned(), "light".to_owned()),
@@ -125,8 +135,8 @@ mod tests {
 
     #[test]
     fn families_resolve_per_mode_and_fall_back_honestly() {
-        assert_eq!(variant("default", false), None);
-        assert_eq!(variant("default", true), None);
+        assert_eq!(variant("default", false), Some("Zenix Light"));
+        assert_eq!(variant("default", true), Some("Zenix Dark"));
         assert_eq!(variant("gruvbox", false), Some("Gruvbox Light"));
         assert_eq!(variant("gruvbox", true), Some("Gruvbox Dark"));
         assert_eq!(variant("solarized", false), Some("Solarized Light"));

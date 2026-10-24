@@ -66,7 +66,12 @@ impl Entry {
                 .find(|info| info.command == *command)
                 .map(|info| info.label())
                 .unwrap_or_else(|| format!("{command:?}")),
-            Self::Workspace { label, .. } => label.clone(),
+            // The prototype's workspace row reads "name — branch", so the
+            // branch is on the label line rather than a second dim one.
+            Self::Workspace { label, branch, .. } => match branch {
+                Some(branch) => format!("{label} — {branch}"),
+                None => label.clone(),
+            },
             Self::Plugin(entry) => entry.label().to_owned(),
         }
     }
@@ -177,6 +182,10 @@ impl Palette {
 
     /// The row Enter runs, as an index into `entries`.
     pub(crate) fn keystroke(&mut self, keystroke: &Keystroke, rows: usize) -> Key {
+        // The keyboard stays inside the rows the palette draws. The rest are
+        // reached by narrowing the query or by scrolling to them with the
+        // pointer, so Enter can never run a row the user cannot see.
+        let visible = rows.min(ROWS_SHOWN);
         // A chord is never query text: the palette has no shortcuts of its own,
         // and typing a modified key into the search would be a surprise. Shift is
         // not a chord: it is how an upper-case letter or a shifted symbol is typed.
@@ -187,10 +196,10 @@ impl Palette {
         match keystroke.key.as_str() {
             "escape" => Key::Close,
             "enter" => {
-                if rows == 0 {
+                if visible == 0 {
                     Key::Handled
                 } else {
-                    Key::Run(self.selected.min(rows - 1))
+                    Key::Run(self.selected.min(visible - 1))
                 }
             }
             "up" => {
@@ -198,8 +207,8 @@ impl Palette {
                 Key::Handled
             }
             "down" => {
-                if rows > 0 {
-                    self.selected = (self.selected + 1).min(rows - 1);
+                if visible > 0 {
+                    self.selected = (self.selected + 1).min(visible - 1);
                 }
                 Key::Handled
             }
@@ -247,6 +256,8 @@ pub(crate) fn overlay(
     let theme = cx.theme().clone();
     let matches = palette.matches(entries);
     let selected = palette.selected();
+    // What the keyboard cannot reach without narrowing the query.
+    let hidden = matches.len().saturating_sub(ROWS_SHOWN);
     let close = dispatch.clone();
     let query = if palette.query().is_empty() {
         div()
@@ -291,14 +302,19 @@ pub(crate) fn overlay(
     }
     let boxed = v_flex()
         .id("palette")
-        .w(px(560.))
-        .max_h(px(420.))
+        .w(px(680.))
+        .max_w_full()
+        .max_h(px(680.))
         .overflow_hidden()
-        .rounded_md()
+        .rounded(px(8.))
         .bg(theme.background)
         .text_color(theme.foreground)
         .border_1()
         .border_color(theme.border)
+        .shadow(vec![
+            BoxShadow::new(px(0.), px(18.), black().opacity(0.45)).blur_radius(px(48.)),
+            BoxShadow::new(px(0.), px(2.), black().opacity(0.3)).blur_radius(px(8.)),
+        ])
         .track_focus(focus)
         // Every key belongs to the palette while it is open, including the ones
         // nothing is bound to: the shell's own handler decides what a keystroke
@@ -307,8 +323,8 @@ pub(crate) fn overlay(
         .child(
             h_flex()
                 .w_full()
-                .px_2()
-                .py_1()
+                .px(px(12.))
+                .py(px(10.))
                 .gap_2()
                 .items_center()
                 .border_b_1()
@@ -322,6 +338,12 @@ pub(crate) fn overlay(
                 )
                 .child(query)
                 .child(div().flex_1())
+                .children((hidden > 0).then(|| {
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(rust_i18n::t!("shell.palette.more", count = hidden).to_string())
+                }))
                 .child(
                     div()
                         .px_1()
@@ -333,7 +355,11 @@ pub(crate) fn overlay(
                         .child("Esc"),
                 ),
         )
-        .child(div().w_full().flex_1().min_h_0().child(list))
+        // Exactly the rows the keyboard can reach: what is drawn is what Enter
+        // can run. Further matches are reached by narrowing the query, and the
+        // count beside the query says how many are left. Scrolling (and keeping
+        // the selection in view) lands with the real input in Wave 2.
+        .child(div().w_full().child(list))
         // The keyboard path, where a first-time look for it ends: the same
         // three keys the rows above answer to, and the one fact that keeps the
         // plugin section from reading like a second command system. It carries
@@ -348,7 +374,7 @@ pub(crate) fn overlay(
                 .bg(theme.background)
                 .border_t_1()
                 .border_color(theme.border)
-                .text_xs()
+                .text_size(px(10.5))
                 .text_color(theme.muted_foreground)
                 .child(t("shell.palette.hints"))
                 .child(div().flex_1())
@@ -361,7 +387,9 @@ pub(crate) fn overlay(
         .occlude()
         .justify_center()
         .items_start()
-        .pt(px(72.))
+        // The prototype hangs the palette at 11vh; 110px is that line at the
+        // design's 1000px height.
+        .pt(px(110.))
         .on_click(move |_, window, cx| {
             close(ShellRequest::Command(Command::TogglePalette), window, cx);
         })
@@ -377,9 +405,11 @@ fn group_header(group: u8, theme: &Theme) -> AnyElement {
         _ => "shell.palette.group_actions",
     };
     div()
-        .px_2()
-        .pt_1()
-        .text_xs()
+        .px(px(8.))
+        .pt(px(6.))
+        .pb(px(3.))
+        .text_size(px(10.))
+        .font_weight(FontWeight::SEMIBOLD)
         .text_color(theme.muted_foreground)
         .child(t(key))
         .into_any_element()
@@ -401,9 +431,10 @@ fn row(
     let mut row = h_flex()
         .id(("palette-row", index))
         .w_full()
-        .px_2()
-        .py_1()
-        .gap_2()
+        .px(px(8.))
+        .py(px(6.))
+        .gap(px(9.))
+        .rounded(px(5.))
         .items_center()
         .cursor_pointer()
         .on_click(move |_, window, cx| {
@@ -420,29 +451,32 @@ fn row(
             )),
             _ => None,
         })
+        // One line per row, as the prototype's palette reads: the label owns
+        // the row, the key or count at its right. The id/branch detail stays
+        // searchable without being drawn twice under the thing it names.
         .child(
-            v_flex()
+            div()
                 .min_w_0()
                 .flex_1()
-                .child(div().text_sm().child(entry.label()))
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(entry.detail()),
-                ),
+                .truncate()
+                .text_size(px(12.5))
+                .child(entry.label()),
         );
     if let Some(hint) = hint {
         row = row.child(
             div()
                 .flex_none()
-                .text_xs()
+                .font_family(theme.mono_font_family.clone())
+                .text_size(px(10.5))
                 .text_color(theme.muted_foreground)
                 .child(hint),
         );
     }
     if selected {
-        row.bg(theme.selection).into_any_element()
+        // `list_active` is clamped to a 20% tint by the theme layer; the
+        // prototype's selected row is an opaque step above the dialog, so the
+        // secondary surface is the honest match here.
+        row.bg(theme.secondary).into_any_element()
     } else {
         row.into_any_element()
     }
@@ -549,6 +583,21 @@ key = "{key}"
         assert_eq!(palette.selected(), 0);
     }
 
+    /// Twenty matches, eight rows drawn: the keyboard may not run the twelfth.
+    #[test]
+    fn the_keyboard_stays_inside_the_rows_the_palette_draws() {
+        let mut palette = Palette::default();
+        palette.open();
+        for _ in 0..20 {
+            palette.keystroke(&typed("down"), 20);
+        }
+        assert_eq!(palette.selected(), ROWS_SHOWN - 1);
+        assert_eq!(
+            palette.keystroke(&typed("enter"), 20),
+            Key::Run(ROWS_SHOWN - 1)
+        );
+    }
+
     /// The query changes which rows exist, so a selection from the previous
     /// query would point at a different command.
     #[test]
@@ -610,7 +659,7 @@ key = "{key}"
             branch: Some("feat/x".into()),
             tabs: 2,
         };
-        assert_eq!(row.label(), "BitFun");
+        assert_eq!(row.label(), "BitFun — feat/x");
         assert_eq!(row.detail(), "feat/x");
         assert_eq!(row.group(), 1);
         assert_eq!(Entry::Command(Command::ToggleSettings).group(), 0);
@@ -632,7 +681,7 @@ key = "{key}"
         }
         let matches = palette.matches(&entries);
         assert_eq!(matches.len(), 1, "the query reaches the branch");
-        assert_eq!(matches[0].label(), "BitFun");
+        assert_eq!(matches[0].label(), "BitFun — feat/x");
     }
 
     #[test]

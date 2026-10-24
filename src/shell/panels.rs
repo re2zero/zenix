@@ -9,6 +9,7 @@
 use std::path::{Path, PathBuf};
 
 use gpui_kit::component::{ActiveTheme, Icon, Theme, h_flex, v_flex};
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use herdr_client::protocol::{
     AgentStatus, ClientShellAgent, ClientShellSnapshot, ClientShellTab, ClientShellWorkspace,
@@ -106,15 +107,42 @@ pub(crate) fn empty_view(title: String, body: String, theme: &Theme) -> AnyEleme
 /// snapshot carries, and the tree reads it the same way the daemon does — the
 /// focused workspace is the one whose tabs are on show.
 fn render_workspaces(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyElement {
-    let mut column = v_flex().w_full().px_1().py_1().gap_0p5().child(header(
-        "workspaces-header",
-        &t("shell.workspaces"),
-        // The directory names the action; the button is its one sidebar mount.
-        &t("command.workspace.new"),
-        ShellRequest::Command(Command::NewWorkspace),
-        None,
-        invocation,
-    ));
+    let theme = invocation.theme;
+    let new_dispatch = invocation.dispatch.clone();
+    let hover = theme.sidebar_accent;
+    let mut column = v_flex().w_full().px(px(6.)).py(px(6.)).gap_0p5().child(
+        h_flex()
+            .w_full()
+            .h(px(24.))
+            .px(px(6.))
+            .gap(px(6.))
+            .items_center()
+            .child(
+                div()
+                    .text_size(px(10.5))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.muted_foreground)
+                    .child(t("shell.workspaces").to_uppercase()),
+            )
+            .child(div().flex_1())
+            .child(
+                div()
+                    .id("workspaces-new")
+                    .w(px(20.))
+                    .h(px(20.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.))
+                    .cursor_pointer()
+                    .text_color(theme.muted_foreground)
+                    .hover(move |style| style.bg(hover))
+                    .on_click(move |_, window, cx| {
+                        new_dispatch(ShellRequest::Command(Command::NewWorkspace), window, cx);
+                    })
+                    .child(Icon::default().data(PLUS).w(px(12.)).h(px(12.))),
+            ),
+    );
     let mut count = 0;
     if let Some(snapshot) = invocation.snapshot {
         count = snapshot.workspaces.len();
@@ -152,11 +180,22 @@ fn workspace_rows(
 ) -> Vec<AnyElement> {
     let mut rows = vec![workspace_row(index, workspace, snapshot, invocation)];
     if workspace.focused {
-        rows.extend(
-            workspace_tabs(snapshot, &workspace.workspace_id)
-                .into_iter()
-                .enumerate()
-                .map(|(tab_index, tab)| tab_sub_row(tab_index, tab, snapshot, invocation)),
+        // The prototype's `.pgroup`: the open workspace's tabs hang off a
+        // hairline, so the tree shows what belongs to what.
+        rows.push(
+            v_flex()
+                .w_full()
+                .ml(px(12.))
+                .pl(px(2.))
+                .border_l_1()
+                .border_color(invocation.theme.sidebar_border)
+                .children(
+                    workspace_tabs(snapshot, &workspace.workspace_id)
+                        .into_iter()
+                        .enumerate()
+                        .map(|(tab_index, tab)| tab_sub_row(tab_index, tab, snapshot, invocation)),
+                )
+                .into_any_element(),
         );
     }
     rows
@@ -185,9 +224,34 @@ fn tab_pane_count(snapshot: &ClientShellSnapshot, tab_id: &str) -> usize {
         .count()
 }
 
-/// The glyph a nested tab row leads with, the same inline-svg shape the rest of
-/// the chrome draws its icons with: a pane, since that is what a tab opens.
+/// The glyph a tree row leads with: a folder for the place, a pane for a tab.
+const FOLDER_ICON: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>"#;
 const TAB_ICON: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M12 15h5"/></svg>"#;
+const PLUS: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>"#;
+
+/// The open/closed mark of a tree row, the prototype's twisty.
+fn twisty(open: bool, theme: &Theme) -> AnyElement {
+    div()
+        .w(px(10.))
+        .flex_none()
+        .text_size(px(9.))
+        .text_color(theme.muted_foreground)
+        .child(if open { "▾" } else { "▸" })
+        .into_any_element()
+}
+
+/// The 2px bar a selected row carries at its leading edge.
+fn selected_bar(theme: &Theme) -> AnyElement {
+    div()
+        .absolute()
+        .left_0()
+        .top(px(6.))
+        .bottom(px(6.))
+        .w(px(2.))
+        .rounded_full()
+        .bg(theme.primary)
+        .into_any_element()
+}
 
 /// One nested tab row: a click focuses the tab, the same request the tab strip's
 /// pills answer, and its trail is what the tab is holding — its agents' dot and
@@ -205,15 +269,18 @@ fn tab_sub_row(
     let row = h_flex()
         .id(("workspace-tab", index))
         .w_full()
-        .pl_4()
-        .pr_1()
-        .py_0p5()
-        .gap_1()
+        .h(px(26.))
+        .relative()
+        .pl(px(22.))
+        .pr(px(7.))
+        .gap(px(7.))
         .items_center()
-        .rounded_sm()
+        .rounded(px(6.))
         .cursor_pointer()
         .hover(|style| style.bg(theme.sidebar_accent))
         .on_click(move |_, window, cx| dispatch(ShellRequest::FocusTab(tab_id.clone()), window, cx))
+        .when(active, |row| row.child(selected_bar(theme)))
+        .child(twisty(active, theme))
         .child(
             div()
                 .flex_none()
@@ -224,7 +291,7 @@ fn tab_sub_row(
             div()
                 .min_w_0()
                 .flex_1()
-                .text_sm()
+                .text_size(px(12.))
                 .text_color(if active {
                     theme.foreground
                 } else {
@@ -233,21 +300,24 @@ fn tab_sub_row(
                 .child(tab.label.clone()),
         )
         .children(
-            super::tab_agent_status(&snapshot.agents, &tab.tab_id).map(|status| {
-                div()
-                    .id(("workspace-tab-dot", index))
-                    .child(status_dot(status, theme))
-            }),
+            super::tab_agent_status(&snapshot.agents, &tab.tab_id)
+                .filter(|status| !matches!(status, AgentStatus::Idle | AgentStatus::Unknown))
+                .map(|status| {
+                    div()
+                        .id(("workspace-tab-dot", index))
+                        .child(status_dot(status, theme))
+                }),
         )
         .child(
             div()
                 .flex_none()
-                .text_xs()
+                .font_family(theme.mono_font_family.clone())
+                .text_size(px(10.5))
                 .text_color(theme.muted_foreground)
                 .child(tab_pane_count(snapshot, &tab.tab_id).to_string()),
         );
     if active {
-        row.bg(theme.selection).into_any_element()
+        row.bg(theme.sidebar_accent).into_any_element()
     } else {
         row.into_any_element()
     }
@@ -265,16 +335,18 @@ fn workspace_row(
     let workspace_id = workspace.workspace_id.clone();
     let selected = workspace.focused;
     let name = workspace.label.clone();
-    let detail = workspace_detail(snapshot, workspace);
+    let tab_count = workspace_tabs(snapshot, &workspace.workspace_id).len();
     let row = h_flex()
         .id(("workspace", index))
         .w_full()
-        .px_1()
-        .py_0p5()
-        .gap_1()
+        .h(px(28.))
+        .relative()
+        .px(px(7.))
+        .gap(px(7.))
         .items_center()
-        .rounded_sm()
+        .rounded(px(6.))
         .cursor_pointer()
+        .hover(|style| style.bg(theme.sidebar_accent))
         .on_click(move |_, window, cx| {
             dispatch(
                 ShellRequest::FocusWorkspace(workspace_id.clone()),
@@ -303,50 +375,45 @@ fn workspace_row(
                 );
             }
         })
-        .child(status_dot(workspace.agent_status, theme))
+        .when(selected, |row| row.child(selected_bar(theme)))
+        .child(twisty(selected, theme))
         .child(
-            v_flex()
+            div()
+                .flex_none()
+                .text_color(theme.muted_foreground)
+                .child(Icon::default().data(FOLDER_ICON).w(px(13.)).h(px(13.))),
+        )
+        .child(
+            div()
                 .min_w_0()
                 .flex_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(if selected {
-                            theme.foreground
-                        } else {
-                            theme.sidebar_foreground
-                        })
-                        .child(name),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(detail),
-                ),
+                .text_size(px(12.))
+                .text_color(if selected {
+                    theme.foreground
+                } else {
+                    theme.sidebar_foreground
+                })
+                .child(name),
+        )
+        .children(
+            (!matches!(
+                workspace.agent_status,
+                AgentStatus::Idle | AgentStatus::Unknown
+            ))
+            .then(|| status_dot(workspace.agent_status, theme)),
+        )
+        .child(
+            div()
+                .flex_none()
+                .font_family(theme.mono_font_family.clone())
+                .text_size(px(10.5))
+                .text_color(theme.muted_foreground)
+                .child(tab_count.to_string()),
         );
     if selected {
-        row.bg(theme.selection).into_any_element()
+        row.bg(theme.sidebar_accent).into_any_element()
     } else {
         row.into_any_element()
-    }
-}
-
-/// A workspace's cwd and git branch, as one dim line. The cwd comes from the
-/// workspace's focused pane; the daemon carries no workspace-level cwd (only
-/// the default one a new workspace would start in).
-fn workspace_detail(snapshot: &ClientShellSnapshot, workspace: &ClientShellWorkspace) -> String {
-    let cwd = snapshot
-        .panes
-        .iter()
-        .filter(|pane| pane.workspace_id == workspace.workspace_id)
-        .min_by_key(|pane| u8::from(!pane.focused))
-        .and_then(|pane| pane.foreground_cwd.as_deref().or(pane.cwd.as_deref()));
-    match (cwd, workspace.branch.as_deref()) {
-        (Some(cwd), Some(branch)) => format!("{cwd} · {branch}"),
-        (Some(cwd), None) => cwd.to_owned(),
-        (None, Some(branch)) => branch.to_owned(),
-        (None, None) => String::new(),
     }
 }
 
@@ -355,9 +422,9 @@ fn workspace_detail(snapshot: &ClientShellSnapshot, workspace: &ClientShellWorks
 /// so a status means one color everywhere the shell draws it.
 pub(crate) fn status_dot(status: AgentStatus, theme: &Theme) -> impl IntoElement {
     let color = match status {
-        AgentStatus::Working => theme.success,
-        AgentStatus::Blocked => theme.danger,
-        AgentStatus::Done => theme.accent,
+        AgentStatus::Working => theme.info,
+        AgentStatus::Blocked => theme.warning,
+        AgentStatus::Done => theme.success,
         AgentStatus::Idle | AgentStatus::Unknown => theme.muted_foreground,
     };
     div()
@@ -391,16 +458,22 @@ fn render_agents(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyEle
     }
     let column = v_flex()
         .w_full()
-        .px_1()
-        .py_1()
+        .px(px(6.))
+        .py(px(6.))
         .gap_0p5()
         .child(
-            div()
-                .px_1()
-                .pb_1()
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .child(t("ai.agent.monitor_title")),
+            h_flex()
+                .w_full()
+                .h(px(24.))
+                .px(px(6.))
+                .items_center()
+                .child(
+                    div()
+                        .text_size(px(10.5))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(theme.muted_foreground)
+                        .child(t("ai.agent.monitor_title").to_uppercase()),
+                ),
         )
         .children(
             agents
@@ -426,39 +499,43 @@ fn agent_row(index: usize, agent: &ClientShellAgent, invocation: &Invocation) ->
     let row = h_flex()
         .id(("agent", index))
         .w_full()
-        .px_1()
-        .py_0p5()
-        .gap_1()
+        .h(px(28.))
+        .relative()
+        .px(px(7.))
+        .gap(px(7.))
         .items_center()
-        .rounded_sm()
+        .rounded(px(6.))
         .cursor_pointer()
+        .hover(|style| style.bg(theme.sidebar_accent))
         .on_click(move |_, window, cx| {
             dispatch(ShellRequest::FocusPane(pane_id.clone()), window, cx);
         })
+        .when(focused, |row| row.child(selected_bar(theme)))
         .child(status_dot(agent.agent_status, theme))
         .child(
-            v_flex()
+            div()
                 .min_w_0()
                 .flex_1()
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(if focused {
-                            theme.foreground
-                        } else {
-                            theme.sidebar_foreground
-                        })
-                        .child(name),
-                )
-                .child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(detail),
-                ),
+                .text_size(px(12.))
+                .text_color(if focused {
+                    theme.foreground
+                } else {
+                    theme.sidebar_foreground
+                })
+                .child(name),
+        )
+        .child(
+            div()
+                .min_w_0()
+                .max_w(px(120.))
+                .truncate()
+                .font_family(theme.mono_font_family.clone())
+                .text_size(px(10.5))
+                .text_color(theme.muted_foreground)
+                .child(detail),
         );
     if focused {
-        row.bg(theme.selection).into_any_element()
+        row.bg(theme.sidebar_accent).into_any_element()
     } else {
         row.into_any_element()
     }
@@ -620,7 +697,7 @@ fn render_connection(invocation: &Invocation, _: &mut Window, _: &mut App) -> Op
             .gap_1p5()
             .items_center()
             .child(div().size(px(6.)).rounded_full().bg(color))
-            .child(div().text_xs().text_color(color).child(label))
+            .child(div().text_size(px(11.)).text_color(color).child(label))
             .into_any_element(),
     )
 }
@@ -652,7 +729,7 @@ fn render_counts(invocation: &Invocation, _: &mut Window, _: &mut App) -> Option
     .to_string();
     Some(
         div()
-            .text_xs()
+            .text_size(px(11.))
             .text_color(theme.muted_foreground)
             .child(label)
             .into_any_element(),
@@ -683,11 +760,16 @@ fn render_config(invocation: &Invocation, _: &mut Window, cx: &mut App) -> Optio
     Some(
         div()
             .id("status-config")
-            .text_xs()
+            .text_size(px(11.))
             .text_color(color)
             .cursor_pointer()
             .hover(|style| style.text_color(theme.foreground))
             .on_click(move |_, window, cx| {
+                // Land on the page that lists the problems, not on whichever
+                // page the dialog was left on.
+                if let Some(page) = super::settings::page_index("config") {
+                    dispatch(ShellRequest::ShowSettingsPage(page), window, cx);
+                }
                 dispatch(ShellRequest::Command(Command::ToggleSettings), window, cx);
             })
             .child(
@@ -703,7 +785,7 @@ fn render_grid(invocation: &Invocation, _: &mut Window, _: &mut App) -> Option<A
     let surface = invocation.surface?;
     Some(
         div()
-            .text_xs()
+            .text_size(px(11.))
             .text_color(theme.muted_foreground)
             .child(format!(
                 "{}x{} cells",
@@ -727,7 +809,7 @@ fn render_agent_counts(invocation: &Invocation, _: &mut Window, _: &mut App) -> 
         h_flex()
             .gap_1p5()
             .items_center()
-            .text_xs()
+            .text_size(px(11.))
             .text_color(theme.muted_foreground)
             .child(rust_i18n::t!("status.agents", running = running, blocked = blocked).to_string())
             .into_any_element(),
@@ -741,7 +823,7 @@ fn render_rejection(invocation: &Invocation, _: &mut Window, _: &mut App) -> Opt
     let reason = invocation.rejection?;
     Some(
         div()
-            .text_xs()
+            .text_size(px(11.))
             .text_color(theme.danger)
             .child(reason.to_owned())
             .into_any_element(),
@@ -759,7 +841,7 @@ fn render_branch(invocation: &Invocation, _: &mut Window, _: &mut App) -> Option
     Some(
         div()
             .id("status-branch")
-            .text_xs()
+            .text_size(px(11.))
             .text_color(theme.muted_foreground)
             .cursor_pointer()
             .hover(|style| style.text_color(theme.foreground))
@@ -782,18 +864,29 @@ fn focused_branch(snapshot: &ClientShellSnapshot) -> Option<&str> {
         .and_then(|workspace| workspace.branch.as_deref())
 }
 
-/// The armed prefix, so a chord's first key is visible while it waits.
+/// The prefix key, named at the bar's right edge the way the prototype reads
+/// it; while the prefix is armed the same segment lights, so a chord's first
+/// key is visible as it waits for the second.
 fn render_prefix(invocation: &Invocation, _: &mut Window, _: &mut App) -> Option<AnyElement> {
     let theme = invocation.theme;
-    let label = invocation.prefix?;
     Some(
-        div()
+        h_flex()
+            .gap_1()
+            .items_center()
             .px_1()
-            .rounded_sm()
-            .text_xs()
-            .bg(theme.accent)
-            .text_color(theme.accent_foreground)
-            .child(label.to_owned())
+            .rounded(px(3.))
+            .font_family(theme.mono_font_family.clone())
+            .text_size(px(10.))
+            .when(invocation.prefix_armed, |segment| {
+                segment
+                    .bg(theme.primary)
+                    .text_color(theme.primary_foreground)
+            })
+            .when(!invocation.prefix_armed, |segment| {
+                segment.text_color(theme.muted_foreground)
+            })
+            .child(t("status.prefix"))
+            .child(invocation.prefix.to_owned())
             .into_any_element(),
     )
 }
@@ -806,13 +899,6 @@ mod tests {
     use std::prelude::v1::test;
 
     use herdr_client::protocol::ClientShellSnapshot;
-
-    #[test]
-    fn the_detail_line_pairs_a_pane_cwd_with_the_branch() {
-        let snapshot = snapshot_with_panes();
-        let workspace = &snapshot.workspaces[0];
-        assert_eq!(workspace_detail(&snapshot, workspace), "/tmp/work · main");
-    }
 
     #[test]
     fn the_status_bar_names_the_focused_workspaces_branch() {
@@ -836,25 +922,6 @@ mod tests {
             counted(3, "status.count.tab_one", "status.count.tab_many"),
             "3 tabs"
         );
-    }
-
-    #[test]
-    fn the_detail_line_prefers_the_focused_pane_cwd() {
-        let snapshot = snapshot_with_panes();
-        let focused = snapshot
-            .panes
-            .iter()
-            .find(|pane| pane.focused)
-            .expect("a focused pane");
-        assert!(focused.cwd.as_deref() == Some("/tmp/work"));
-    }
-
-    #[test]
-    fn a_workspace_without_a_branch_shows_only_its_cwd() {
-        let mut snapshot = snapshot_with_panes();
-        snapshot.workspaces[0].branch = None;
-        let workspace = &snapshot.workspaces[0];
-        assert_eq!(workspace_detail(&snapshot, workspace), "/tmp/work");
     }
 
     #[test]

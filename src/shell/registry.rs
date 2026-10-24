@@ -10,7 +10,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui_kit::component::Theme;
-use gpui_kit::component::setting::SettingPage;
 use gpui_kit::*;
 use herdr_client::protocol::{ClientShellSnapshot, PaneSurfaceFrame};
 
@@ -276,8 +275,12 @@ impl Contribution {
 /// (`crate::config`), which is where a settings value lives, not the daemon's
 /// snapshot.
 pub(crate) struct SettingsSection {
+    /// The page's stable name, so a caller that is not the nav (the status
+    /// bar's diagnostic count, a future plugin contribution) can ask for it
+    /// without knowing its position in the list.
+    pub(crate) id: &'static str,
     /// Builds the page, from the config as it is now.
-    pub(crate) page: fn(&App) -> SettingPage,
+    pub(crate) page: fn(&App) -> super::settings::Page,
 }
 
 /// What the shell can be asked to do, by a chord or by a click on a
@@ -291,6 +294,8 @@ pub(crate) enum ShellRequest {
     /// Bring one tab of the right-hand panel to the front, and open the panel
     /// if it is closed: a tab nobody can see is not what a click asked for.
     ShowAsideTab(AsideTab),
+    /// Bring one page of the settings dialog to the front.
+    ShowSettingsPage(usize),
     /// A command from the directory.
     Command(Command),
     /// Bring a workspace to the front.
@@ -386,8 +391,10 @@ pub(crate) struct Invocation<'a> {
     pub(crate) status_error: Option<&'a str>,
     /// Why the daemon refused the last command, until one is accepted.
     pub(crate) rejection: Option<&'a str>,
-    /// The prefix's label while it is armed.
-    pub(crate) prefix: Option<&'a str>,
+    /// The prefix key's label, named by the keymap; always present.
+    pub(crate) prefix: &'a str,
+    /// Whether the prefix has been typed and the next key is its chord.
+    pub(crate) prefix_armed: bool,
     /// The plugin registry as of the last refresh. Nothing pushes a plugin
     /// change, so unlike the snapshot this is read, not painted from a stream.
     pub(crate) plugins: &'a PluginState,

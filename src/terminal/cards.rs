@@ -13,8 +13,28 @@ use herdr_client::protocol::{PaneSurfacePane, SurfaceRect};
 /// The background the grid keeps from the edges of the pane area, in pixels.
 pub(crate) const INSET: f32 = 8.;
 
+/// The channel between two cards, in pixels. A cell is wider than it is tall,
+/// so the daemon's one-cell gutter would read as a wide band horizontally and
+/// a narrow one vertically; the cards are drawn into the gutter instead and
+/// this is what is left between them, the same both ways.
+pub(crate) const GAP: f32 = 8.;
+
 /// One card's corner radius, in pixels.
-pub(crate) const RADIUS: f32 = 6.;
+pub(crate) const RADIUS: f32 = 8.;
+
+/// The tone the gaps and the grid's outer inset are painted in: the terminal's
+/// background a step darker, so a card sits above the channel rather than
+/// level with it. The step is smaller for a light palette, where the same
+/// percentage would read as a hard edge.
+pub(crate) fn channel(theme: &crate::terminal::Theme) -> u32 {
+    let background = theme.background;
+    let luminance = {
+        let channel = |shift: u32| (background >> shift) & 255;
+        (channel(16) * 299 + channel(8) * 587 + channel(0) * 114) / 1000
+    };
+    let percent = if luminance < 128 { 14 } else { 6 };
+    crate::terminal::theme::mix(background, 0x000000, percent)
+}
 
 /// The cells a pane shows: its inner rectangle, plus the scrollbar column when
 /// the daemon reserved one. That column sits next to `inner_rect` and carries
@@ -215,5 +235,24 @@ mod tests {
             assert!(band.x >= 10 && band.x + band.width <= 14, "{band:?}");
             assert!(band.y >= 5 && band.y + band.height <= 8, "{band:?}");
         }
+    }
+
+    /// The channel is always a step darker than the card, in both modes: a
+    /// light palette 6%, a dark one 14%. A channel level with the card would
+    /// make the cards vanish into the grid.
+    #[test]
+    fn the_channel_is_a_step_darker_than_the_card() {
+        let mut dark = crate::terminal::Theme::default();
+        let dark_channel = channel(&dark);
+        let dark_luma = |color: u32| {
+            let channel = |shift: u32| (color >> shift) & 255;
+            channel(16) * 299 + channel(8) * 587 + channel(0) * 114
+        };
+        assert!(dark_luma(dark_channel) < dark_luma(dark.background));
+
+        dark.background = 0xeff1f5;
+        let light_channel = channel(&dark);
+        assert!(dark_luma(light_channel) < dark_luma(dark.background));
+        assert_ne!(light_channel, dark.background);
     }
 }

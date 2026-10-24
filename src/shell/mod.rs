@@ -61,12 +61,14 @@ use registry::{
     StatusContribution,
 };
 
-const TITLE_BAR_HEIGHT: f32 = 34.;
-const TAB_STRIP_HEIGHT: f32 = 28.;
+const TITLE_BAR_HEIGHT: f32 = 38.;
+const TAB_STRIP_HEIGHT: f32 = 40.;
 /// The status bar's height: one row of 11px text with room for its dividers.
 const STATUS_BAR_HEIGHT: f32 = 26.;
+/// The right-hand panel's head: the tab strip above whatever tab is in front.
+const ASIDE_HEAD_HEIGHT: f32 = 34.;
 /// The activity rail: one column of view buttons, left of the sidebar.
-const RAIL_WIDTH: f32 = 44.;
+const RAIL_WIDTH: f32 = 46.;
 /// The sidebar's head: the view's identity strip, one row above its blocks.
 const SIDEBAR_HEAD_HEIGHT: f32 = 34.;
 /// The sidebar's foot: the one line naming where the view's rows come from.
@@ -95,6 +97,9 @@ pub(crate) struct ShellView {
     aside_dragging: bool,
     /// The settings surface is over the shell, and has the keyboard.
     settings_open: bool,
+    /// Which page of the settings dialog is in front. Local like the rail's
+    /// view; the page list writes it through a request.
+    settings_page: usize,
     /// The keyboard while the settings surface is open, so the pane beside it
     /// stops receiving keystrokes.
     settings_focus: FocusHandle,
@@ -241,6 +246,7 @@ impl ShellView {
             aside_tab: AsideTab::Chat,
             aside_dragging: false,
             settings_open: false,
+            settings_page: 0,
             settings_focus: cx.focus_handle(),
             palette: Palette::default(),
             palette_focus: cx.focus_handle(),
@@ -806,6 +812,12 @@ impl ShellView {
                 self.request_ui_data(&self.plugins.state().ui, false, cx);
                 cx.notify();
             }
+            // A settings page is the dialog's own state; the surface stays
+            // open, because the click named a page, not an exit.
+            ShellRequest::ShowSettingsPage(page) => {
+                self.settings_page = page;
+                cx.notify();
+            }
             ShellRequest::FocusWorkspace(workspace_id) => {
                 self.connection.focus_workspace(&workspace_id)
             }
@@ -1080,7 +1092,10 @@ impl ShellView {
     /// flag could disagree with it.
     fn sync_terminal_theme(&mut self, cx: &mut Context<Self>) {
         let config = config::get(cx);
-        let name = if cx.theme().is_dark() {
+        // The config's mode, not `cx.theme().is_dark()`: at construction the
+        // global theme's change is still queued to the next frame, so reading
+        // the theme here would pair a light chrome with the dark palette.
+        let name = if config.appearance.theme_mode == ThemeMode::Dark {
             config.terminal.palette_dark.as_str()
         } else {
             config.terminal.palette_light.as_str()
@@ -1193,6 +1208,7 @@ impl Render for ShellView {
                 // part ways.
                 request @ (ShellRequest::ShowView(_)
                 | ShellRequest::ShowAsideTab(_)
+                | ShellRequest::ShowSettingsPage(_)
                 | ShellRequest::MoveTab { .. }
                 | ShellRequest::MoveWorkspace { .. }
                 | ShellRequest::PluginAction { .. }
@@ -1224,14 +1240,17 @@ impl Render for ShellView {
                 }
             }
         });
-        let prefix = self.prefix_armed.then(|| self.keymap.prefix_label());
+        // The prefix is always named, the way the prototype's status bar reads;
+        // it only changes clothes while it is armed and claiming the next key.
+        let prefix = self.keymap.prefix_label();
         let invocation = Invocation {
             snapshot: live.snapshot.as_deref(),
             surface: live.surface.as_deref(),
             status: live.status,
             status_error: error.as_deref(),
             rejection: self.move_error.as_deref().or(live.rejected.as_deref()),
-            prefix: prefix.as_deref(),
+            prefix: prefix.as_str(),
+            prefix_armed: self.prefix_armed,
             plugins: &plugins,
             ui_data: &self.ui_data,
             layout: &self.layout,
@@ -1276,14 +1295,21 @@ impl Render for ShellView {
                         cx.listener(Self::reset_sidebar),
                     ))
                     .child(sidebar_head(self.rail, &invocation))
-                    .children(
-                        self.registry
-                            .panels_in(self.rail)
-                            .map(|panel| panel.render(&invocation, window, cx)),
+                    // The blocks scroll under the head; the foot stays on the
+                    // floor. A workspace list that outgrows the panel used to
+                    // be clipped with no way to reach the rest.
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .flex_1()
+                            .min_h_0()
+                            .overflow_y_scrollbar()
+                            .children(
+                                self.registry
+                                    .panels_in(self.rail)
+                                    .map(|panel| panel.render(&invocation, window, cx)),
+                            ),
                     )
-                    // The foot sits at the floor of the view, under whatever
-                    // the blocks leave: it names the source, not the content.
-                    .child(div().flex_1())
                     .child(sidebar_foot(self.rail, &invocation)),
             );
         }
@@ -1399,6 +1425,7 @@ impl Render for ShellView {
         if self.settings_open {
             root = root.child(settings::overlay(
                 self.registry.settings_sections(),
+                self.settings_page,
                 &self.settings_focus,
                 &dispatch,
                 cx,
@@ -1480,13 +1507,13 @@ fn aside_strip(current: AsideTab, registry: &Registry, invocation: &Invocation) 
     let strip = h_flex()
         .flex_none()
         .w_full()
-        .h(px(TAB_STRIP_HEIGHT))
-        .px_1()
-        .gap_1()
+        .h(px(ASIDE_HEAD_HEIGHT))
+        .px(px(6.))
+        .gap(px(2.))
         .items_center()
-        .bg(theme.tab_bar)
+        .bg(theme.sidebar)
         .border_b_1()
-        .border_color(theme.border)
+        .border_color(theme.sidebar_border)
         .children(AsideTab::ALL.iter().map(|tab| {
             let count = match tab {
                 AsideTab::Fleet => fleet,
@@ -1513,15 +1540,14 @@ fn aside_close(invocation: &Invocation) -> AnyElement {
         .flex()
         .items_center()
         .justify_center()
-        .rounded_sm()
+        .rounded(px(4.))
         .cursor_pointer()
-        .text_xs()
         .text_color(theme.muted_foreground)
-        .hover(|style| style.bg(theme.muted))
+        .hover(|style| style.bg(theme.list_hover))
         .on_click(move |_, window, cx| {
             dispatch(ShellRequest::Command(Command::ToggleAside), window, cx);
         })
-        .child("x")
+        .child(Icon::default().data(icons::CLOSE).w(px(13.)).h(px(13.)))
         .into_any_element()
 }
 
@@ -1536,36 +1562,34 @@ fn aside_tab_button(
     let dispatch = invocation.dispatch.clone();
     h_flex()
         .id(("aside-tab", tab as usize))
-        .px_1()
-        .py_0p5()
-        .gap_1()
+        .h(px(24.))
+        .px(px(8.))
+        .gap(px(6.))
         .items_center()
-        .rounded_sm()
+        .rounded(px(4.))
         .cursor_pointer()
+        // Opaque, like the prototype's active pill: `list_active` is a 20%
+        // tint by the theme's own clamp, too faint to mark the open tab.
         .bg(if selected {
-            theme.tab_active
+            theme.secondary
         } else {
-            theme.tab
+            transparent_black()
         })
         .text_color(if selected {
-            theme.tab_active_foreground
+            theme.foreground
         } else {
-            theme.tab_foreground
+            theme.muted_foreground
         })
-        .hover(|style| style.bg(theme.tab_active))
+        .hover(|style| style.bg(theme.list_hover).text_color(theme.foreground))
         .on_click(move |_, window, cx| {
             dispatch(ShellRequest::ShowAsideTab(tab), window, cx);
         })
         .child(Icon::default().data(tab.icon()).w(px(13.)).h(px(13.)))
-        .child(
-            div()
-                .text_xs()
-                .when(selected, |label| label.font_weight(FontWeight::SEMIBOLD))
-                .child(tab.label()),
-        )
+        .child(div().text_size(px(11.5)).child(tab.label()))
         .children((count > 0).then(|| {
             div()
-                .text_xs()
+                .font_family(theme.mono_font_family.clone())
+                .text_size(px(9.5))
                 .text_color(theme.muted_foreground)
                 .child(count.to_string())
         }))
@@ -1680,16 +1704,19 @@ fn sidebar_head(view: SidebarView, invocation: &Invocation) -> AnyElement {
         .border_color(theme.sidebar_border)
         .child(
             div()
-                .text_sm()
+                .text_size(px(11.))
                 .font_weight(FontWeight::SEMIBOLD)
-                .text_color(theme.sidebar_foreground)
-                .child(view.label()),
+                // The head is an identity strip, not a title: the prototype
+                // keeps it at the muted weight so the rows under it lead.
+                .text_color(theme.muted_foreground)
+                .child(view.label().to_uppercase()),
         )
         .child(
             div()
                 .min_w_0()
                 .flex_1()
-                .text_xs()
+                .font_family(theme.mono_font_family.clone())
+                .text_size(px(10.5))
                 .text_color(theme.muted_foreground)
                 .child(view_count(view, invocation)),
         )
@@ -1819,7 +1846,7 @@ fn sidebar_foot(view: SidebarView, invocation: &Invocation) -> AnyElement {
         .child(
             div()
                 .min_w_0()
-                .text_xs()
+                .text_size(px(10.5))
                 .text_color(theme.muted_foreground)
                 .child(t(&format!("shell.foot.{}", view.id()))),
         )
@@ -1837,8 +1864,8 @@ fn rail(current: SidebarView, invocation: &Invocation) -> AnyElement {
         .w(px(RAIL_WIDTH))
         .h_full()
         .flex_none()
-        .py_1()
-        .gap_0p5()
+        .py(px(6.))
+        .gap(px(2.))
         .bg(theme.sidebar)
         .border_r_1()
         .border_color(theme.sidebar_border)
@@ -1850,7 +1877,7 @@ fn rail(current: SidebarView, invocation: &Invocation) -> AnyElement {
             // button stays centered inside it.
             div()
                 .w_full()
-                .h(px(30.))
+                .h(px(34.))
                 .relative()
                 .flex()
                 .items_center()
@@ -1860,31 +1887,31 @@ fn rail(current: SidebarView, invocation: &Invocation) -> AnyElement {
                         div()
                             .absolute()
                             .left_0()
-                            .top(px(6.))
-                            .bottom(px(6.))
+                            .top(px(8.))
+                            .bottom(px(8.))
                             .w(px(2.))
                             .rounded_full()
-                            .bg(theme.sidebar_primary),
+                            .bg(theme.primary),
                     )
                 })
                 .child(
                     div()
                         .id(("rail", view as usize))
-                        .w(px(30.))
-                        .h(px(30.))
+                        .w(px(34.))
+                        .h(px(34.))
                         .relative()
                         .flex()
                         .items_center()
                         .justify_center()
-                        .rounded_md()
+                        .rounded(px(6.))
                         .cursor_pointer()
                         .bg(if selected {
-                            theme.sidebar_accent
+                            theme.primary.opacity(0.12)
                         } else {
                             theme.sidebar
                         })
                         .text_color(if selected {
-                            theme.sidebar_primary
+                            theme.primary
                         } else {
                             theme.muted_foreground
                         })
@@ -1892,7 +1919,7 @@ fn rail(current: SidebarView, invocation: &Invocation) -> AnyElement {
                         .on_click(move |_, window, cx| {
                             dispatch(ShellRequest::ShowView(view), window, cx);
                         })
-                        .child(Icon::default().data(view.icon()).w(px(16.)).h(px(16.)))
+                        .child(Icon::default().data(view.icon()).w(px(17.)).h(px(17.)))
                         .children(rail_badge(invocation.snapshot, view).map(|count| {
                             div()
                                 .absolute()
@@ -1926,8 +1953,8 @@ fn rail_gear(invocation: &Invocation) -> AnyElement {
     let dispatch = invocation.dispatch.clone();
     div()
         .id("rail-settings")
-        .w(px(30.))
-        .h(px(30.))
+        .w(px(34.))
+        .h(px(34.))
         .flex()
         .items_center()
         .justify_center()
@@ -1938,7 +1965,7 @@ fn rail_gear(invocation: &Invocation) -> AnyElement {
         .on_click(move |_, window, cx| {
             dispatch(ShellRequest::Command(Command::ToggleSettings), window, cx);
         })
-        .child(Icon::default().data(icons::GEAR).w(px(16.)).h(px(16.)))
+        .child(Icon::default().data(icons::GEAR).w(px(17.)).h(px(17.)))
         .into_any_element()
 }
 
@@ -1977,6 +2004,9 @@ fn layout_cwd(snapshot: &ClientShellSnapshot) -> Option<&str> {
 /// with: the prototype's stroke shapes, at whatever size the surface asks for.
 mod icons {
     pub(crate) const SEARCH: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.3-4.3"/></svg>"#;
+    pub(crate) const MENU: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h10"/></svg>"#;
+    pub(crate) const CLOSE: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m7 7 10 10M17 7 7 17"/></svg>"#;
+    pub(crate) const PLUS: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>"#;
     pub(crate) const CHEVRON: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>"#;
     pub(crate) const SIDEBAR: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16"/></svg>"#;
     pub(crate) const ASIDE: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/></svg>"#;
@@ -2024,16 +2054,24 @@ fn title_bar(
                 .flex()
                 .items_center()
                 .justify_center()
-                .rounded_sm()
-                .bg(theme.primary)
+                .rounded(px(4.))
+                // The prototype's mark: accent at one corner, brand blue at
+                // the other. In the zenix theme `primary` is that accent, so
+                // the second stop is the info blue.
+                .bg(linear_gradient(
+                    140.,
+                    linear_color_stop(theme.primary, 0.),
+                    linear_color_stop(theme.info, 1.),
+                ))
                 .text_color(theme.primary_foreground)
-                .text_xs()
+                .text_size(px(11.))
+                .font_family(theme.mono_font_family.clone())
                 .font_weight(FontWeight::BOLD)
                 .child("z"),
         )
         .child(
             div()
-                .text_sm()
+                .text_size(px(12.))
                 .font_weight(FontWeight::SEMIBOLD)
                 .child("zenix"),
         )
@@ -2058,19 +2096,26 @@ fn title_bar(
                 })
                 .child(
                     div()
-                        .text_sm()
+                        .flex_none()
+                        .text_color(theme.muted_foreground)
+                        .child(Icon::default().data(icons::MENU).w(px(13.)).h(px(13.))),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.5))
                         .font_weight(FontWeight::MEDIUM)
                         .child(workspace.label.clone()),
                 )
                 .children(workspace.branch.as_deref().map(|branch| {
                     div()
-                        .px_1p5()
+                        .px(px(6.))
                         .py(px(1.))
                         .rounded_full()
                         .border_1()
                         .border_color(theme.border)
                         .bg(theme.muted)
-                        .text_xs()
+                        .font_family(theme.mono_font_family.clone())
+                        .text_size(px(10.5))
                         .text_color(theme.muted_foreground)
                         .child(branch.to_owned())
                 }))
@@ -2093,7 +2138,7 @@ fn title_bar(
             .child(div().size(px(6.)).rounded_full().bg(status_color))
             .child(
                 div()
-                    .text_xs()
+                    .text_size(px(11.))
                     .text_color(theme.muted_foreground)
                     .child(status_label),
             ),
@@ -2129,12 +2174,12 @@ fn command_trigger(palette_hint: Option<String>, invocation: &Invocation) -> Any
     let dispatch = invocation.dispatch.clone();
     h_flex()
         .id("palette-trigger")
-        .w(px(320.))
+        .w(px(420.))
         .h(px(24.))
-        .px_2()
+        .px(px(8.))
         .gap_2()
         .items_center()
-        .rounded_sm()
+        .rounded(px(4.))
         .border_1()
         .border_color(theme.border)
         .bg(theme.background)
@@ -2145,7 +2190,12 @@ fn command_trigger(palette_hint: Option<String>, invocation: &Invocation) -> Any
             dispatch(ShellRequest::Command(Command::TogglePalette), window, cx);
         })
         .child(Icon::default().data(icons::SEARCH).w(px(13.)).h(px(13.)))
-        .child(div().flex_1().text_xs().child(t("shell.titlebar.search")))
+        .child(
+            div()
+                .flex_1()
+                .text_size(px(11.5))
+                .child(t("shell.titlebar.search")),
+        )
         .children(palette_hint.map(|hint| key_cap(hint, theme)))
         .into_any_element()
 }
@@ -2154,12 +2204,13 @@ fn command_trigger(palette_hint: Option<String>, invocation: &Invocation) -> Any
 /// same thing from the keyboard.
 fn key_cap(label: String, theme: &Theme) -> AnyElement {
     div()
-        .px_1()
+        .px(px(4.))
         .py(px(1.))
-        .rounded_xs()
+        .rounded(px(3.))
         .border_1()
         .border_color(theme.border)
-        .text_xs()
+        .font_family(theme.mono_font_family.clone())
+        .text_size(px(10.))
         .text_color(theme.muted_foreground)
         .child(label)
         .into_any_element()
@@ -2186,40 +2237,16 @@ fn title_toggle(
         .rounded_sm()
         .cursor_pointer()
         .text_color(if active {
-            theme.sidebar_primary
+            theme.primary
         } else {
             theme.muted_foreground
         })
         .hover(|style| style.bg(theme.list_hover))
-        .when(active, |button| button.bg(theme.sidebar_accent))
+        .when(active, |button| button.bg(theme.primary.opacity(0.12)))
         .on_click(move |_, window, cx| {
             dispatch(ShellRequest::Command(command), window, cx);
         })
-        .child(Icon::default().data(icon).w(px(14.)).h(px(14.)))
-        .into_any_element()
-}
-
-fn toggle_button(
-    id: &'static str,
-    label: impl Into<SharedString>,
-    command: Command,
-    invocation: &Invocation,
-) -> AnyElement {
-    let theme = invocation.theme;
-    let dispatch = invocation.dispatch.clone();
-    div()
-        .id(id)
-        .px_2()
-        .py_0p5()
-        .rounded_sm()
-        .text_xs()
-        .bg(theme.secondary)
-        .text_color(theme.secondary_foreground)
-        .cursor_pointer()
-        .on_click(move |_, window, cx| {
-            dispatch(ShellRequest::Command(command), window, cx);
-        })
-        .child(label.into())
+        .child(Icon::default().data(icon).w(px(15.)).h(px(15.)))
         .into_any_element()
 }
 
@@ -2240,26 +2267,36 @@ fn tab_strip(invocation: &Invocation) -> AnyElement {
                 .unwrap_or_default()
         })
         .unwrap_or_default();
-    let mut strip = h_flex()
+    let strip = h_flex()
         .flex_none()
         .w_full()
         .h(px(TAB_STRIP_HEIGHT))
-        .px_1()
-        .gap_1()
+        .px(px(8.))
+        .gap(px(4.))
         .items_center()
-        .bg(theme.tab_bar)
+        // The strip is the shell's own background, not the tab bar's: only the
+        // tabs lift off it, as the prototype draws them.
+        .bg(theme.background)
         .border_b_1()
         .border_color(theme.border);
     let count = tabs.len();
     let dispatch = invocation.dispatch.clone();
-    strip = strip
+    // The tabs scroll in their own row; the actions stay pinned to the right
+    // edge, so a session with more tabs than width never hides them.
+    let tabs_row = h_flex()
+        .flex_1()
+        .min_w_0()
+        .h_full()
+        .gap(px(4.))
+        .items_center()
+        .overflow_x_scrollbar()
         .children(
             tabs.into_iter()
                 .enumerate()
                 .map(|(index, tab)| tab_button(tab, index, invocation)),
         )
-        // The strip is the gap after the last tab: a drop that no tab claimed
-        // lands here and appends.
+        // The row's tail is the gap after the last tab: a drop that no tab
+        // claimed lands here and appends.
         .on_drop(move |drag: &reorder::TabDrag, window, cx| {
             if let Some(insert_index) = reorder::gap_at_end(drag.from, count) {
                 dispatch(
@@ -2273,7 +2310,15 @@ fn tab_strip(invocation: &Invocation) -> AnyElement {
             }
         });
     strip
-        .child(toggle_button("new-tab", "+", Command::NewTab, invocation))
+        // The strip's actions sit at its right edge, where the prototype puts
+        // them: new tab, split, palette.
+        .child(tabs_row)
+        .child(strip_button(
+            "strip-new",
+            icons::PLUS,
+            Command::NewTab,
+            invocation,
+        ))
         .child(strip_button(
             "strip-split",
             icons::SPLIT,
@@ -2307,7 +2352,7 @@ fn strip_button(
         .flex()
         .items_center()
         .justify_center()
-        .rounded_sm()
+        .rounded(px(4.))
         .cursor_pointer()
         .text_color(theme.muted_foreground)
         .hover(|style| style.bg(theme.list_hover).text_color(theme.foreground))
@@ -2346,15 +2391,24 @@ fn tab_button(tab: &ClientShellTab, index: usize, invocation: &Invocation) -> An
         .unwrap_or(0);
     h_flex()
         .id(("tab", tab.number))
-        .px_2()
-        .py_0p5()
-        .gap_1()
+        .h(px(26.))
+        .min_w(px(88.))
+        .max_w(px(240.))
+        .px(px(7.))
+        .pl(px(9.))
+        .gap(px(7.))
         .items_center()
-        .rounded_sm()
+        .rounded(px(6.))
+        .border_1()
+        .border_color(if tab.focused {
+            theme.border
+        } else {
+            transparent_black()
+        })
         .bg(if tab.focused {
             theme.tab_active
         } else {
-            theme.tab
+            transparent_black()
         })
         .text_color(if tab.focused {
             theme.tab_active_foreground
@@ -2362,6 +2416,7 @@ fn tab_button(tab: &ClientShellTab, index: usize, invocation: &Invocation) -> An
             theme.tab_foreground
         })
         .cursor_pointer()
+        .group("tab")
         .on_click(move |_, window, cx| {
             open(ShellRequest::FocusTab(tab_id.clone()), window, cx);
         })
@@ -2387,25 +2442,43 @@ fn tab_button(tab: &ClientShellTab, index: usize, invocation: &Invocation) -> An
                 );
             }
         })
-        .children(dot.map(|status| panels::status_dot(status, theme)))
-        .child(div().text_sm().child(label))
-        .children((pane_count > 1).then(|| {
+        .children(
+            dot.filter(|status| !matches!(status, AgentStatus::Idle | AgentStatus::Unknown))
+                .map(|status| panels::status_dot(status, theme)),
+        )
+        .child(div().min_w_0().truncate().text_size(px(12.)).child(label))
+        .children((pane_count > 0).then(|| {
             div()
-                .text_xs()
+                .flex_none()
+                .px(px(4.))
+                .rounded(px(3.))
+                .border_1()
+                .border_color(theme.border)
+                .font_family(theme.mono_font_family.clone())
+                .text_size(px(9.5))
                 .text_color(theme.muted_foreground)
                 .child(pane_count.to_string())
         }))
         .child(
             div()
                 .id(("tab-close", tab.number))
-                .px_0p5()
-                .text_xs()
+                .flex_none()
+                .w(px(15.))
+                .h(px(15.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(3.))
                 .cursor_pointer()
+                .text_color(theme.muted_foreground)
+                .opacity(if tab.focused { 1. } else { 0. })
+                .group_hover("tab", |close| close.opacity(1.))
+                .hover(|style| style.bg(theme.muted).text_color(theme.danger))
                 .on_click(move |_, window, cx| {
                     cx.stop_propagation();
                     close(ShellRequest::Command(Command::CloseTab), window, cx);
                 })
-                .child("x"),
+                .child(Icon::default().data(icons::CLOSE).w(px(11.)).h(px(11.))),
         )
         .into_any_element()
 }

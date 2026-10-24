@@ -723,7 +723,7 @@ impl Render for TerminalView {
                         div()
                             .size_full()
                             .p(px(cards::INSET))
-                            .bg(rgb(theme.surface))
+                            .bg(rgb(cards::channel(&theme)))
                             .child(
                                 div()
                                     .relative()
@@ -888,9 +888,11 @@ impl Render for TerminalView {
     }
 }
 
-/// One gap per pane, painted over the cells the daemon spent on borders, then
-/// one stroked rectangle per pane. The focused pane takes the chrome's accent,
-/// so the grid itself says which pane input reaches.
+/// The pane cards: the channel in the daemon's border cells, then each card
+/// grown into its own gutter so the gap between two cards is the same
+/// [`cards::GAP`] both ways, whichever way the cells fall. The focused card
+/// takes the chrome's accent, so the grid itself says which pane input
+/// reaches.
 ///
 /// This paints only chrome: `cards::bands` is the border-and-gutter cells of a
 /// pane's rectangle, never a cell the pane's application wrote.
@@ -915,29 +917,78 @@ fn paint_cards(
             ),
         )
     };
+    // The channel first: every border cell is painted in it, then the cards
+    // cover all but the gap.
+    let channel = rgb(cards::channel(theme));
     for pane in &surface.panes {
         for band in cards::bands(pane)
             .into_iter()
             .filter(|band| band.width > 0 && band.height > 0)
         {
-            // The gap is the palette's own panel tone: a card then sits a step
-            // above the channel between cards instead of level with it.
-            window.paint_quad(fill(cells(band), rgb(theme.surface)));
+            window.paint_quad(fill(cells(band), channel));
         }
     }
+    let card_tone = rgb(theme.background);
+    let idle: Hsla = cx.theme().border;
     // A pane edge reads as an edge, not as a choice: the focused one takes the
-    // chrome's primary, the rest sit a step away from the channel.
-    let idle: Hsla = rgb(crate::terminal::theme::mix(
-        theme.background,
-        theme.foreground,
-        22,
-    ))
-    .into();
+    // chrome's accent, the rest sit a step away from the channel.
     let focused = cx.theme().primary;
+    let half_gap = px(cards::GAP / 2.);
     for pane in &surface.panes {
-        let bounds = cells(cards::content(pane)).dilate(px(1.));
+        let content = cells(cards::content(pane));
+        let rect = cells(pane.rect);
+        // How far the card may grow into each gutter, and whether that gutter
+        // is shared with another pane. A shared one gives half the gap back to
+        // the neighbour; an outer one grows all the way to the pane's edge, so
+        // the only margin left is the grid's own inset.
+        let (shared_left, shared_right, shared_top, shared_bottom) =
+            shared_edges(pane, &surface.panes);
+        let grow = |band: Pixels, shared: bool| {
+            if shared {
+                (band - half_gap).max(px(0.))
+            } else {
+                band
+            }
+        };
+        let left_band = (content.origin.x - rect.origin.x).max(px(0.));
+        let right_band =
+            (rect.origin.x + rect.size.width - (content.origin.x + content.size.width)).max(px(0.));
+        let top_band = (content.origin.y - rect.origin.y).max(px(0.));
+        let bottom_band = (rect.origin.y + rect.size.height
+            - (content.origin.y + content.size.height))
+            .max(px(0.));
+        let (left, right) = (grow(left_band, shared_left), grow(right_band, shared_right));
+        let (top, bottom) = (grow(top_band, shared_top), grow(bottom_band, shared_bottom));
+        let card = Bounds::new(
+            content.origin - point(left, top),
+            size(
+                content.size.width + left + right,
+                content.size.height + top + bottom,
+            ),
+        );
+        // The band ring in the card's own tone. The content itself is left
+        // alone: those cells are the daemon's, already painted.
+        for ring in [
+            Bounds::new(card.origin, size(card.size.width, top)),
+            Bounds::new(
+                point(card.origin.x, content.origin.y + content.size.height),
+                size(card.size.width, bottom),
+            ),
+            Bounds::new(
+                point(card.origin.x, content.origin.y),
+                size(left, content.size.height),
+            ),
+            Bounds::new(
+                point(content.origin.x + content.size.width, content.origin.y),
+                size(right, content.size.height),
+            ),
+        ] {
+            if ring.size.width > px(0.) && ring.size.height > px(0.) {
+                window.paint_quad(fill(ring, card_tone));
+            }
+        }
         window.paint_quad(quad(
-            bounds,
+            card,
             px(cards::RADIUS),
             transparent_black(),
             px(1.),
@@ -945,6 +996,34 @@ fn paint_cards(
             BorderStyle::Solid,
         ));
     }
+}
+
+/// Whether a pane shares each edge with another pane, as left, right, top and
+/// bottom. The daemon's rectangles touch on a shared edge and overlap the
+/// other pane's border cell on it; an outer edge touches nothing.
+fn shared_edges(
+    pane: &herdr_client::protocol::PaneSurfacePane,
+    panes: &[herdr_client::protocol::PaneSurfacePane],
+) -> (bool, bool, bool, bool) {
+    let rect = pane.rect;
+    let right = rect.x.saturating_add(rect.width);
+    let bottom = rect.y.saturating_add(rect.height);
+    let vertical_overlap = |other: &herdr_client::protocol::SurfaceRect| {
+        rect.y < other.y.saturating_add(other.height) && other.y < bottom
+    };
+    let horizontal_overlap = |other: &herdr_client::protocol::SurfaceRect| {
+        rect.x < other.x.saturating_add(other.width) && other.x < right
+    };
+    let mut shared = (false, false, false, false);
+    for other in panes.iter().filter(|other| other.pane_id != pane.pane_id) {
+        let other_right = other.rect.x.saturating_add(other.rect.width);
+        let other_bottom = other.rect.y.saturating_add(other.rect.height);
+        shared.0 |= other_right == rect.x && vertical_overlap(&other.rect);
+        shared.1 |= other.rect.x == right && vertical_overlap(&other.rect);
+        shared.2 |= other_bottom == rect.y && horizontal_overlap(&other.rect);
+        shared.3 |= other.rect.y == bottom && horizontal_overlap(&other.rect);
+    }
+    shared
 }
 
 impl EntityInputHandler for TerminalView {

@@ -170,27 +170,37 @@ pub(crate) fn overlay(
     };
     let mut boxed = v_flex()
         .id("plugin-trust")
-        .w(px(680.))
-        .max_h(px(620.))
+        .w(px(620.))
+        .max_h(px(800.))
         .overflow_hidden()
-        .rounded_md()
+        .rounded(px(8.))
         .bg(theme.background)
         .text_color(theme.foreground)
         .border_1()
         .border_color(theme.border)
+        .shadow(vec![
+            BoxShadow::new(px(0.), px(18.), black().opacity(0.45)).blur_radius(px(48.)),
+            BoxShadow::new(px(0.), px(2.), black().opacity(0.3)).blur_radius(px(8.)),
+        ])
         .track_focus(focus)
         .on_key_down(key)
         .child(
             h_flex()
                 .w_full()
                 .flex_none()
-                .px_2()
-                .py_1()
+                .h(px(40.))
+                .px(px(12.))
                 .gap_2()
                 .items_center()
                 .border_b_1()
                 .border_color(theme.border)
-                .child(div().flex_none().text_sm().child(t("shell.trust.title")))
+                .child(
+                    div()
+                        .flex_none()
+                        .text_size(px(13.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(t("shell.trust.title")),
+                )
                 .child(div().flex_1())
                 .child(
                     button("plugin-trust-close", &t("settings.close"), &theme).on_click({
@@ -262,7 +272,11 @@ pub(crate) fn overlay(
         // A scrim rather than a page: linking a plugin is about what is behind
         // this — the sidebar the plugin appears in — so the shell stays visible
         // and dimmed instead of hidden.
-        .bg(theme.background.opacity(0.72))
+        .bg(if theme.is_dark() {
+            black().opacity(0.45)
+        } else {
+            black().opacity(0.22)
+        })
         .child(boxed)
         .into_any_element()
 }

@@ -592,9 +592,11 @@ fn status_label(status: &str) -> String {
 
 fn status_color(status: &str, theme: &Theme) -> Hsla {
     match status {
-        "working" => theme.success,
-        "blocked" => theme.danger,
-        "done" => theme.accent,
+        // One status, one color — the same triad the sidebar and the tab strip
+        // paint (see panels::status_dot).
+        "working" => theme.info,
+        "blocked" => theme.warning,
+        "done" => theme.success,
         _ => theme.muted_foreground,
     }
 }

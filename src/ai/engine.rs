@@ -263,6 +263,10 @@ pub struct OrchestratorEngine {
     endpoint_url: String,
     model: String,
     api_key: String,
+    /// OpenCode's Go gateway routes by a client-supplied session id and answers
+    /// `MissingSessionID` without one. One id per engine keeps a turn's requests
+    /// on one route; other providers never see the header.
+    gateway_session: Option<String>,
     /// System prompt used for all LLM calls.
     /// Set via `new()` or `with_system_prompt()`.
     pub system_prompt: String,
@@ -384,11 +388,17 @@ impl OrchestratorEngine {
             .context("build reqwest client")
             .map_err(AiError::from)?;
 
+        let gateway_session = provider
+            .endpoint_url()
+            .contains("opencode.ai")
+            .then(|| uuid::Uuid::new_v4().to_string());
+
         Ok(Self {
             http_client,
             endpoint_url: provider.endpoint_url(),
             model: provider.model.clone(),
             api_key: provider.api_key.clone(),
+            gateway_session,
             system_prompt: crate::ai::prompts::get_template("orchestrator"),
         })
     }
@@ -429,9 +439,13 @@ impl OrchestratorEngine {
             "stream": false,
         });
 
-        let resp = ureq::post(url)
+        let mut request = ureq::post(url)
             .set("Authorization", &format!("Bearer {api_key}"))
-            .set("Content-Type", "application/json")
+            .set("Content-Type", "application/json");
+        if let Some(session) = &self.gateway_session {
+            request = request.set("x-opencode-session", session);
+        }
+        let resp = request
             .send_json(ureq::json!(&payload))
             .context("ureq HTTP request failed")
             .map_err(AiError::from)?;
@@ -829,16 +843,21 @@ impl OrchestratorEngine {
             let http_client = self.http_client.clone();
             let endpoint = self.endpoint_url().to_string();
             let api_key = self.api_key.clone();
+            let gateway_session = self.gateway_session.clone();
             let collected: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
             let collected_clone = collected.clone();
             let on_event_clone = Arc::clone(&on_event);
 
             let raw_calls = tokio_handle()
                 .spawn(async move {
-                    let resp = http_client
+                    let mut request = http_client
                         .post(&endpoint)
                         .header("Authorization", format!("Bearer {api_key}"))
-                        .header("Content-Type", "application/json")
+                        .header("Content-Type", "application/json");
+                    if let Some(session) = &gateway_session {
+                        request = request.header("x-opencode-session", session);
+                    }
+                    let resp = request
                         .json(&payload)
                         .send()
                         .await
@@ -1031,14 +1050,15 @@ impl OrchestratorEngine {
             let endpoint = self.endpoint_url().to_string();
             let api_key = self.api_key.clone();
 
-            let (final_text, tool_calls) = match http_client
+            let mut request = http_client
                 .post(&endpoint)
                 .header("Authorization", format!("Bearer {api_key}"))
-                .header("Content-Type", "application/json")
-                .json(&payload)
-                .send()
-                .await
-            {
+                .header("Content-Type", "application/json");
+            if let Some(session) = &self.gateway_session {
+                request = request.header("x-opencode-session", session);
+            }
+
+            let (final_text, tool_calls) = match request.json(&payload).send().await {
                 Ok(resp) if resp.status().is_success() => {
                     let body = resp
                         .text()
@@ -1611,6 +1631,30 @@ mod tests {
     }
 
     // ── Config helper tests ──────────────────────────────────────────
+
+    fn a_provider(base_url: &str) -> ApiProviderConfig {
+        ApiProviderConfig {
+            name: "test".into(),
+            format: crate::api_provider::ApiFormat::OpenAI,
+            base_url: base_url.into(),
+            api_key: "key".into(),
+            model: "model".into(),
+            thinking_level: crate::api_provider::ThinkingLevel::Medium,
+            url_suffix: "/v1/chat/completions".into(),
+            enabled_agents: Vec::new(),
+        }
+    }
+
+    /// OpenCode's Go gateway rejects a request without a client session id, so
+    /// an engine aimed at it carries one; every other provider carries none.
+    #[test]
+    fn only_the_opencode_gateway_carries_a_session_id() {
+        let gateway =
+            OrchestratorEngine::new(&a_provider("https://opencode.ai/inference/go")).unwrap();
+        assert!(gateway.gateway_session.is_some());
+        let plain = OrchestratorEngine::new(&a_provider("https://api.example.com")).unwrap();
+        assert!(plain.gateway_session.is_none());
+    }
 
     #[test]
     fn test_has_available_provider_returns_bool() {

@@ -503,7 +503,25 @@ impl ConfigStore {
         &self.diagnostics
     }
 
-    pub fn save(&self) -> Result<()> {
+    /// Write the file and keep the diagnostics in step with it: a successful
+    /// write makes the file canonical, so every problem found while reading it
+    /// is resolved; a failed write replaces the previous failure instead of
+    /// appending one per attempt.
+    pub fn save(&mut self) -> Result<()> {
+        let result = self.write();
+        match &result {
+            Ok(()) => self.diagnostics.clear(),
+            Err(error) => {
+                self.diagnostics
+                    .retain(|item| item.kind != DiagnosticKind::Write);
+                self.diagnostics
+                    .push(Diagnostic::write(format!("{error:#}")));
+            }
+        }
+        result
+    }
+
+    fn write(&self) -> Result<()> {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent).context("create the config directory")?;
         }
@@ -557,12 +575,10 @@ pub fn update(cx: &mut App, change: impl FnOnce(&mut ConfigFile)) {
 }
 
 /// Write the current config out, and keep a failed write visible instead of
-/// swallowing it.
+/// swallowing it. The store records the outcome on itself, so this only logs.
 pub fn save(cx: &mut App) {
-    if let Err(error) = cx.global::<ConfigStore>().save() {
-        cx.global_mut::<ConfigStore>()
-            .diagnostics
-            .push(Diagnostic::write(format!("{error:#}")));
+    if let Err(error) = cx.global_mut::<ConfigStore>().save() {
+        tracing::warn!("config: could not be written: {error:#}");
     }
 }
 
@@ -815,11 +831,16 @@ mod tests {
         fs::write(&path, r#"{"layout": {"sidebar_width": 1000.0}, "wat": 1}"#)
             .expect("the seed file is written");
 
-        let store = ConfigStore::load_from(path.clone());
+        let mut store = ConfigStore::load_from(path.clone());
         assert_eq!(store.data().layout.sidebar_width, 1000.0);
         assert_eq!(store.diagnostics().len(), 1);
 
         store.save().expect("the config is written");
+        assert_eq!(
+            store.diagnostics(),
+            &[],
+            "a successful write resolves the problems found while reading"
+        );
         let reloaded = ConfigStore::load_from(path.clone());
         assert_eq!(reloaded.data(), store.data());
         assert_eq!(
@@ -839,9 +860,17 @@ mod tests {
         assert_eq!(missing.data(), &ConfigFile::default());
         assert_eq!(missing.diagnostics(), &[]);
 
-        // A path that cannot be written reports it rather than pretending.
-        let blocked = ConfigStore::load_from(dir.clone());
+        // A path that cannot be written reports it rather than pretending,
+        // and a second failure replaces the first instead of growing the list.
+        let mut blocked = ConfigStore::load_from(dir.clone());
         assert!(blocked.save().is_err(), "a directory is not a config file");
+        assert!(blocked.save().is_err(), "the path is still a directory");
+        let failures: Vec<_> = blocked
+            .diagnostics()
+            .iter()
+            .filter(|item| item.kind == DiagnosticKind::Write)
+            .collect();
+        assert_eq!(failures.len(), 1, "one write failure, not one per attempt");
 
         let _ = fs::remove_dir_all(&dir);
     }

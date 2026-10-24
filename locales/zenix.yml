@@ -55,6 +55,11 @@ status:
   agents:
     en: "%{running} running · %{blocked} blocked"
     zh-CN: "%{running} 运行中 · %{blocked} 等待输入"
+  # The prefix key, always named at the bar's right edge; it lights while the
+  # prefix is armed and the next key is its chord.
+  prefix:
+    en: "prefix"
+    zh-CN: "前缀"
 
 settings:
   title:
@@ -76,12 +81,18 @@ settings:
     sidebar_visible:
       en: "Sidebar"
       zh-CN: "侧栏"
+    sidebar_description:
+      en: "The workspace tree down the left, and the rail beside it."
+      zh-CN: "左侧的工作区树与活动栏。"
     sidebar_width:
       en: "Sidebar width"
       zh-CN: "侧栏宽度"
     aside_visible:
       en: "Chat panel"
       zh-CN: "对话面板"
+    aside_description:
+      en: "Closed by default: the window is opened for the terminal."
+      zh-CN: "默认关闭：窗口是为终端开的。"
     aside_width:
       en: "Chat panel width"
       zh-CN: "对话面板宽度"
@@ -186,9 +197,12 @@ settings:
     family:
       en: "Theme family"
       zh-CN: "主题族"
+    family_description:
+      en: "One palette for the chrome; light and dark stay inside the family."
+      zh-CN: "壳的调色板，明暗不离开该族。"
     family_default:
-      en: "Default"
-      zh-CN: "默认"
+      en: "Zenix"
+      zh-CN: "Zenix"
     family_gruvbox:
       en: "Gruvbox"
       zh-CN: "Gruvbox"
@@ -204,6 +218,9 @@ settings:
     theme:
       en: "Mode"
       zh-CN: "明暗"
+    theme_description:
+      en: "The chrome, the terminal and every plugin panel switch together."
+      zh-CN: "壳、终端与所有插件面板同时切换。"
     theme_light:
       en: "Light"
       zh-CN: "浅色"
@@ -213,6 +230,9 @@ settings:
     locale:
       en: "Language"
       zh-CN: "语言"
+    locale_description:
+      en: "The language of the interface; the terminal is untouched."
+      zh-CN: "界面文案的语言，终端不受影响。"
   terminal:
     title:
       en: "Terminal"
@@ -223,9 +243,15 @@ settings:
     palette_dark:
       en: "Palette (dark)"
       zh-CN: "调色板（深色）"
+    palette_dark_description:
+      en: "Named cell colors resolve against this palette in dark mode."
+      zh-CN: "深色模式下的命名单元格色。"
     palette_light:
       en: "Palette (light)"
       zh-CN: "调色板（浅色）"
+    palette_light_description:
+      en: "The same table for light mode, so a mode switch keeps contrast."
+      zh-CN: "浅色模式下的命名单元格色。"
 
 general:
   refresh:
@@ -258,6 +284,12 @@ ai:
     stop:
       en: "Stop"
       zh-CN: "停止"
+    model:
+      en: "Model"
+      zh-CN: "模型"
+    turns:
+      en: "%{count} turns"
+      zh-CN: "%{count} 轮"
     streaming:
       en: "Thinking..."
       zh-CN: "思考中…"
@@ -404,6 +436,9 @@ shell:
     tab_count:
       en: "%{count} tabs"
       zh-CN: "%{count} 个标签"
+    more:
+      en: "%{count} more"
+      zh-CN: "还有 %{count} 项"
   plugins:
     title:
       en: "Plugins"

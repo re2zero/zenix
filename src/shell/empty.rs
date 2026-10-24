@@ -40,13 +40,13 @@ pub(crate) fn grid(invocation: &Invocation) -> AnyElement {
                 .child(mark(theme))
                 .child(
                     div()
-                        .text_lg()
+                        .text_size(px(17.))
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(t("shell.empty.title")),
                 )
                 .child(
                     div()
-                        .text_sm()
+                        .text_size(px(12.5))
                         .text_color(theme.muted_foreground)
                         .child(t("shell.empty.hint")),
                 )
@@ -99,14 +99,16 @@ pub(crate) fn plugin_panels(invocation: &Invocation) -> AnyElement {
 fn mark(theme: &Theme) -> AnyElement {
     div()
         .size(px(40.))
-        .rounded_md()
-        .border_1()
-        .border_color(theme.border)
-        .bg(theme.muted)
+        .rounded(px(11.))
         .flex()
         .items_center()
         .justify_center()
-        .text_color(theme.muted_foreground)
+        .bg(linear_gradient(
+            140.,
+            linear_color_stop(theme.primary, 0.),
+            linear_color_stop(theme.info, 1.),
+        ))
+        .text_color(theme.primary_foreground)
         .child(Icon::default().data(TERMINAL_ICON).w(px(20.)).h(px(20.)))
         .into_any_element()
 }
@@ -119,22 +121,27 @@ fn palette_line(invocation: &Invocation) -> AnyElement {
     h_flex()
         .id("empty-palette")
         .w_full()
-        .px_3()
-        .py_2()
-        .gap_2()
+        .h(px(44.))
+        .px(px(12.))
+        .gap(px(9.))
         .items_center()
-        .rounded_md()
+        .rounded(px(12.))
         .border_1()
         .border_color(theme.border)
-        .bg(theme.background)
+        .bg(theme.muted)
         .cursor_pointer()
         .text_color(theme.muted_foreground)
-        .hover(|style| style.border_color(theme.accent))
+        .hover(|style| style.border_color(theme.primary.opacity(0.5)))
         .on_click(move |_, window, cx| {
             dispatch(ShellRequest::Command(Command::TogglePalette), window, cx);
         })
         .child(Icon::default().data(SEARCH_ICON).w(px(15.)).h(px(15.)))
-        .child(div().flex_1().text_sm().child(t("shell.empty.palette")))
+        .child(
+            div()
+                .flex_1()
+                .text_size(px(13.))
+                .child(t("shell.empty.palette")),
+        )
         .children(
             super::keymap::direct_label(Command::TogglePalette).map(|chord| {
                 div()
@@ -220,30 +227,34 @@ fn card(
         .id(("empty-card", ix))
         .flex_1()
         .min_w_0()
-        .gap_1()
-        .px_3()
-        .py_2()
-        .rounded_md()
+        .gap_0p5()
+        .px(px(12.))
+        .py(px(10.))
+        .rounded(px(9.))
         .border_1()
         .border_color(theme.border)
-        .bg(theme.background)
+        .bg(theme.muted)
         .cursor_pointer()
-        .hover(|style| style.bg(theme.muted))
+        .hover(|style| {
+            style
+                .bg(theme.list_hover)
+                .border_color(theme.primary.opacity(0.45))
+        })
         .on_click(move |_, window, cx| {
             dispatch(ShellRequest::Command(command), window, cx);
         })
         .child(
             h_flex()
-                .gap_1()
+                .gap(px(6.))
                 .items_center()
-                .text_sm()
+                .text_size(px(12.))
                 .font_weight(FontWeight::MEDIUM)
                 .child(Icon::default().data(icon).w(px(13.)).h(px(13.)))
                 .child(title),
         )
         .child(
             div()
-                .text_xs()
+                .text_size(px(11.))
                 .text_color(theme.muted_foreground)
                 .child(detail),
         )

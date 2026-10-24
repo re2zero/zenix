@@ -123,13 +123,21 @@ pub fn retryable(err: &AiError) -> bool {
 }
 
 /// Truncate a string for display in error messages, preserving UTF-8 boundaries.
-#[allow(dead_code)]
 fn truncate_err(s: &str, max: usize) -> String {
     if s.len() <= max {
-        s.to_string()
-    } else {
-        format!("{}...", &s[..max.saturating_sub(3)])
+        return s.to_string();
     }
+    // `max` counts bytes, so the cut has to fall back to the nearest character
+    // boundary: a provider's error text is often Chinese, and slicing it at a
+    // byte offset would panic inside the very path that reports failures.
+    let keep = max.saturating_sub(3);
+    let end = s
+        .char_indices()
+        .map(|(index, _)| index)
+        .take_while(|index| *index <= keep)
+        .last()
+        .unwrap_or(0);
+    format!("{}...", &s[..end])
 }
 
 #[cfg(test)]
@@ -168,6 +176,15 @@ mod tests {
         let e = AiError::ApiError("HTTP 429 rate limit".into());
         let msg = user_friendly(&e);
         assert!(msg.contains("请求过于频繁"));
+    }
+
+    #[test]
+    fn truncating_a_multibyte_error_stays_on_character_boundaries() {
+        let text = "服务返回错误：这是一段很长的中文错误消息，用来确认截断不会落在字符中间。";
+        let cut = truncate_err(text, 30);
+        assert!(cut.ends_with("..."));
+        assert!(cut.len() <= 30);
+        assert!(text.starts_with(cut.trim_end_matches("...")));
     }
 
     #[test]
