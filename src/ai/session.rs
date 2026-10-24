@@ -40,6 +40,21 @@ pub struct ToolCallState {
     pub completed_at: Option<u64>,
 }
 
+/// The token bill an API reported for one turn: what went in, what came out.
+/// Ephemeral display data — the store does not keep it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UsageInfo {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+
+impl UsageInfo {
+    /// The total the turn cost, the one number a reader compares turns by.
+    pub fn total_tokens(&self) -> u64 {
+        self.input_tokens + self.output_tokens
+    }
+}
+
 #[derive(Clone)]
 pub struct ChatMessage {
     pub id: i64,
@@ -56,6 +71,9 @@ pub struct ChatMessage {
     pub reasoning_duration_ms: Option<u64>,
     /// Tool calls made during this message (ephemeral, not persisted).
     pub tool_calls: Vec<ToolCallState>,
+    /// The token bill the API reported for this turn, if it reported one
+    /// (ephemeral, not persisted).
+    pub usage: Option<UsageInfo>,
     pub timestamp: String,
     pub sequence: i64,
 }
@@ -560,6 +578,7 @@ fn map_message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatMessage> {
         reasoning_text: None,
         reasoning_duration_ms: None,
         tool_calls: Vec::new(),
+        usage: None,
         timestamp: row.get(5)?,
         sequence: row.get(6)?,
     })
@@ -577,6 +596,7 @@ fn map_search_hit_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SearchHit> {
             reasoning_text: None,
             reasoning_duration_ms: None,
             tool_calls: Vec::new(),
+            usage: None,
             timestamp: row.get(5)?,
             sequence: row.get(6)?,
         },
@@ -636,6 +656,7 @@ mod tests {
             reasoning_text: None,
             reasoning_duration_ms: None,
             tool_calls: Vec::new(),
+            usage: None,
             timestamp: "2024-01-01T00:00:00".to_string(),
             sequence: seq,
         }

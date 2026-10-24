@@ -488,7 +488,8 @@ impl ChatPanel {
             // the retry drops it rather than saving it.
             let said_something = !message.content.is_empty()
                 || !message.tool_calls.is_empty()
-                || message.reasoning_text.is_some();
+                || message.reasoning_text.is_some()
+                || message.usage.is_some();
             if said_something {
                 persist(message);
                 // The store's rows order by `updated_at`: a finished turn
@@ -1536,6 +1537,10 @@ fn fold_event(message: &mut ChatMessage, event: &DispatchStreamEvent, now_ms: u6
             info.original_count, info.compressed_count, info.before_tokens, info.after_tokens
         )),
         DispatchStreamEvent::Error(error) => Folded::Error(error.clone()),
+        DispatchStreamEvent::Usage(usage) => {
+            message.usage = Some(*usage);
+            Folded::Message
+        }
         DispatchStreamEvent::Done => Folded::Message,
         // The dispatch-directive path is the older orchestration (the engine's
         // own agent dispatch); the chat panel's turns go through tools, so
@@ -1673,6 +1678,7 @@ fn message(session_id: &str, role: &str, content: String, sequence: i64) -> Chat
         reasoning_text: None,
         reasoning_duration_ms: None,
         tool_calls: Vec::new(),
+        usage: None,
         timestamp: crate::util::timestamp_now(),
         sequence,
     }
@@ -1743,6 +1749,15 @@ fn who_row(message: &ChatMessage, theme: &Theme) -> AnyElement {
                 .text_xs()
                 .text_color(theme.muted_foreground)
                 .child(minute)
+        }))
+        // What the turn cost, in the API's own numbers: the bill sits with the
+        // name and the minute, the smallest place it still reads as metadata.
+        .children(message.usage.map(|usage| {
+            div()
+                .text_xs()
+                .font_family(theme.mono_font_family.clone())
+                .text_color(theme.muted_foreground)
+                .child(format!("{} tok", usage.total_tokens()))
         }))
         .into_any_element()
 }
@@ -2038,6 +2053,22 @@ mod tests {
         assert_eq!(wire_role("user"), "user");
         assert_eq!(wire_role("orchestrator"), "assistant");
         assert_eq!(wire_role("anything-else"), "assistant");
+    }
+
+    /// The API's bill lands on the streaming message and adds up to the one
+    /// number the who row shows.
+    #[test]
+    fn the_turns_bill_lands_on_the_message() {
+        let mut message = a_placeholder();
+        fold_event(
+            &mut message,
+            &DispatchStreamEvent::Usage(crate::ai::session::UsageInfo {
+                input_tokens: 120,
+                output_tokens: 34,
+            }),
+            0,
+        );
+        assert_eq!(message.usage.map(|usage| usage.total_tokens()), Some(154));
     }
 
     /// A retry sends the last user message that said something: the failed

@@ -33,6 +33,7 @@ use serde::{Deserialize, Serialize};
 use crate::ai::compactor::Compactor;
 use crate::ai::endpoint::{ApiEndpoint, ReadSource, SplitDirection};
 use crate::ai::error::{AiError, user_friendly};
+use crate::ai::session::UsageInfo;
 use crate::ai::tools::{Tool, ToolCall, ToolExecutor, ToolResult};
 use crate::api_provider::ApiProviderConfig;
 
@@ -127,6 +128,8 @@ pub enum StreamEvent {
     },
     /// A tool was executed (tool_name, result content, is_error).
     ToolResult(String, String, bool),
+    /// The API's token bill for the turn, when it reports one.
+    Usage(UsageInfo),
 }
 
 // ── Dispatch Types ──────────────────────────────────────────────────────
@@ -249,6 +252,8 @@ pub enum DispatchStreamEvent {
     },
     /// The conversation was compacted to fit within the context window.
     Compacted(CompactionInfo),
+    /// The API's token bill for the turn, when it reports one.
+    Usage(UsageInfo),
     /// An error occurred.
     Error(String),
     /// A new LLM round is about to begin (for per-round UI separation).
@@ -306,6 +311,10 @@ enum AnthropicSseEvent {
     Text(String),
     /// A thinking (reasoning) token chunk.
     Thinking(String),
+    /// `message_start`: the turn's input bill.
+    MessageStart(u64),
+    /// `message_delta`: the running output bill.
+    MessageDelta(u64),
     /// The stream has finished (message_stop).
     Done,
     /// Non-content event — skip (content_block_start, ping, etc.).
@@ -329,6 +338,20 @@ fn parse_anthropic_sse_event(data: &str) -> AnthropicSseEvent {
 
     match event_type {
         "message_stop" => AnthropicSseEvent::Done,
+        "message_start" => AnthropicSseEvent::MessageStart(
+            value
+                .get("usage")
+                .and_then(|usage| usage.get("input_tokens"))
+                .and_then(|tokens| tokens.as_u64())
+                .unwrap_or(0),
+        ),
+        "message_delta" => AnthropicSseEvent::MessageDelta(
+            value
+                .get("usage")
+                .and_then(|usage| usage.get("output_tokens"))
+                .and_then(|tokens| tokens.as_u64())
+                .unwrap_or(0),
+        ),
         "content_block_delta" => {
             let Some(delta) = value.get("delta") else {
                 return AnthropicSseEvent::Ignored;
@@ -486,6 +509,28 @@ impl OrchestratorEngine {
 pub(crate) struct SseChunkWithTools {
     id: Option<String>,
     choices: Option<Vec<SseChoiceWithTools>>,
+    /// The token bill, on the final chunk (asked for with
+    /// `stream_options.include_usage`). `choices` is empty on that one.
+    usage: Option<SseUsage>,
+}
+
+/// The OpenAI usage object, the two numbers the panel shows.
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub(crate) struct SseUsage {
+    prompt_tokens: Option<u64>,
+    completion_tokens: Option<u64>,
+}
+
+impl SseUsage {
+    fn into_event(self) -> Option<StreamEvent> {
+        let input = self.prompt_tokens.unwrap_or(0);
+        let output = self.completion_tokens.unwrap_or(0);
+        (input > 0 || output > 0).then_some(StreamEvent::Usage(UsageInfo {
+            input_tokens: input,
+            output_tokens: output,
+        }))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -627,6 +672,7 @@ fn build_tool_call_payload(
         "model": model,
         "messages": messages,
         "stream": true,
+        "stream_options": {"include_usage": true},
         "tools": tool_defs,
     })
 }
@@ -646,6 +692,10 @@ async fn parse_tool_call_sse_stream(
     let mut done = false;
     let mut tool_call_acc: std::collections::HashMap<usize, (String, String, String)> =
         std::collections::HashMap::new();
+    // Anthropic reports the bill across the stream: input on `message_start`,
+    // output accumulating on each `message_delta`.
+    let mut anthropic_input = 0u64;
+    let mut anthropic_output = 0u64;
 
     while let Some(chunk) = stream.next().await {
         let chunk = match chunk {
@@ -684,6 +734,12 @@ async fn parse_tool_call_sse_stream(
                                 }
                             }
                         }
+                        // The final chunk carries the bill and no choices.
+                        if let Some(usage) = sse_chunk.usage
+                            && let Some(event) = usage.into_event()
+                        {
+                            on_event(event);
+                        }
                     } else {
                         match parse_anthropic_sse_event(data) {
                             AnthropicSseEvent::Text(text) if !text.is_empty() => {
@@ -692,7 +748,21 @@ async fn parse_tool_call_sse_stream(
                             AnthropicSseEvent::Thinking(text) if !text.is_empty() => {
                                 on_event(StreamEvent::Thinking { round, text });
                             }
-                            AnthropicSseEvent::Done => done = true,
+                            AnthropicSseEvent::MessageStart(input) => {
+                                anthropic_input = input;
+                            }
+                            AnthropicSseEvent::MessageDelta(output) => {
+                                anthropic_output = output;
+                            }
+                            AnthropicSseEvent::Done => {
+                                if anthropic_input > 0 || anthropic_output > 0 {
+                                    on_event(StreamEvent::Usage(UsageInfo {
+                                        input_tokens: anthropic_input,
+                                        output_tokens: anthropic_output,
+                                    }));
+                                }
+                                done = true;
+                            }
                             _ => {}
                         }
                     }
@@ -729,6 +799,11 @@ async fn parse_tool_call_sse_stream(
                     }
                 }
             }
+            if let Some(usage) = sse_chunk.usage
+                && let Some(event) = usage.into_event()
+            {
+                on_event(event);
+            }
         } else {
             match parse_anthropic_sse_event(data) {
                 AnthropicSseEvent::Text(text) if !text.is_empty() => {
@@ -737,9 +812,31 @@ async fn parse_tool_call_sse_stream(
                 AnthropicSseEvent::Thinking(text) if !text.is_empty() => {
                     on_event(StreamEvent::Thinking { round, text });
                 }
-                AnthropicSseEvent::Done => done = true,
+                AnthropicSseEvent::MessageStart(input) => {
+                    anthropic_input = input;
+                }
+                AnthropicSseEvent::MessageDelta(output) => {
+                    anthropic_output = output;
+                }
+                AnthropicSseEvent::Done => {
+                    if anthropic_input > 0 || anthropic_output > 0 {
+                        on_event(StreamEvent::Usage(UsageInfo {
+                            input_tokens: anthropic_input,
+                            output_tokens: anthropic_output,
+                        }));
+                    }
+                    done = true;
+                }
                 _ => {}
             }
+        }
+        // The last line is all that is left: whatever bill it carried is the
+        // turn's, and no further event will collect it.
+        if !done && (anthropic_input > 0 || anthropic_output > 0) {
+            on_event(StreamEvent::Usage(UsageInfo {
+                input_tokens: anthropic_input,
+                output_tokens: anthropic_output,
+            }));
         }
     }
 
@@ -887,6 +984,9 @@ impl OrchestratorEngine {
                             }
                             StreamEvent::Done => {
                                 on_event_clone(DispatchStreamEvent::Done);
+                            }
+                            StreamEvent::Usage(usage) => {
+                                on_event_clone(DispatchStreamEvent::Usage(usage));
                             }
                             StreamEvent::ToolResult(_, _, _) => {}
                         })
@@ -1389,6 +1489,40 @@ mod tests {
         assert!(matches!(
             parse_anthropic_sse_event(data),
             AnthropicSseEvent::Thinking(t) if t == "reasoning..."
+        ));
+    }
+
+    /// The OpenAI bill arrives on the final chunk, empty of choices; a chunk
+    /// without one parses as before.
+    #[test]
+    fn test_sse_usage_chunk_parses_into_the_bill() {
+        let data = r#"{"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":34}}"#;
+        let chunk: SseChunkWithTools = serde_json::from_str(data).expect("parse usage chunk");
+        assert!(matches!(
+            chunk.usage.and_then(|usage| usage.into_event()),
+            Some(StreamEvent::Usage(info))
+                if info.input_tokens == 12 && info.output_tokens == 34
+        ));
+
+        // No bill, no event: every chunk that only streams tokens stays so.
+        let data = r#"{"choices":[],"usage":{"prompt_tokens":null,"completion_tokens":null}}"#;
+        let chunk: SseChunkWithTools = serde_json::from_str(data).expect("parse null usage");
+        assert!(chunk.usage.and_then(|usage| usage.into_event()).is_none());
+    }
+
+    /// Anthropic reports the bill across two events: input on `message_start`,
+    /// output accumulating on `message_delta`.
+    #[test]
+    fn test_parse_anthropic_usage_events() {
+        let data = r#"{"type":"message_start","usage":{"input_tokens":123}}"#;
+        assert!(matches!(
+            parse_anthropic_sse_event(data),
+            AnthropicSseEvent::MessageStart(123)
+        ));
+        let data = r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":45}}"#;
+        assert!(matches!(
+            parse_anthropic_sse_event(data),
+            AnthropicSseEvent::MessageDelta(45)
         ));
     }
 
