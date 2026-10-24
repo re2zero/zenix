@@ -262,6 +262,14 @@ pub enum DispatchStreamEvent {
     Done,
 }
 
+/// The gate a tool call passes before it runs: the human, asked through the
+/// panel. A turn blocks inside `approve` until the answer — the call is the
+/// user's machine being acted on, so the wait is the point.
+pub trait ToolApproval: Send + Sync {
+    /// Whether `call` may run. `false` sends the model a denial instead.
+    fn approve(&self, call: &ToolCall) -> bool;
+}
+
 /// Orchestrator LLM engine.
 pub struct OrchestratorEngine {
     http_client: reqwest::Client,
@@ -620,16 +628,18 @@ pub(crate) fn finalize_accumulated_calls(
             if name.is_empty() {
                 continue;
             }
-            if let Ok(args) = serde_json::from_str::<serde_json::Value>(args_str) {
-                calls.push((id.clone(), name.clone(), args));
-            } else if !args_str.is_empty() {
+            // An empty arguments string is a call with no arguments — a shape
+            // models emit for tools like `list_workers` — not an invalid one:
+            // dropping it would drop the call and leave the turn speechless.
+            let args = if args_str.trim().is_empty() {
+                serde_json::json!({})
+            } else if let Ok(args) = serde_json::from_str::<serde_json::Value>(args_str) {
+                args
+            } else {
                 // Partial/invalid arguments — try to fix by wrapping in a string
-                calls.push((
-                    id.clone(),
-                    name.clone(),
-                    serde_json::Value::String(args_str.clone()),
-                ));
-            }
+                serde_json::Value::String(args_str.clone())
+            };
+            calls.push((id.clone(), name.clone(), args));
         }
     }
     calls
@@ -675,6 +685,26 @@ fn build_tool_call_payload(
         "stream_options": {"include_usage": true},
         "tools": tool_defs,
     })
+}
+
+/// Run one tool call through the approval gate. A denial goes back to the
+/// model as the call's result — an error it can read and route around —
+/// rather than as a silent skip.
+fn execute_with_approval(
+    approval: Option<&dyn ToolApproval>,
+    executor: &ToolExecutor,
+    call: &ToolCall,
+) -> ToolResult {
+    if let Some(gate) = approval
+        && !gate.approve(call)
+    {
+        return ToolResult {
+            tool_name: call.name.clone(),
+            content: "the user did not allow this tool call".to_owned(),
+            is_error: true,
+        };
+    }
+    executor.execute(call)
 }
 
 /// Parse an SSE byte stream from a tool-calling LLM response.
@@ -871,6 +901,10 @@ impl OrchestratorEngine {
     /// The `on_event` callback receives `DispatchStreamEvent::ToolCall`,
     /// `DispatchStreamEvent::ToolResult`, and `DispatchStreamEvent::Compacted`
     /// events during the loop.
+    // The turn's own shape: what was said, what it may call, where tools run,
+    // what it may forget, who gates the calls, what to report. Eight is the
+    // honest count.
+    #[allow(clippy::too_many_arguments)]
     pub async fn chat_with_tools(
         &self,
         messages: &[ChatMessageRef],
@@ -878,6 +912,7 @@ impl OrchestratorEngine {
         executor: &ToolExecutor,
         compactor: &Compactor,
         max_tool_rounds: u32,
+        approval: Option<&dyn ToolApproval>,
         on_event: impl Fn(DispatchStreamEvent) + Send + Sync + 'static,
     ) -> Result<String, AiError> {
         let max_rounds = max_tool_rounds.min(MAX_TOOL_ROUNDS);
@@ -1017,9 +1052,15 @@ impl OrchestratorEngine {
             // so it's preserved in the conversation history.
             let response_text = collected.lock().unwrap().clone();
 
-            // Execute all tool calls (single-threaded, errors don't stop loop)
-            let results: Vec<ToolResult> =
-                tool_calls.iter().map(|tc| executor.execute(tc)).collect();
+            // Execute all tool calls (single-threaded, errors don't stop
+            // loop). A gate can block inside here for as long as the user
+            // thinks, so this leaves the async worker it was on.
+            let results: Vec<ToolResult> = tokio::task::block_in_place(|| {
+                tool_calls
+                    .iter()
+                    .map(|tc| execute_with_approval(approval, executor, tc))
+                    .collect()
+            });
 
             for (tc, result) in tool_calls.iter().zip(results.iter()) {
                 on_event(DispatchStreamEvent::ToolResult {
@@ -1524,6 +1565,47 @@ mod tests {
             parse_anthropic_sse_event(data),
             AnthropicSseEvent::MessageDelta(45)
         ));
+    }
+
+    /// An empty arguments string is a call with no arguments, not a broken
+    /// one: the call survives accumulation and reaches the executor as `{}`.
+    #[test]
+    fn an_empty_arguments_string_is_a_call_with_no_arguments() {
+        let mut accumulator = std::collections::HashMap::new();
+        accumulator.insert(
+            0usize,
+            (
+                "call_1".to_owned(),
+                "list_workers".to_owned(),
+                String::new(),
+            ),
+        );
+        let calls = finalize_accumulated_calls(accumulator);
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].0, "call_1");
+        assert_eq!(calls[0].1, "list_workers");
+        assert_eq!(calls[0].2, serde_json::json!({}));
+    }
+
+    /// A gate that says no turns the call into the model's error to read;
+    /// a gate that says yes hands the call to the executor unchanged.
+    #[test]
+    fn the_approval_gate_answers_the_model_on_a_denial() {
+        struct DenyAll;
+        impl ToolApproval for DenyAll {
+            fn approve(&self, _: &ToolCall) -> bool {
+                false
+            }
+        }
+        let executor = ToolExecutor::new(ApiEndpoint::local(), String::new());
+        let call = ToolCall {
+            id: "call_1".into(),
+            name: "spawn_worker".into(),
+            arguments: serde_json::json!({}),
+        };
+        let denied = execute_with_approval(Some(&DenyAll), &executor, &call);
+        assert!(denied.is_error);
+        assert!(denied.content.contains("did not allow"));
     }
 
     #[test]

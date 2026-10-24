@@ -373,6 +373,15 @@ ai:
     copy_code:
       en: "Copy"
       zh-CN: "复制"
+    approval_wants:
+      en: "Wants to run: %{name}"
+      zh-CN: "请求执行：%{name}"
+    approval_allow:
+      en: "Allow"
+      zh-CN: "允许"
+    approval_deny:
+      en: "Deny"
+      zh-CN: "拒绝"
   # The composer's reasoning-effort picker: one label per `ThinkingLevel`, keyed
   # by the level's wire spelling.
   effort:

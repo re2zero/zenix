@@ -46,11 +46,12 @@ use super::registry::{AsideBlock, AsideTab, Invocation};
 use crate::ai::compactor::Compactor;
 use crate::ai::endpoint::ApiEndpoint;
 use crate::ai::engine::{
-    ChatMessageRef, DispatchStreamEvent, OrchestratorEngine, build_system_prompt, detect_language,
+    ChatMessageRef, DispatchStreamEvent, OrchestratorEngine, ToolApproval, build_system_prompt,
+    detect_language,
 };
 use crate::ai::roles::RoleRegistry;
 use crate::ai::session::{ChatMessage, Session, SessionManager, ToolCallState, ToolCallStatus};
-use crate::ai::tools::{Tool, ToolExecutor, builtin_tools};
+use crate::ai::tools::{Tool, ToolCall, ToolExecutor, builtin_tools};
 use crate::api_provider::{self, ApiProviderConfig, ThinkingLevel};
 use crate::i18n::t;
 
@@ -103,6 +104,9 @@ struct ChatPanel {
     /// The session history while the user has it open; it replaces the
     /// conversation on screen until a session is picked or it is closed.
     history: Option<History>,
+    /// The tool call waiting for the user's yes, if one is. The turn is
+    /// blocked on the answer.
+    pending_approval: Option<ApprovalRequest>,
     /// The running turn's engine task, so Stop can end it.
     turn: Option<tokio::task::JoinHandle<()>>,
     /// The task draining the turn's events.
@@ -216,6 +220,7 @@ impl ChatPanel {
             reasoning_started: None,
             session_id: None,
             history: None,
+            pending_approval: None,
             turn: None,
             drain: None,
             open: Vec::new(),
@@ -354,6 +359,7 @@ impl ChatPanel {
             .collect();
 
         let (events, incoming) = crossbeam_channel::unbounded::<DispatchStreamEvent>();
+        let (approval_tx, approval_rx) = crossbeam_channel::unbounded::<ApprovalRequest>();
         tracing::info!(
             target: "zenix-chat",
             provider = %provider.name,
@@ -369,6 +375,9 @@ impl ChatPanel {
             // panel has no snapshot of its own to name one from.
             let executor = ToolExecutor::new(ApiEndpoint::local(), String::new());
             let compactor = Compactor::default_compactor();
+            let gate = ApprovalGate {
+                requests: approval_tx,
+            };
             let outcome = engine
                 .chat_with_tools(
                     &history,
@@ -376,6 +385,7 @@ impl ChatPanel {
                     &executor,
                     &compactor,
                     MAX_TOOL_ROUNDS,
+                    Some(&gate),
                     move |event| {
                         let _ = report.send(event);
                     },
@@ -390,21 +400,43 @@ impl ChatPanel {
             }
         }));
 
-        // The drain: one event in, one repaint. It ends when the engine task
-        // drops its sender — which is also how Stop, an abort, ends it.
+        // The drain: one message in, one repaint. Most are stream events; an
+        // approval request parks itself on the panel and the turn waits. It
+        // ends when the engine task drops its senders — which is also how
+        // Stop, an abort, ends it.
         self.drain = Some(cx.spawn(async move |panel, cx| {
             loop {
                 let incoming = incoming.clone();
+                let approvals = approval_rx.clone();
                 let next = cx
                     .background_executor()
-                    .spawn(async move { incoming.recv() })
+                    .spawn(async move {
+                        crossbeam_channel::select! {
+                            recv(incoming) -> event => DrainMessage::Event(event),
+                            recv(approvals) -> request => DrainMessage::Approval(request.ok()),
+                        }
+                    })
                     .await;
-                let Ok(event) = next else { break };
-                if panel
-                    .update(cx, |panel, cx| panel.apply(event, cx))
-                    .is_err()
-                {
-                    break;
+                match next {
+                    DrainMessage::Event(Ok(event)) => {
+                        if panel
+                            .update(cx, |panel, cx| panel.apply(event, cx))
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
+                    // The turn's senders are gone: what was streamed is what
+                    // the session keeps.
+                    DrainMessage::Event(Err(_)) => break,
+                    DrainMessage::Approval(request) => {
+                        if panel
+                            .update(cx, |panel, cx| panel.approval_requested(request, cx))
+                            .is_err()
+                        {
+                            break;
+                        }
+                    }
                 }
             }
             let _ = panel.update(cx, |panel, cx| panel.finish(cx));
@@ -507,6 +539,24 @@ impl ChatPanel {
         cx.notify();
     }
 
+    /// Park an approval request on the panel: the turn blocks until the user
+    /// answers, and the strip above the composer is where they do.
+    fn approval_requested(&mut self, request: Option<ApprovalRequest>, cx: &mut Context<Self>) {
+        self.pending_approval = request;
+        self.scroll.scroll_to_bottom();
+        cx.notify();
+    }
+
+    /// Answer the pending approval and let the turn go. Dropping the request
+    /// without answering — a new session, another history pick — denies it by
+    /// the same door: the sender dies, the turn reads a denial.
+    fn answer_approval(&mut self, allow: bool, cx: &mut Context<Self>) {
+        if let Some(request) = self.pending_approval.take() {
+            let _ = request.respond.send(allow);
+        }
+        cx.notify();
+    }
+
     /// Open or close one card.
     fn toggle(&mut self, id: String, cx: &mut Context<Self>) {
         if let Some(at) = self.open.iter().position(|open| open == &id) {
@@ -523,6 +573,7 @@ impl ChatPanel {
         if self.is_streaming() {
             self.stop(cx);
         }
+        self.pending_approval = None;
         self.messages.clear();
         self.open.clear();
         self.error = None;
@@ -616,6 +667,7 @@ impl ChatPanel {
         };
         let session = manager.get_session(id).ok().flatten();
         self.history = None;
+        self.pending_approval = None;
         self.messages = messages;
         self.streaming = None;
         self.session_id = Some(id.to_owned());
@@ -736,6 +788,7 @@ impl ChatPanel {
             if self.is_streaming() {
                 self.stop(cx);
             }
+            self.pending_approval = None;
             self.messages.clear();
             self.open.clear();
             self.session_id = None;
@@ -745,6 +798,44 @@ impl ChatPanel {
         }
         self.refresh_history(cx);
     }
+}
+
+/// A tool call the engine has stopped on, waiting for the user's word. The
+/// answer travels back on `respond`: `true` runs the call, `false` sends the
+/// model a denial it can read.
+struct ApprovalRequest {
+    name: String,
+    args: serde_json::Value,
+    respond: crossbeam_channel::Sender<bool>,
+}
+
+/// The panel's half of the approval gate, living inside the turn's engine
+/// task. Every question the engine asks lands on the panel's channel; the
+/// answer comes back on the request's own.
+struct ApprovalGate {
+    requests: crossbeam_channel::Sender<ApprovalRequest>,
+}
+
+impl ToolApproval for ApprovalGate {
+    fn approve(&self, call: &ToolCall) -> bool {
+        let (respond, answer) = crossbeam_channel::bounded(1);
+        let request = ApprovalRequest {
+            name: call.name.clone(),
+            args: call.arguments.clone(),
+            respond,
+        };
+        // A panel that is gone grants nothing.
+        if self.requests.send(request).is_err() {
+            return false;
+        }
+        matches!(answer.recv(), Ok(true))
+    }
+}
+
+/// One message the drain woke up for.
+enum DrainMessage {
+    Event(Result<DispatchStreamEvent, crossbeam_channel::RecvError>),
+    Approval(Option<ApprovalRequest>),
 }
 
 /// The session history, when the user has it open: the store's sessions as
@@ -797,6 +888,11 @@ impl Render for ChatPanel {
             );
         }
         column
+            .children(
+                self.pending_approval
+                    .as_ref()
+                    .map(|request| approval_strip(request, &theme, cx)),
+            )
             .child(notes(self, &theme, cx))
             .child(composer(self, &theme, cx))
             .into_any_element()
@@ -1190,6 +1286,75 @@ fn send_button(panel: &ChatPanel, theme: &Theme, cx: &mut Context<ChatPanel>) ->
             button.bg(theme.muted).text_color(theme.muted_foreground)
         })
         .child(Icon::default().data(ARROW_UP_ICON).w(px(14.)).h(px(14.)))
+        .into_any_element()
+}
+
+/// The gate on screen: what the model wants to run, with the arguments it
+/// named, and the two answers. The turn below it is frozen until one lands.
+fn approval_strip(
+    request: &ApprovalRequest,
+    theme: &Theme,
+    cx: &mut Context<ChatPanel>,
+) -> AnyElement {
+    let allow = cx.listener(|panel, _: &ClickEvent, _window, cx| panel.answer_approval(true, cx));
+    let deny = cx.listener(|panel, _: &ClickEvent, _window, cx| panel.answer_approval(false, cx));
+    v_flex()
+        .w_full()
+        .px_2()
+        .py_1()
+        .gap_1()
+        .rounded_sm()
+        .border_1()
+        .border_color(theme.warning.opacity(0.5))
+        .bg(theme.warning.opacity(0.08))
+        .child(
+            div()
+                .text_xs()
+                .text_color(theme.warning)
+                .child(rust_i18n::t!("ai.chat.approval_wants", name = request.name).to_string()),
+        )
+        .when(!arguments_summary(&request.args).is_empty(), |strip| {
+            strip.child(
+                div()
+                    .text_xs()
+                    .font_family(theme.mono_font_family.clone())
+                    .text_color(theme.muted_foreground)
+                    .child(arguments_summary(&request.args)),
+            )
+        })
+        .child(
+            h_flex()
+                .w_full()
+                .gap_2()
+                .child(
+                    div()
+                        .id("approval-allow")
+                        .px(px(8.))
+                        .py(px(2.))
+                        .rounded(px(4.))
+                        .cursor_pointer()
+                        .text_xs()
+                        .bg(theme.success.opacity(0.15))
+                        .text_color(theme.success)
+                        .hover(|style| style.bg(theme.success.opacity(0.3)))
+                        .on_click(allow)
+                        .child(t("ai.chat.approval_allow")),
+                )
+                .child(
+                    div()
+                        .id("approval-deny")
+                        .px(px(8.))
+                        .py(px(2.))
+                        .rounded(px(4.))
+                        .cursor_pointer()
+                        .text_xs()
+                        .bg(theme.danger.opacity(0.12))
+                        .text_color(theme.danger)
+                        .hover(|style| style.bg(theme.danger.opacity(0.25)))
+                        .on_click(deny)
+                        .child(t("ai.chat.approval_deny")),
+                ),
+        )
         .into_any_element()
 }
 
