@@ -10,6 +10,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use gpui_kit::component::Theme;
+use gpui_kit::component::input::InputState;
 use gpui_kit::*;
 use herdr_client::protocol::{ClientShellSnapshot, PaneSurfaceFrame};
 
@@ -302,6 +303,16 @@ pub(crate) enum ShellRequest {
     FocusWorkspace(String),
     /// Bring a tab to the front.
     FocusTab(String),
+    /// Put a tab or a workspace into its inline rename editor. The shell owns
+    /// the editor; the daemon hears the committed name, nothing while it is
+    /// typed.
+    StartRename(RenameSubject),
+    /// Write the rename editor's text as the subject's new name. An empty text
+    /// cancels: the daemon keeps an empty custom name as it is given, so
+    /// clearing a name must not be one keystroke away.
+    CommitRename,
+    /// Leave the rename editor without writing anything.
+    CancelRename,
     /// Move a tab to a gap in its workspace's order, as `tab.move` counts it:
     /// with the moving tab still in place.
     MoveTab { tab_id: String, insert_index: usize },
@@ -378,6 +389,14 @@ pub(crate) enum ShellRequest {
     ClearFleet,
 }
 
+/// What an inline rename is editing. The shell holds at most one editor at a
+/// time; the subject only names which row of which surface it sits in.
+#[derive(Clone, PartialEq, Eq)]
+pub(crate) enum RenameSubject {
+    Tab(String),
+    Workspace(String),
+}
+
 /// A request's way back into the shell. Shared rather than borrowed because
 /// every element that dispatches one has to own it for as long as the frame's
 /// tree lives.
@@ -418,6 +437,9 @@ pub(crate) struct Invocation<'a> {
     /// status bar's alert segment is clicked.
     pub(crate) bells: u64,
     pub(crate) attention: u64,
+    /// The inline rename editor, when a tab or a workspace row is being
+    /// renamed: the subject and the editor's own state.
+    pub(crate) rename: Option<&'a (RenameSubject, Entity<InputState>)>,
     pub(crate) theme: &'a Theme,
     pub(crate) dispatch: &'a Dispatch,
 }

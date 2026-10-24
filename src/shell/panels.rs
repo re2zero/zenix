@@ -8,6 +8,7 @@
 
 use std::path::{Path, PathBuf};
 
+use gpui_kit::component::input::Input;
 use gpui_kit::component::{ActiveTheme, Icon, Theme, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -17,7 +18,7 @@ use herdr_client::protocol::{
 
 use super::commands::Command;
 use super::registry::{
-    Invocation, ShellRequest, SidebarBlock, SidebarView, StatusAlign, StatusSegment,
+    Invocation, RenameSubject, ShellRequest, SidebarBlock, SidebarView, StatusAlign, StatusSegment,
 };
 use super::reorder::{self, WorkspaceDrag};
 use crate::herdr::ConnectionStatus;
@@ -336,6 +337,52 @@ fn workspace_row(
     let selected = workspace.focused;
     let name = workspace.label.clone();
     let tab_count = workspace_tabs(snapshot, &workspace.workspace_id).len();
+    // A workspace being renamed is its editor, not its row: no focus click,
+    // no drag while the name is on the table.
+    if let Some(input) = invocation
+        .rename
+        .and_then(|(subject, input)| match subject {
+            RenameSubject::Workspace(renaming) if *renaming == workspace.workspace_id => {
+                Some(input.clone())
+            }
+            _ => None,
+        })
+    {
+        let keys = invocation.dispatch.clone();
+        return h_flex()
+            .id(("workspace-rename", index))
+            .w_full()
+            .h(px(28.))
+            .px(px(7.))
+            .gap(px(7.))
+            .items_center()
+            .rounded(px(6.))
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.sidebar_accent)
+            .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                match event.keystroke.key.as_str() {
+                    "enter" => {
+                        cx.stop_propagation();
+                        keys(ShellRequest::CommitRename, window, cx);
+                    }
+                    "escape" => {
+                        cx.stop_propagation();
+                        keys(ShellRequest::CancelRename, window, cx);
+                    }
+                    _ => {}
+                }
+            })
+            .child(
+                div().flex_1().min_w_0().child(
+                    Input::new(&input)
+                        .h(px(22.))
+                        .appearance(false)
+                        .bordered(false),
+                ),
+            )
+            .into_any_element();
+    }
     let row = h_flex()
         .id(("workspace", index))
         .w_full()
@@ -347,7 +394,19 @@ fn workspace_row(
         .rounded(px(6.))
         .cursor_pointer()
         .hover(|style| style.bg(theme.sidebar_accent))
-        .on_click(move |_, window, cx| {
+        // The second click of a double-click is a rename, not another focus.
+        .on_click(move |event, window, cx| {
+            if let ClickEvent::Mouse(click) = event
+                && click.up.click_count >= 2
+            {
+                cx.stop_propagation();
+                dispatch(
+                    ShellRequest::StartRename(RenameSubject::Workspace(workspace_id.clone())),
+                    window,
+                    cx,
+                );
+                return;
+            }
             dispatch(
                 ShellRequest::FocusWorkspace(workspace_id.clone()),
                 window,

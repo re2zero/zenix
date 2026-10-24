@@ -27,6 +27,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{ActiveTheme, Icon, Theme, ThemeMode, TitleBar, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -57,8 +58,8 @@ use keymap::{Chord, Keymap, RunCommand};
 use palette::{Entry, Key as PaletteKey, Palette};
 use panel_resize::{ASIDE, AsideDrag, Edge, PanelWidth, SIDEBAR, SidebarDrag};
 use registry::{
-    AsideTab, Dispatch, Invocation, Registry, ShellRequest, SidebarView, StatusAlign,
-    StatusContribution,
+    AsideTab, Dispatch, Invocation, Registry, RenameSubject, ShellRequest, SidebarView,
+    StatusAlign, StatusContribution,
 };
 
 const TITLE_BAR_HEIGHT: f32 = 38.;
@@ -144,6 +145,9 @@ pub(crate) struct ShellView {
     /// its own refusals into the snapshot; `workspace.move` only exists on the
     /// API lane, so its failure needs somewhere to be said.
     move_error: Option<String>,
+    /// The inline rename editor, when a tab or a workspace row is being
+    /// renamed: the subject and the editor's own state.
+    rename: Option<(RenameSubject, Entity<InputState>)>,
     /// The prefix has been typed and the next keystroke is its chord.
     prefix_armed: bool,
     /// The terminal's last drawn revision, so a paint that changed nothing
@@ -264,6 +268,7 @@ impl ShellView {
             fleet: FleetState::default(),
             tails: Tails::new(),
             move_error: None,
+            rename: None,
             prefix_armed: false,
             drawn: 0,
             _observe: observe,
@@ -801,6 +806,84 @@ impl ShellView {
         self.run(action.command, window, cx);
     }
 
+    /// Open the rename editor on a tab or a workspace, prefilled with the name
+    /// the snapshot carries. A subject the snapshot no longer names is ignored:
+    /// the row it sat in is gone.
+    fn start_rename(
+        &mut self,
+        subject: RenameSubject,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let label = self
+            .terminal
+            .read(cx)
+            .live()
+            .snapshot
+            .as_deref()
+            .and_then(|snapshot| match &subject {
+                RenameSubject::Tab(tab_id) => snapshot
+                    .tabs
+                    .iter()
+                    .find(|tab| &tab.tab_id == tab_id)
+                    .map(|tab| tab.label.clone()),
+                RenameSubject::Workspace(workspace_id) => snapshot
+                    .workspaces
+                    .iter()
+                    .find(|workspace| &workspace.workspace_id == workspace_id)
+                    .map(|workspace| workspace.label.clone()),
+            });
+        let Some(label) = label else {
+            return;
+        };
+        let input = cx.new(|cx| InputState::new(window, cx));
+        input.update(cx, |input, cx| input.set_value(label, window, cx));
+        let focus = input.read(cx).focus_handle(cx).clone();
+        self.rename = Some((subject, input));
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    /// The editor's text becomes the subject's name over the endpoint. An
+    /// empty editor cancels rather than wiping the name: the daemon keeps an
+    /// empty custom name as it is given, so a cleared field would stick.
+    fn commit_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((subject, input)) = self.rename.take() else {
+            return;
+        };
+        let label = input.read(cx).value().trim().to_owned();
+        if !label.is_empty() {
+            match &subject {
+                RenameSubject::Tab(tab_id) => {
+                    self.connection.request(
+                        herdr_client::Method::TabRename,
+                        serde_json::json!({"tab_id": tab_id, "label": label}),
+                    );
+                }
+                RenameSubject::Workspace(workspace_id) => {
+                    self.connection.request(
+                        herdr_client::Method::WorkspaceRename,
+                        serde_json::json!({"workspace_id": workspace_id, "label": label}),
+                    );
+                }
+            }
+        }
+        self.end_rename(window, cx);
+    }
+
+    /// Leave the rename editor without writing anything.
+    fn cancel_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.rename = None;
+        self.end_rename(window, cx);
+    }
+
+    /// The editor is gone; the pane gets the keyboard back.
+    fn end_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let focus = self.terminal.read(cx).focus_handle().clone();
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
     /// Hand a request to the daemon, or run it locally. Both the keymap and a
     /// contribution's click arrive here, so the two cannot behave differently.
     fn dispatch(&mut self, request: ShellRequest, window: &mut Window, cx: &mut Context<Self>) {
@@ -832,6 +915,11 @@ impl ShellView {
                 self.connection.focus_workspace(&workspace_id)
             }
             ShellRequest::FocusTab(tab_id) => self.connection.focus_tab(&tab_id),
+            // An inline rename is the shell's own editor: the daemon hears the
+            // committed name, nothing while it is typed.
+            ShellRequest::StartRename(subject) => self.start_rename(subject, window, cx),
+            ShellRequest::CommitRename => self.commit_rename(window, cx),
+            ShellRequest::CancelRename => self.cancel_rename(window, cx),
             // A drag lands on a gap; the daemon owns the order, so the request
             // is the same `tab.move` the move chords send.
             ShellRequest::MoveTab {
@@ -1226,6 +1314,9 @@ impl Render for ShellView {
                 | ShellRequest::ShowAsideTab(_)
                 | ShellRequest::ShowSettingsPage(_)
                 | ShellRequest::AcknowledgeAlerts
+                | ShellRequest::StartRename(_)
+                | ShellRequest::CommitRename
+                | ShellRequest::CancelRename
                 | ShellRequest::MoveTab { .. }
                 | ShellRequest::MoveWorkspace { .. }
                 | ShellRequest::PluginAction { .. }
@@ -1276,6 +1367,7 @@ impl Render for ShellView {
             tails: &self.tails,
             bells: live.bells,
             attention: live.attention,
+            rename: self.rename.as_ref(),
             theme: &theme,
             dispatch: &dispatch,
         };
@@ -2428,6 +2520,51 @@ fn tab_button(tab: &ClientShellTab, index: usize, invocation: &Invocation) -> An
     let close = invocation.dispatch.clone();
     let drop = invocation.dispatch.clone();
     let tab_id = tab.tab_id.clone();
+    // A tab being renamed is its editor, not its button: no focus click, no
+    // drag, no close while the name is on the table.
+    if let Some(input) = invocation
+        .rename
+        .and_then(|(subject, input)| match subject {
+            RenameSubject::Tab(renaming) if *renaming == tab.tab_id => Some(input.clone()),
+            _ => None,
+        })
+    {
+        let keys = invocation.dispatch.clone();
+        return h_flex()
+            .id(("tab-rename", tab.number))
+            .h(px(26.))
+            .min_w(px(160.))
+            .px(px(7.))
+            .gap(px(7.))
+            .items_center()
+            .rounded(px(6.))
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.tab_active)
+            .text_color(theme.tab_active_foreground)
+            .on_key_down(move |event: &KeyDownEvent, window, cx| {
+                match event.keystroke.key.as_str() {
+                    "enter" => {
+                        cx.stop_propagation();
+                        keys(ShellRequest::CommitRename, window, cx);
+                    }
+                    "escape" => {
+                        cx.stop_propagation();
+                        keys(ShellRequest::CancelRename, window, cx);
+                    }
+                    _ => {}
+                }
+            })
+            .child(
+                div().flex_1().min_w_0().child(
+                    Input::new(&input)
+                        .h(px(20.))
+                        .appearance(false)
+                        .bordered(false),
+                ),
+            )
+            .into_any_element();
+    }
     let label = if tab.zoomed {
         format!("{} ^", tab.label)
     } else {
@@ -2476,7 +2613,19 @@ fn tab_button(tab: &ClientShellTab, index: usize, invocation: &Invocation) -> An
         })
         .cursor_pointer()
         .group("tab")
-        .on_click(move |_, window, cx| {
+        // The second click of a double-click is a rename, not another focus.
+        .on_click(move |event, window, cx| {
+            if let ClickEvent::Mouse(click) = event
+                && click.up.click_count >= 2
+            {
+                cx.stop_propagation();
+                open(
+                    ShellRequest::StartRename(RenameSubject::Tab(tab_id.clone())),
+                    window,
+                    cx,
+                );
+                return;
+            }
             open(ShellRequest::FocusTab(tab_id.clone()), window, cx);
         })
         // A tab carried onto another lands in the gap before it; the two gaps
