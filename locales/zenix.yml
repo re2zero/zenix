@@ -862,6 +862,18 @@ command:
     resize-down:
       en: "Resize Pane Down"
       zh-CN: "向下调整窗格"
+    swap-left:
+      en: "Swap Pane Left"
+      zh-CN: "窗格向左交换"
+    swap-right:
+      en: "Swap Pane Right"
+      zh-CN: "窗格向右交换"
+    swap-up:
+      en: "Swap Pane Up"
+      zh-CN: "窗格向上交换"
+    swap-down:
+      en: "Swap Pane Down"
+      zh-CN: "窗格向下交换"
     find:
       en: "Find in Scrollback"
       zh-CN: "在回滚中查找"

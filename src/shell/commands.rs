@@ -39,6 +39,10 @@ pub(crate) enum Command {
     ResizeRight,
     ResizeUp,
     ResizeDown,
+    SwapLeft,
+    SwapRight,
+    SwapUp,
+    SwapDown,
     /// Local: the sidebar's own visibility.
     ToggleSidebar,
     /// Local: the right-hand panel's visibility.
@@ -257,6 +261,32 @@ pub(crate) const COMMANDS: &[CommandInfo] = &[
         id: "pane.resize-down",
         direct: &[],
         prefixed: &["shift-j"],
+    },
+    // The resize chords one modifier over: the pane changes places with its
+    // neighbor in that direction, the daemon resolving the neighbor itself.
+    CommandInfo {
+        command: Command::SwapLeft,
+        id: "pane.swap-left",
+        direct: &[],
+        prefixed: &["alt-shift-h"],
+    },
+    CommandInfo {
+        command: Command::SwapRight,
+        id: "pane.swap-right",
+        direct: &[],
+        prefixed: &["alt-shift-l"],
+    },
+    CommandInfo {
+        command: Command::SwapUp,
+        id: "pane.swap-up",
+        direct: &[],
+        prefixed: &["alt-shift-k"],
+    },
+    CommandInfo {
+        command: Command::SwapDown,
+        id: "pane.swap-down",
+        direct: &[],
+        prefixed: &["alt-shift-j"],
     },
     CommandInfo {
         command: Command::ToggleSidebar,
@@ -499,6 +529,10 @@ pub(crate) fn request(command: Command, snapshot: &ClientShellSnapshot) -> Optio
             Method::PaneResize,
             json!({"pane_id": pane?.pane_id, "direction": direction(command)?}),
         ),
+        Command::SwapLeft | Command::SwapRight | Command::SwapUp | Command::SwapDown => (
+            Method::PaneSwap,
+            json!({"pane_id": pane?.pane_id, "direction": direction(command)?}),
+        ),
         Command::ToggleSidebar
         | Command::ToggleAside
         | Command::ToggleTheme
@@ -520,10 +554,10 @@ pub(crate) fn request(command: Command, snapshot: &ClientShellSnapshot) -> Optio
 /// The pane direction a directional command names.
 fn direction(command: Command) -> Option<&'static str> {
     Some(match command {
-        Command::FocusLeft | Command::ResizeLeft => "left",
-        Command::FocusRight | Command::ResizeRight => "right",
-        Command::FocusUp | Command::ResizeUp => "up",
-        Command::FocusDown | Command::ResizeDown => "down",
+        Command::FocusLeft | Command::ResizeLeft | Command::SwapLeft => "left",
+        Command::FocusRight | Command::ResizeRight | Command::SwapRight => "right",
+        Command::FocusUp | Command::ResizeUp | Command::SwapUp => "up",
+        Command::FocusDown | Command::ResizeDown | Command::SwapDown => "down",
         _ => return None,
     })
 }
@@ -559,6 +593,7 @@ mod tests {
     fn direction_names_both_focus_and_resize() {
         assert_eq!(direction(Command::FocusLeft), Some("left"));
         assert_eq!(direction(Command::ResizeDown), Some("down"));
+        assert_eq!(direction(Command::SwapRight), Some("right"));
         assert_eq!(direction(Command::NewTab), None);
     }
 
@@ -729,6 +764,37 @@ mod tests {
         assert!(request(Command::MoveTabPrevious, &snapshot).is_none());
     }
 
+    /// A swap names the focused pane and a direction; resolving the neighbor
+    /// is the daemon's to do, and a direction with no neighbor is its answer.
+    #[test]
+    fn a_swap_names_the_focused_pane_and_its_direction() {
+        let mut snapshot = empty_snapshot();
+        snapshot.workspaces = vec![workspace("w1")];
+        snapshot.focused_workspace_id = Some("w1".into());
+        snapshot.tabs = vec![tab("a", "w1")];
+        snapshot.focused_tab_id = Some("a".into());
+        snapshot.panes = vec![pane("p1", "w1", "a")];
+        snapshot.focused_pane_id = Some("p1".into());
+        for (command, want) in [
+            (Command::SwapLeft, "left"),
+            (Command::SwapRight, "right"),
+            (Command::SwapUp, "up"),
+            (Command::SwapDown, "down"),
+        ] {
+            assert_eq!(
+                request(command, &snapshot),
+                Some((
+                    Method::PaneSwap,
+                    json!({"pane_id": "p1", "direction": want})
+                )),
+                "{command:?}"
+            );
+        }
+        // Without a focused pane there is nothing to swap.
+        snapshot.focused_pane_id = None;
+        assert!(request(Command::SwapLeft, &snapshot).is_none());
+    }
+
     fn workspace(workspace_id: &str) -> ClientShellWorkspace {
         ClientShellWorkspace {
             workspace_id: workspace_id.into(),
@@ -743,6 +809,19 @@ mod tests {
             worktree: None,
             focused: false,
             agent_status: herdr_client::protocol::AgentStatus::Unknown,
+        }
+    }
+
+    fn pane(pane_id: &str, workspace_id: &str, tab_id: &str) -> ClientShellPane {
+        ClientShellPane {
+            pane_id: pane_id.into(),
+            workspace_id: workspace_id.into(),
+            tab_id: tab_id.into(),
+            label: None,
+            cwd: None,
+            foreground_cwd: None,
+            focused: false,
+            right_click_passthrough: false,
         }
     }
 }
