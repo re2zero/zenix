@@ -57,6 +57,10 @@ pub(crate) enum Command {
     PluginsManager,
     /// Local: dismiss the daemon's popup pane, if one is open.
     ClosePopup,
+    /// Local: the find field over the focused pane's scrollback.
+    Find,
+    /// Local: keyboard copy mode over the focused pane.
+    CopyMode,
     /// Local: write the focused tab's layout to the project's template file.
     SaveLayout,
     /// Local: restore the project's template as a new tab.
@@ -83,6 +87,8 @@ impl Command {
                 | Command::LinkPlugin
                 | Command::PluginsManager
                 | Command::ClosePopup
+                | Command::Find
+                | Command::CopyMode
                 | Command::SaveLayout
                 | Command::RestoreLayout
                 | Command::CompareFleet
@@ -315,6 +321,22 @@ pub(crate) const COMMANDS: &[CommandInfo] = &[
         direct: &[],
         prefixed: &[],
     },
+    // The terminal's own two scrollback features. The find field also answers
+    // Ctrl-F inside the grid itself, where a global binding would steal it
+    // from every text field; the directory rows are what the palette and the
+    // prefix chord run.
+    CommandInfo {
+        command: Command::Find,
+        id: "pane.find",
+        direct: &[],
+        prefixed: &["f"],
+    },
+    CommandInfo {
+        command: Command::CopyMode,
+        id: "pane.copy-mode",
+        direct: &[],
+        prefixed: &["c"],
+    },
     // The project's layout template. Saving reads the focused tab; restoring is
     // deliberately not automatic, because `layout.apply` always makes a new tab.
     CommandInfo {
@@ -486,6 +508,8 @@ pub(crate) fn request(command: Command, snapshot: &ClientShellSnapshot) -> Optio
         | Command::LinkPlugin
         | Command::PluginsManager
         | Command::ClosePopup
+        | Command::Find
+        | Command::CopyMode
         | Command::SaveLayout
         | Command::RestoreLayout
         | Command::CompareFleet
@@ -573,6 +597,8 @@ mod tests {
                 "plugins.link",
                 "plugins.manager",
                 "view.close-popup",
+                "pane.find",
+                "pane.copy-mode",
                 "layout.save",
                 "layout.restore",
                 "fleet.compare",

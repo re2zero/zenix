@@ -2,11 +2,13 @@
 //! input events to the daemon's semantic `ClientPaneInputEvent`s.
 //!
 //! Ported from herdr-gpui (Apache-2.0) `crates/herdr-gpui/src/terminal.rs`.
-//! Selection and links live beside this module; copy mode, scrollback search
-//! and accessibility still wait for the features that need them.
+//! Selection, links, copy mode and scrollback search live beside this module;
+//! accessibility still waits for the feature that needs it.
 
 pub(crate) mod cards;
+pub(crate) mod copy_mode;
 pub(crate) mod error;
+pub(crate) mod find;
 pub(crate) mod input;
 pub(crate) mod links;
 pub(crate) mod painter;
@@ -164,6 +166,20 @@ pub(crate) fn pane_at(
                 && y < (u32::from(r.y) + u32::from(r.height)) as f32 * cell_height
         })
         .map(|pane| pane.pane_id.as_str())
+}
+
+/// The absolute content row painted at the top of a pane's grid, from the
+/// daemon's scroll metrics: the history above the viewport. Search hits and
+/// the copy-mode cursor are addressed in content rows and map through this.
+pub(crate) fn viewport_top(pane: &PaneSurfacePane) -> u32 {
+    pane.scroll.map_or(0, |scroll| {
+        u32::try_from(
+            scroll
+                .max_offset_from_bottom
+                .saturating_sub(scroll.offset_from_bottom),
+        )
+        .unwrap_or(u32::MAX)
+    })
 }
 
 /// Whole wheel steps on each axis, signed as GPUI reports them: positive

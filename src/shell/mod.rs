@@ -638,6 +638,16 @@ impl ShellView {
                 self.dispatch(ShellRequest::OpenPluginManager(None), window, cx)
             }
             Command::ClosePopup => self.plugins.close_popup(),
+            // The terminal's own scrollback chrome: the find field over the
+            // focused pane, and keyboard copy mode. Both own the keyboard
+            // while they are open, so the view is the only place that can
+            // start them.
+            Command::Find => self
+                .terminal
+                .update(cx, |terminal, cx| terminal.open_find(window, cx)),
+            Command::CopyMode => self
+                .terminal
+                .update(cx, |terminal, cx| terminal.enter_copy_mode(window, cx)),
             // The template is the project's, not the daemon's: saving writes a
             // file, and restoring stays a command because `layout.apply` always
             // makes a new tab.

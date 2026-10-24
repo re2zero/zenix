@@ -9,6 +9,7 @@ use std::collections::{BTreeSet, VecDeque};
 use std::sync::Arc;
 
 use herdr_client::ClientEvent;
+use herdr_client::Method;
 use herdr_client::protocol::{
     ClientShellSnapshot, PaneSurfaceFrame, SemanticNotification, ServerMessage,
 };
@@ -67,6 +68,11 @@ pub(crate) struct LiveState {
     /// attention: the status bar reads both as an unread count.
     pub(crate) bells: u64,
     pub(crate) attention: u64,
+    /// Whether the daemon's handshake advertised the scrollback methods copy
+    /// mode and find are built on. A daemon that does not offer one refuses
+    /// its request without an answer, so the client asks nothing instead.
+    pub(crate) supports_copy_search: bool,
+    pub(crate) supports_copy_motion: bool,
 }
 
 impl Default for LiveState {
@@ -86,6 +92,8 @@ impl Default for LiveState {
             title: None,
             bells: 0,
             attention: 0,
+            supports_copy_search: false,
+            supports_copy_motion: false,
         }
     }
 }
@@ -99,10 +107,14 @@ impl LiveState {
 
     pub(crate) fn apply(&mut self, event: ClientEvent) {
         match event {
-            ClientEvent::Connected(_) => {
+            ClientEvent::Connected(welcome) => {
                 self.status = ConnectionStatus::AwaitingSnapshot;
                 self.error = None;
                 self.version_mismatch = None;
+                // The handshake's method list is the daemon's own account of
+                // what it can answer; a feature built on one asks first.
+                self.supports_copy_search = Method::PaneCopySearch.advertised_in(&welcome.methods);
+                self.supports_copy_motion = Method::PaneCopyMotion.advertised_in(&welcome.methods);
             }
             ClientEvent::Snapshot(snapshot) => {
                 // A surface from another boot or projection cannot be painted

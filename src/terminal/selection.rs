@@ -18,7 +18,7 @@ use std::ops::Range;
 use herdr_client::protocol::{CellData, FrameData, PaneSurfaceFrame};
 use unicode_width::UnicodeWidthStr;
 
-use crate::terminal::{HIDDEN, InputTarget, popup_origin, wheel_target};
+use crate::terminal::{HIDDEN, InputTarget, popup_origin, viewport_top, wheel_target};
 
 /// Terminal content is untrusted and one cell's symbol carries as many bytes
 /// as it likes, so a copy is bounded rather than trusted to be screen-sized.
@@ -126,19 +126,8 @@ impl Region {
     }
 }
 
-/// The absolute row painted at the top of a pane, from the daemon's scroll
-/// metrics: the history above the viewport.
-fn viewport_top(pane: &herdr_client::protocol::PaneSurfacePane) -> u32 {
-    pane.scroll.map_or(0, |scroll| {
-        u32::try_from(
-            scroll
-                .max_offset_from_bottom
-                .saturating_sub(scroll.offset_from_bottom),
-        )
-        .unwrap_or(u32::MAX)
-    })
-}
-
+/// The cells one target owns, in its own frame's grid, or `None` where the
+/// target paints nothing (a pane covered by a popup).
 fn region(
     surface: &PaneSurfaceFrame,
     target: &InputTarget,

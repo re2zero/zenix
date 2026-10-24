@@ -4,12 +4,14 @@
 //! Ported in shape from herdr-gpui (Apache-2.0) `crates/herdr-gpui/src/{window.rs,
 //! window/input.rs, window/mouse.rs, window/render.rs, input.rs}`. The view
 //! owns local pointer selection and copy, link hover and activation, scrollbar
-//! dragging, reconnection chrome and split dragging (M16 Wave 1); copy mode and
-//! scrollback search are the Wave's remaining pieces.
+//! dragging, reconnection chrome, split dragging, the find field over
+//! `pane.copy_search` and keyboard copy mode over `pane.copy_motion` (M16
+//! Wave 1).
 
 use std::cell::{Cell, RefCell};
 use std::ops::Range;
 use std::rc::Rc;
+use std::time::Instant;
 
 use gpui_kit::*;
 // `when_some` and its siblings ride in on this trait, which the glob above does
@@ -18,16 +20,22 @@ use gpui_kit::prelude::FluentBuilder as _;
 // The chrome's accent, which a focused pane's card takes: the terminal palette
 // has no accent of its own that matches the shell around it.
 use gpui_kit::component::ActiveTheme as _;
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use herdr_client::ConnectOptions;
 use herdr_client::ConnectTarget;
 use herdr_client::Method;
 use herdr_client::protocol::{
-    ClientMouseButton, ClientMouseKind, ClientPaneInputEvent, PaneSurfaceFrame,
+    ClientMouseButton, ClientMouseKind, ClientPaneInputEvent, PaneSurfaceFrame, PaneSurfacePane,
+};
+use herdr_client::scrollback::{
+    CopyMotionParams, ScrollbackResponse, SelectionReadParams, TextRange, decode_response,
 };
 use serde_json::json;
 
 use crate::herdr::{Connection, LiveState, decode};
 use crate::terminal::cards;
+use crate::terminal::copy_mode::{Command as CopyCommand, CopyMode, Outcome as CopyOutcome};
+use crate::terminal::find::{self, Count, Search, Step};
 use crate::terminal::links::{LinkHit, activation_fallback, link_at};
 use crate::terminal::painter::TerminalPainter;
 use crate::terminal::regions::{Look, Regions};
@@ -68,6 +76,22 @@ struct ScrollbarDrag {
 struct PendingActivation {
     request: String,
     fallback: Option<String>,
+}
+
+/// The find field over one pane: its text input, the search it drives, and
+/// the daemon boot both were opened on. Dropped when either goes away.
+struct FindBar {
+    input: Entity<InputState>,
+    search: Search,
+    boot: String,
+    /// Re-reads the query whenever the field's text changes.
+    _changed: Subscription,
+}
+
+/// Keyboard copy mode over one pane, on the daemon boot it began on.
+struct CopyModeState {
+    mode: CopyMode,
+    boot: String,
 }
 
 /// A GPUI button onto the daemon's wire form; Navigate buttons have none.
@@ -130,6 +154,12 @@ pub(crate) struct TerminalView {
     pressed_link: Option<LinkHit>,
     /// A link activation the daemon has not answered yet.
     pending_activation: Option<PendingActivation>,
+    /// The find field, while it is open over a pane.
+    find: Option<FindBar>,
+    /// Keyboard copy mode, while it is on over a pane.
+    copy_mode: Option<CopyModeState>,
+    /// The `pane.selection.read` a copy-mode yank waits on.
+    pending_copy: Option<String>,
     /// The cursor the border under the pointer asks for, so a press there is
     /// visible before it happens.
     split_cursor: Option<CursorStyle>,
@@ -188,6 +218,9 @@ impl TerminalView {
             hover_link: None,
             pressed_link: None,
             pending_activation: None,
+            find: None,
+            copy_mode: None,
+            pending_copy: None,
             split_cursor: None,
             _events: events,
             regions: Regions::new(),
@@ -274,6 +307,9 @@ impl TerminalView {
                 self.pressed_link = None;
                 self.scrollbar_drag = None;
                 self.mouse_gesture = None;
+                self.find = None;
+                self.copy_mode = None;
+                self.pending_copy = None;
             }
             cx.notify();
         }
@@ -287,6 +323,12 @@ impl TerminalView {
         self.flush_split();
         // The same answer frees the scrollbar's next offset.
         self.flush_scrollbar();
+        // The scrollback features read the state applied above: a find answer
+        // maps onto the pane revision it was asked against, and copy mode
+        // retries a stale motion only once the surface shows settled content.
+        self.poll_copy_read(cx);
+        self.poll_find(cx);
+        self.poll_copy_mode(cx);
     }
 
     /// Fold a link activation's answer into the window: open the address the
@@ -336,6 +378,475 @@ impl TerminalView {
         }
         cx.write_to_clipboard(ClipboardItem::new_string(text));
         true
+    }
+
+    /// The focused pane as the live surface paints it, when the daemon names
+    /// one and no popup covers the grid.
+    fn focused_surface_pane(&self) -> Option<&PaneSurfacePane> {
+        let surface = self.live.surface.as_deref()?;
+        if surface.popup.is_some() {
+            return None;
+        }
+        let focused = self.live.snapshot.as_ref()?.focused_pane_id.as_deref()?;
+        surface.panes.iter().find(|pane| pane.pane_id == focused)
+    }
+
+    /// One pane of the live surface by id, when no popup covers it.
+    fn surface_pane(&self, pane_id: &str) -> Option<&PaneSurfacePane> {
+        let surface = self.live.surface.as_deref()?;
+        if surface.popup.is_some() {
+            return None;
+        }
+        surface.panes.iter().find(|pane| pane.pane_id == pane_id)
+    }
+
+    /// Open the find field over the focused pane, or return to it with its
+    /// query selected when it is already open there. The field is the client's
+    /// chrome and the search is the daemon's: what is typed reaches
+    /// `pane.copy_search`, never the pane's application.
+    pub(crate) fn open_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.live.supports_copy_search {
+            tracing::warn!("the daemon does not advertise pane.copy_search");
+            return;
+        }
+        let Some(pane) = self.focused_surface_pane() else {
+            return;
+        };
+        let pane_id = pane.pane_id.clone();
+        if let Some(bar) = self
+            .find
+            .as_ref()
+            .filter(|bar| bar.search.pane_id() == pane_id)
+        {
+            let input = bar.input.clone();
+            let focus = input.read(cx).focus_handle(cx).clone();
+            window.focus(&focus, cx);
+            input.update(cx, |input, cx| input.select_all(window, cx));
+            cx.notify();
+            return;
+        }
+        let search = Search::new(pane);
+        let boot = self.live.boot_id().map(str::to_owned).unwrap_or_default();
+        let placeholder = rust_i18n::t!("terminal.find.placeholder").to_string();
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
+        let changed = cx.subscribe_in(
+            &input,
+            window,
+            |this: &mut Self, input, event: &InputEvent, _window, cx| {
+                if matches!(event, InputEvent::Change) {
+                    let query = input.read(cx).value().to_string();
+                    if let Some(bar) = this.find.as_mut() {
+                        bar.search.set_query(&query);
+                    }
+                    this.flush_find(cx);
+                    cx.notify();
+                }
+            },
+        );
+        let focus = input.read(cx).focus_handle(cx).clone();
+        self.find = Some(FindBar {
+            input,
+            search,
+            boot,
+            _changed: changed,
+        });
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    /// Close the find field and hand the keyboard back to the terminal. A
+    /// search still on its way is answered into nothing: its answer is the
+    /// oldest, bounded entry in the connection's response queue.
+    pub(crate) fn close_find(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bar) = self.find.take() else {
+            return;
+        };
+        if bar.input.read(cx).focus_handle(cx).is_focused(window) {
+            window.focus(&self.focus, cx);
+        }
+        cx.notify();
+    }
+
+    /// Step the open search toward older or newer output.
+    fn find_step(&mut self, step: Step, cx: &mut Context<Self>) {
+        if let Some(bar) = self.find.as_mut() {
+            bar.search.step(step);
+        }
+        self.flush_find(cx);
+        cx.notify();
+    }
+
+    /// Send the search that is due, if any. At most one is in flight, so the
+    /// daemon never scans the scrollback twice for the same field.
+    fn flush_find(&mut self, cx: &mut Context<Self>) {
+        let Some(bar) = self.find.as_mut() else {
+            return;
+        };
+        let Some(pane) = self.live.surface.as_deref().and_then(|surface| {
+            if surface.popup.is_some() {
+                return None;
+            }
+            surface
+                .panes
+                .iter()
+                .find(|pane| pane.pane_id == bar.search.pane_id())
+        }) else {
+            return;
+        };
+        let Some((step, params)) = bar.search.next_request(pane) else {
+            return;
+        };
+        let Ok(value) = serde_json::to_value(&params) else {
+            return;
+        };
+        match self.connection.request(Method::PaneCopySearch, value) {
+            Some(request) => bar.search.sent(request, &params, step, Instant::now()),
+            None => bar
+                .search
+                .abandoned(rust_i18n::t!("terminal.find.not_sent").as_ref()),
+        }
+        cx.notify();
+    }
+
+    /// Fold the search's answer into the bar, refresh it when the pane's
+    /// content moved on, and send whatever is due. A request the daemon
+    /// refused never gets a response, so an unanswered one is retired here
+    /// rather than leaving the field waiting forever.
+    fn poll_find(&mut self, cx: &mut Context<Self>) {
+        let current = self
+            .find
+            .as_ref()
+            .is_some_and(|bar| self.live.boot_id() == Some(bar.boot.as_str()));
+        if !current {
+            if self.find.take().is_some() {
+                cx.notify();
+            }
+            return;
+        }
+        let mut reveal = None;
+        {
+            let Some(bar) = self.find.as_mut() else {
+                return;
+            };
+            if let Some(request) = bar.search.in_flight().map(str::to_owned) {
+                if let Some(response) = self.connection.take_response(&request) {
+                    let answer = decode_response(&response).and_then(|answer| match answer {
+                        ScrollbackResponse::PaneCopySearch(result) => Ok(result),
+                        _ => Err(herdr_client::Error::ResponseType),
+                    });
+                    reveal = bar.search.answer(&request, answer);
+                } else if !self.connection.in_flight(&request) {
+                    let message = self.live.rejected.clone().unwrap_or_default();
+                    bar.search.abandoned(&message);
+                }
+            }
+        }
+        if let Some(range) = reveal {
+            self.reveal_find(range, cx);
+            cx.notify();
+        }
+        if let Some(bar) = self.find.as_mut()
+            && let Some(pane) = self.live.surface.as_deref().and_then(|surface| {
+                if surface.popup.is_some() {
+                    return None;
+                }
+                surface
+                    .panes
+                    .iter()
+                    .find(|pane| pane.pane_id == bar.search.pane_id())
+            })
+        {
+            bar.search.content_changed(pane, Instant::now());
+        }
+        self.flush_find(cx);
+    }
+
+    /// Scroll the find field's pane so `range` shows, when it does not
+    /// already. Centering a match is a `pane.scroll`, like the scrollbar's.
+    fn reveal_find(&mut self, range: TextRange, cx: &mut Context<Self>) {
+        let Some(pane_id) = self
+            .find
+            .as_ref()
+            .map(|bar| bar.search.pane_id().to_owned())
+        else {
+            return;
+        };
+        let Some(offset) = self
+            .surface_pane(&pane_id)
+            .and_then(|pane| find::reveal_offset(pane, range))
+        else {
+            return;
+        };
+        self.scroll_pane(pane_id, offset, cx);
+    }
+
+    /// Enter keyboard copy mode on the focused pane, at the terminal's cursor
+    /// when it is visible. The mode takes every key until it is left.
+    pub(crate) fn enter_copy_mode(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.live.supports_copy_motion {
+            tracing::warn!("the daemon does not advertise pane.copy_motion");
+            return;
+        }
+        let Some(pane) = self.focused_surface_pane() else {
+            return;
+        };
+        let Some(boot) = self.live.boot_id().map(str::to_owned) else {
+            return;
+        };
+        let cursor = self
+            .live
+            .surface
+            .as_deref()
+            .and_then(|surface| surface.frame.cursor.as_ref())
+            .filter(|cursor| cursor.visible)
+            .map(|cursor| (cursor.x, cursor.y));
+        let mode = CopyMode::new(pane, cursor);
+        // The find field and the mode cannot both hold the keyboard.
+        self.find = None;
+        self.selection = None;
+        self.marked.clear();
+        self.copy_mode = Some(CopyModeState { mode, boot });
+        window.focus(&self.focus, cx);
+        cx.notify();
+    }
+
+    /// Leave copy mode, scrolling the pane back to where it was when the mode
+    /// began.
+    pub(crate) fn leave_copy_mode(&mut self, cx: &mut Context<Self>) {
+        let Some(state) = self.copy_mode.take() else {
+            return;
+        };
+        if let Some(offset) = state.mode.entry_offset() {
+            self.scroll_pane(state.mode.pane_id().to_owned(), offset, cx);
+        }
+        cx.notify();
+    }
+
+    /// A keystroke while copy mode is on. Printable text does not arrive here:
+    /// the platform commits it through [`Self::replace_text_in_range`], and
+    /// running it in both places would move twice.
+    fn copy_mode_key(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        let keystroke = &event.keystroke;
+        let modifiers = keystroke.modifiers;
+        if modifiers.platform || modifiers.alt || modifiers.function {
+            return;
+        }
+        if let Some(command) =
+            CopyCommand::from_key(&keystroke.key, modifiers.shift, modifiers.control)
+        {
+            self.copy_mode_command(command, cx);
+        }
+    }
+
+    /// Text a layout or an input method committed while copy mode is on, read
+    /// as the copy-mode keys they spell.
+    fn copy_mode_text(&mut self, text: &str, cx: &mut Context<Self>) {
+        for command in text.chars().filter_map(CopyCommand::from_char) {
+            self.copy_mode_command(command, cx);
+        }
+    }
+
+    fn copy_mode_command(&mut self, command: CopyCommand, cx: &mut Context<Self>) {
+        let Some(pane_id) = self
+            .copy_mode
+            .as_ref()
+            .map(|state| state.mode.pane_id().to_owned())
+        else {
+            return;
+        };
+        let Some(pane) = self.surface_pane(&pane_id).cloned() else {
+            return;
+        };
+        let Some(state) = self.copy_mode.as_mut() else {
+            return;
+        };
+        let outcome = state.mode.command(command, &pane);
+        match outcome {
+            CopyOutcome::Nothing => {}
+            CopyOutcome::Moved => self.reveal_copy_cursor(cx),
+            CopyOutcome::Motion(params) => self.send_copy_motion(params, cx),
+            CopyOutcome::Copy(range) => {
+                self.read_copy_range(range, cx);
+                self.leave_copy_mode(cx);
+            }
+            CopyOutcome::Exit => self.leave_copy_mode(cx),
+        }
+        cx.notify();
+    }
+
+    fn send_copy_motion(&mut self, params: CopyMotionParams, cx: &mut Context<Self>) {
+        let Ok(value) = serde_json::to_value(&params) else {
+            if let Some(state) = self.copy_mode.as_mut() {
+                state.mode.send_failed();
+            }
+            return;
+        };
+        match self.connection.request(Method::PaneCopyMotion, value) {
+            Some(request) => {
+                if let Some(state) = self.copy_mode.as_mut() {
+                    state.mode.sent(request, &params);
+                }
+            }
+            None => {
+                if let Some(state) = self.copy_mode.as_mut() {
+                    state.mode.send_failed();
+                }
+                tracing::warn!("copy mode motion was not sent");
+            }
+        }
+        cx.notify();
+    }
+
+    /// Read the marked range from the daemon. The daemon owns the text, and a
+    /// copy-mode selection may run through rows the view does not paint, so
+    /// the read is `pane.selection.read` rather than a walk over cells.
+    fn read_copy_range(&mut self, range: TextRange, cx: &mut Context<Self>) {
+        let Some(pane_id) = self
+            .copy_mode
+            .as_ref()
+            .map(|state| state.mode.pane_id().to_owned())
+        else {
+            return;
+        };
+        let params = SelectionReadParams {
+            pane_id,
+            anchor: range.start,
+            cursor: range.end,
+            content_revision: None,
+        };
+        let Ok(value) = serde_json::to_value(&params) else {
+            return;
+        };
+        if let Some(request) = self.connection.request(Method::PaneSelectionRead, value) {
+            self.pending_copy = Some(request);
+        }
+        cx.notify();
+    }
+
+    /// Write a copy-mode read's text to the system clipboard. A refused read
+    /// leaves the clipboard alone; its reason is on the status bar.
+    fn poll_copy_read(&mut self, cx: &mut Context<Self>) {
+        let Some(request) = self.pending_copy.clone() else {
+            return;
+        };
+        if let Some(response) = self.connection.take_response(&request) {
+            self.pending_copy = None;
+            match decode_response(&response) {
+                Ok(ScrollbackResponse::PaneSelection(result)) if !result.text.is_empty() => {
+                    cx.write_to_clipboard(ClipboardItem::new_string(result.text));
+                }
+                Ok(_) => tracing::warn!("a copy-mode read answered no text"),
+                Err(error) => tracing::warn!(%error, "a copy-mode read failed"),
+            }
+            cx.notify();
+        } else if !self.connection.in_flight(&request) {
+            self.pending_copy = None;
+            cx.notify();
+        }
+    }
+
+    /// Run every tick: end a mode whose boot is gone, apply a motion's answer,
+    /// retry a stale one, and run the keys that waited behind it.
+    fn poll_copy_mode(&mut self, cx: &mut Context<Self>) {
+        let current = self
+            .copy_mode
+            .as_ref()
+            .is_some_and(|state| self.live.boot_id() == Some(state.boot.as_str()));
+        if !current {
+            if self.copy_mode.take().is_some() {
+                cx.notify();
+            }
+            return;
+        }
+        let request = self
+            .copy_mode
+            .as_ref()
+            .and_then(|state| state.mode.in_flight().map(str::to_owned));
+        if let Some(request) = request {
+            if let Some(response) = self.connection.take_response(&request) {
+                let answer = decode_response(&response).and_then(|answer| match answer {
+                    ScrollbackResponse::PaneCopyMotion(result) => Ok(result),
+                    _ => Err(herdr_client::Error::ResponseType),
+                });
+                let moved = self
+                    .copy_mode
+                    .as_mut()
+                    .map(|state| state.mode.answer(&request, answer));
+                match moved {
+                    Some(Ok(true)) => self.reveal_copy_cursor(cx),
+                    Some(Ok(false)) => {}
+                    Some(Err(error)) => tracing::warn!(%error, "copy mode motion failed"),
+                    None => {}
+                }
+                cx.notify();
+            } else if !self.connection.in_flight(&request) {
+                if let Some(state) = self.copy_mode.as_mut() {
+                    state.mode.send_failed();
+                }
+                cx.notify();
+            }
+        }
+        // A motion refused as stale goes again once the surface settles.
+        let retry = self.copy_mode.as_ref().and_then(|state| {
+            self.surface_pane(state.mode.pane_id())
+                .and_then(|pane| state.mode.due_retry(pane))
+        });
+        if let Some(params) = retry {
+            self.send_copy_motion(params, cx);
+        }
+        // Keys typed behind a motion run now, in order.
+        loop {
+            let next = self
+                .copy_mode
+                .as_mut()
+                .and_then(|state| state.mode.next_queued());
+            let Some(command) = next else {
+                break;
+            };
+            self.copy_mode_command(command, cx);
+        }
+    }
+
+    /// Scroll a pane's copy-mode cursor into view, as little as possible.
+    fn reveal_copy_cursor(&mut self, cx: &mut Context<Self>) {
+        let Some(pane_id) = self
+            .copy_mode
+            .as_ref()
+            .map(|state| state.mode.pane_id().to_owned())
+        else {
+            return;
+        };
+        let Some(pane) = self.live.surface.as_deref().and_then(|surface| {
+            if surface.popup.is_some() {
+                return None;
+            }
+            surface.panes.iter().find(|pane| pane.pane_id == pane_id)
+        }) else {
+            return;
+        };
+        let Some(state) = self.copy_mode.as_mut() else {
+            return;
+        };
+        let Some(offset) = state.mode.reveal(pane) else {
+            return;
+        };
+        self.scroll_pane(pane_id, offset, cx);
+    }
+
+    /// Ask the daemon to scroll a pane; one request is enough, the surface
+    /// that answers it repaints.
+    fn scroll_pane(&self, pane_id: String, offset: u64, cx: &mut Context<Self>) {
+        if self
+            .connection
+            .request(
+                Method::PaneScroll,
+                json!({"pane_id": pane_id, "offset_from_bottom": offset}),
+            )
+            .is_none()
+        {
+            tracing::warn!(pane = %pane_id, offset, "scroll request was not sent");
+        }
+        cx.notify();
     }
 
     /// Ask the connection to dial now rather than wait out its backoff.
@@ -501,6 +1012,10 @@ impl TerminalView {
     /// `TextCommit`, and only this keystroke path sends the true `Paste`
     /// event.
     fn paste(&mut self, cx: &mut Context<Self>) {
+        // Copy mode reads keys, not text: a paste would become motions.
+        if self.copy_mode.is_some() {
+            return;
+        }
         if let Some(text) = cx
             .read_from_clipboard()
             .and_then(|item| item.text())
@@ -512,6 +1027,24 @@ impl TerminalView {
 
     fn key_down(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
         let keystroke = &event.keystroke;
+        // Copy mode owns the keyboard: a key it names runs as a copy-mode
+        // command, and one it does not is swallowed rather than typed into the
+        // pane. Printable text is committed separately and read there.
+        if self.copy_mode.is_some() {
+            self.copy_mode_key(event, cx);
+            cx.stop_propagation();
+            return;
+        }
+        // Find is the terminal's own chord. It is decided here rather than as a
+        // global binding so a text field elsewhere keeps its Ctrl-F.
+        let find_chord = keystroke.modifiers.platform
+            || (!cfg!(target_os = "macos") && keystroke.modifiers.control);
+        if find_chord && keystroke.key.eq_ignore_ascii_case("f") && !keystroke.modifiers.shift {
+            self.open_find(window, cx);
+            cx.stop_propagation();
+            window.prevent_default();
+            return;
+        }
         // Copy first: with a selection, Ctrl-C (the platform's copy chord) and
         // Cmd-C copy it; without one Ctrl-C still reaches the pane as SIGINT.
         // On macOS Ctrl is the terminal's own modifier, so only Cmd copies.
@@ -1088,6 +1621,149 @@ impl TerminalView {
             cx.notify();
         }
     }
+
+    /// The find field, laid over the top right of the grid while it is open.
+    /// It is chrome rather than terminal cells, so it wears the shell's tokens
+    /// and a press on it never reaches the pane below.
+    fn find_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let bar = self.find.as_ref()?;
+        let chrome = cx.theme();
+        let (bg, border, fg, muted, danger) = (
+            chrome.secondary,
+            chrome.border,
+            chrome.foreground,
+            chrome.muted_foreground,
+            chrome.danger,
+        );
+        let label = match bar.search.error() {
+            Some(error) => error.to_owned(),
+            None => match bar.search.count() {
+                Count::Unknown => String::new(),
+                Count::None => rust_i18n::t!("terminal.find.none").to_string(),
+                Count::Current { index, total } => {
+                    rust_i18n::t!("terminal.find.count", index = index, total = total).to_string()
+                }
+                Count::Found(total) => {
+                    rust_i18n::t!("terminal.find.found", total = total).to_string()
+                }
+            },
+        };
+        let failed = bar.search.error().is_some();
+        let can_step = bar.search.has_matches();
+        let input = bar.input.clone();
+        let focus_input = move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
+            if let Some(bar) = this.find.as_ref() {
+                let focus = bar.input.read(cx).focus_handle(cx).clone();
+                window.focus(&focus, cx);
+            }
+        };
+        let button = |id: &'static str, glyph: &'static str, step: Option<Step>, enabled: bool| {
+            div()
+                .id(id)
+                .flex_none()
+                .size(px(22.))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(4.))
+                .text_size(px(13.))
+                .text_color(if enabled { fg } else { muted })
+                .when(enabled, |button| {
+                    button
+                        .cursor_pointer()
+                        .hover(|button| button.bg(fg.opacity(0.12)))
+                })
+                .child(glyph)
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    match step {
+                        Some(step) => this.find_step(step, cx),
+                        None => this.close_find(window, cx),
+                    }
+                    focus_input(this, window, cx);
+                }))
+        };
+        Some(
+            div()
+                .id("find-bar")
+                .absolute()
+                .top(px(8.))
+                .right(px(8.))
+                .w(px(340.))
+                .flex()
+                .items_center()
+                .gap_1()
+                .p(px(4.))
+                .rounded_md()
+                .border_1()
+                .border_color(border)
+                .bg(bg)
+                .text_color(fg)
+                // The field is not a pane: a press in it must not start a
+                // selection or move focus to the grid under it.
+                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
+                    let keystroke = &event.keystroke;
+                    if keystroke.key == "escape" && !keystroke.modifiers.modified() {
+                        this.close_find(window, cx);
+                        cx.stop_propagation();
+                        window.prevent_default();
+                        return;
+                    }
+                    let step = match keystroke.key.as_str() {
+                        "enter" if keystroke.modifiers.shift => Some(Step::Newer),
+                        "enter" => Some(Step::Older),
+                        "up" if !keystroke.modifiers.modified() => Some(Step::Older),
+                        "down" if !keystroke.modifiers.modified() => Some(Step::Newer),
+                        _ => None,
+                    };
+                    if let Some(step) = step {
+                        this.find_step(step, cx);
+                        cx.stop_propagation();
+                    }
+                }))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(Input::new(&input).appearance(false).bordered(false)),
+                )
+                .child(
+                    div()
+                        .flex_none()
+                        .px(px(4.))
+                        .text_size(px(11.5))
+                        .text_color(if failed { danger } else { muted })
+                        .child(label),
+                )
+                .child(button("find-older", "↑", Some(Step::Older), can_step))
+                .child(button("find-newer", "↓", Some(Step::Newer), can_step))
+                .child(button("find-close", "×", None, true))
+                .into_any_element(),
+        )
+    }
+
+    /// A small marker in the bottom right of the grid while copy mode is on:
+    /// the mode swallows keys, and this is the only sign of why.
+    fn copy_mode_badge(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        self.copy_mode.as_ref()?;
+        let chrome = cx.theme();
+        Some(
+            div()
+                .absolute()
+                .bottom(px(8.))
+                .right(px(24.))
+                .px(px(8.))
+                .py(px(2.))
+                .rounded(px(4.))
+                .bg(chrome.primary)
+                .text_color(chrome.primary_foreground)
+                .text_size(px(11.))
+                .child(rust_i18n::t!("terminal.copy_mode.badge").to_string())
+                .into_any_element(),
+        )
+    }
 }
 
 impl Render for TerminalView {
@@ -1144,7 +1820,9 @@ impl Render for TerminalView {
         // or no surface at all.
         let whole = regions.is_empty();
         // The over-paint chrome the canvas draws: what the pointer selected,
-        // the link it hovers, and which cursor those two ask for.
+        // the find matches, the copy-mode cursor, the link it hovers, and which
+        // cursor those ask for. A popup covers the panes, so nothing under it
+        // is tinted; the find field and copy mode never open over one.
         let selection_highlights = live
             .surface
             .as_deref()
@@ -1152,6 +1830,32 @@ impl Render for TerminalView {
                 self.selection
                     .as_ref()
                     .map(|selection| selection.highlights(surface, cell_width))
+            })
+            .unwrap_or_default();
+        let find_hits = self
+            .find
+            .as_ref()
+            .zip(live.surface.as_deref())
+            .filter(|(_, surface)| surface.popup.is_none())
+            .and_then(|(bar, surface)| {
+                surface
+                    .panes
+                    .iter()
+                    .find(|pane| pane.pane_id == bar.search.pane_id())
+                    .map(|pane| bar.search.hits(pane))
+            })
+            .unwrap_or_default();
+        let copy_hits = self
+            .copy_mode
+            .as_ref()
+            .zip(live.surface.as_deref())
+            .filter(|(_, surface)| surface.popup.is_none())
+            .and_then(|(state, surface)| {
+                surface
+                    .panes
+                    .iter()
+                    .find(|pane| pane.pane_id == state.mode.pane_id())
+                    .map(|pane| state.mode.hits(pane))
             })
             .unwrap_or_default();
         let hover_link = self.hover_link.clone();
@@ -1411,6 +2115,67 @@ impl Render for TerminalView {
                                                         rgba((theme.foreground << 8) | 0x59),
                                                     ));
                                                 }
+                                                // Find matches are tinted, the one the
+                                                // field is on more strongly. Both sit
+                                                // above the cells so a dark theme and a
+                                                // light one read the same.
+                                                for hit in &find_hits {
+                                                    let columns = &hit.columns;
+                                                    if columns.is_empty() {
+                                                        continue;
+                                                    }
+                                                    let rect = Bounds::new(
+                                                        bounds.origin
+                                                            + point(
+                                                                px(f32::from(columns.start)
+                                                                    * cell_width),
+                                                                px(f32::from(hit.row)
+                                                                    * CELL_HEIGHT),
+                                                            ),
+                                                        size(
+                                                            px(f32::from(
+                                                                columns.end - columns.start,
+                                                            ) * cell_width),
+                                                            px(CELL_HEIGHT),
+                                                        ),
+                                                    );
+                                                    let tint = if hit.current {
+                                                        (theme.cursor << 8) | 0x66
+                                                    } else {
+                                                        (theme.foreground << 8) | 0x2e
+                                                    };
+                                                    window.paint_quad(fill(rect, rgba(tint)));
+                                                }
+                                                // Copy mode paints what it marked, and
+                                                // its cursor cell solidly so it is legible
+                                                // against any selection tint under it.
+                                                for hit in &copy_hits {
+                                                    let columns = &hit.columns;
+                                                    if columns.is_empty() {
+                                                        continue;
+                                                    }
+                                                    let rect = Bounds::new(
+                                                        bounds.origin
+                                                            + point(
+                                                                px(f32::from(columns.start)
+                                                                    * cell_width),
+                                                                px(f32::from(hit.row)
+                                                                    * CELL_HEIGHT),
+                                                            ),
+                                                        size(
+                                                            px(f32::from(
+                                                                columns.end - columns.start,
+                                                            ) * cell_width),
+                                                            px(CELL_HEIGHT),
+                                                        ),
+                                                    );
+                                                    let tint = if hit.cursor {
+                                                        (theme.cursor << 8) | 0xa8
+                                                    } else {
+                                                        (theme.foreground << 8) | 0x59
+                                                    };
+                                                    window.paint_quad(fill(rect, rgba(tint)));
+                                                }
                                                 if let Some(link) = &hover_link {
                                                     let columns = &link.columns;
                                                     if !columns.is_empty() {
@@ -1457,7 +2222,13 @@ impl Render for TerminalView {
                                             },
                                         )
                                         .size_full(),
-                                    ),
+                                    )
+                                    // The two scrollback features' chrome, over
+                                    // the cells they address: the find field and
+                                    // the copy-mode badge. `Option` children keep
+                                    // the tree empty while neither is on.
+                                    .children(self.find_bar(cx))
+                                    .children(self.copy_mode_badge(cx)),
                             ),
                     )
                     // A dropped endpoint leaves the last picture up, dimmed,
@@ -1701,7 +2472,8 @@ impl EntityInputHandler for TerminalView {
     }
 
     /// The one place text reaches a pane: a layout's character, a dead key's
-    /// result, or an IME commit all arrive here, already composed.
+    /// result, or an IME commit all arrive here, already composed. While copy
+    /// mode is on, the same text is read as its copy-mode keys instead.
     fn replace_text_in_range(
         &mut self,
         _range: Option<Range<usize>>,
@@ -1710,6 +2482,11 @@ impl EntityInputHandler for TerminalView {
         cx: &mut Context<Self>,
     ) {
         self.marked.clear();
+        if self.copy_mode.is_some() {
+            self.copy_mode_text(text, cx);
+            cx.notify();
+            return;
+        }
         if !text.is_empty() {
             self.send(vec![ClientPaneInputEvent::TextCommit(text.into())]);
         }

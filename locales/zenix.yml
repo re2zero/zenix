@@ -31,6 +31,29 @@ terminal:
     fallback:
       en: "zenix"
       zh-CN: "zenix"
+  # The find field over a pane's scrollback: its placeholder, the count beside
+  # the query, and the line shown when the daemon would not take the search.
+  find:
+    placeholder:
+      en: "Find in scrollback"
+      zh-CN: "在回滚中查找"
+    none:
+      en: "No results"
+      zh-CN: "无结果"
+    count:
+      en: "%{index} of %{total}"
+      zh-CN: "%{index} / %{total}"
+    found:
+      en: "%{total} found"
+      zh-CN: "找到 %{total} 处"
+    not_sent:
+      en: "the daemon did not take the search"
+      zh-CN: "daemon 未接受搜索请求"
+  # The marker in the corner while keyboard copy mode holds the keys.
+  copy_mode:
+    badge:
+      en: "COPY"
+      zh-CN: "复制模式"
 
 status:
   connected:
@@ -809,6 +832,12 @@ command:
     resize-down:
       en: "Resize Pane Down"
       zh-CN: "向下调整窗格"
+    find:
+      en: "Find in Scrollback"
+      zh-CN: "在回滚中查找"
+    copy-mode:
+      en: "Copy Mode"
+      zh-CN: "复制模式"
   view:
     toggle-sidebar:
       en: "Toggle Sidebar"
