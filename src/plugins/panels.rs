@@ -312,6 +312,9 @@ fn filter_chips(active: events::EventFilter, invocation: &Invocation) -> AnyElem
                     let on = *filter == active;
                     div()
                         .id(("event-filter", index))
+                        .role(Role::Button)
+                        .aria_label(filter.label())
+                        .aria_selected(on)
                         .px_1p5()
                         .py_0p5()
                         .rounded_full()

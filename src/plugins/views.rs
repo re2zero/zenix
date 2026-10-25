@@ -117,6 +117,8 @@ pub(crate) fn sidebar_item(
     let title = spec.title.clone();
     h_flex()
         .id(spec.qualified_id())
+        .role(Role::Button)
+        .aria_label(title.clone())
         .w_full()
         .px_1()
         .py_0p5()

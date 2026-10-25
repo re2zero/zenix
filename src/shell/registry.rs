@@ -14,6 +14,7 @@ use gpui_kit::component::input::InputState;
 use gpui_kit::*;
 use herdr_client::protocol::{ClientShellSnapshot, PaneSurfaceFrame};
 
+use super::chat::ChatPanel;
 use super::commands::Command;
 use crate::events::EventState;
 use crate::fleet::{FleetState, Tails};
@@ -469,6 +470,10 @@ pub(crate) type Dispatch = Rc<dyn Fn(ShellRequest, &mut Window, &mut App)>;
 /// and a plugin contribution receive this same shape, so neither can depend on
 /// being the first one mounted (PLAN.md §5.9).
 pub(crate) struct Invocation<'a> {
+    /// The conversation panel, which the shell owns and the panel's first tab
+    /// mounts. An entity, not a frame-built block: what the composer holds
+    /// outlives the panel's closing, and opening the panel can focus it.
+    pub(crate) chat: &'a Entity<ChatPanel>,
     pub(crate) snapshot: Option<&'a ClientShellSnapshot>,
     pub(crate) surface: Option<&'a PaneSurfaceFrame>,
     pub(crate) status: ConnectionStatus,

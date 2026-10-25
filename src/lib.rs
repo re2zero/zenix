@@ -153,7 +153,9 @@ pub fn run() {
                         shell::save_window_bounds(window, cx);
                         true
                     });
-                    let view = cx.new(shell::ShellView::new);
+                    // The window goes in so the shell can build the state
+                    // that needs one (the conversation panel's composer).
+                    let view = cx.new(|cx| shell::ShellView::new(window, cx));
                     // The pane takes the keyboard as soon as the window opens, as
                     // upstream focuses in its constructor; without this, keys reach
                     // the pane only after the first click. The handle is cloned

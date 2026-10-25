@@ -269,6 +269,9 @@ fn tab_sub_row(
     let active = Some(tab.tab_id.as_str()) == snapshot.focused_tab_id.as_deref();
     let row = h_flex()
         .id(("workspace-tab", index))
+        .role(Role::Tab)
+        .aria_label(tab.label.clone())
+        .aria_selected(active)
         .w_full()
         .h(px(invocation.row_height - 2.))
         .relative()
@@ -385,6 +388,9 @@ fn workspace_row(
     }
     let row = h_flex()
         .id(("workspace", index))
+        .role(Role::Tab)
+        .aria_label(name.clone())
+        .aria_selected(selected)
         .w_full()
         .h(px(invocation.row_height))
         .relative()
@@ -557,6 +563,9 @@ fn agent_row(index: usize, agent: &ClientShellAgent, invocation: &Invocation) ->
     let detail = agent_detail(agent);
     let row = h_flex()
         .id(("agent", index))
+        .role(Role::Button)
+        .aria_label(name.clone())
+        .aria_selected(focused)
         .w_full()
         .h(px(invocation.row_height))
         .relative()

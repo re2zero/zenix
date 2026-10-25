@@ -1120,6 +1120,9 @@ fn nav(
             let active = index == selected;
             h_flex()
                 .id(("settings-nav", index))
+                .role(Role::Tab)
+                .aria_label(title.clone())
+                .aria_selected(active)
                 .w_full()
                 .h(px(30.))
                 .px_2()

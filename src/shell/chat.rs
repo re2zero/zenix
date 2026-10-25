@@ -66,17 +66,15 @@ pub(crate) const ASIDE: &[AsideBlock] = &[AsideBlock {
 /// is the tighter one the panel asks for.
 const MAX_TOOL_ROUNDS: u32 = 8;
 
-/// The panel's block: state that needs a window (its input owns a focus handle)
-/// is created by the frame that first draws it and kept per window from then
-/// on. `use_keyed_state` is GPUI's own way to do that, and it re-renders the
-/// shell whenever the panel changes.
-fn render(_: &Invocation, window: &mut Window, cx: &mut App) -> AnyElement {
-    window
-        .use_keyed_state("chat-panel", cx, ChatPanel::new)
-        .into_any_element()
+/// The panel's block: the shell owns the panel's state (so what the composer
+/// holds survives the panel's closing, which a per-frame keyed state could
+/// not) and hands it in through the invocation; this only mounts it. The
+/// shell observes the panel, so a composer that grows repaints the frame.
+fn render(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyElement {
+    invocation.chat.clone().into_any_element()
 }
 
-struct ChatPanel {
+pub(crate) struct ChatPanel {
     /// Everything said, oldest first. The message the running turn appends to
     /// is `streaming`.
     messages: Vec<ChatMessage>,
@@ -120,7 +118,14 @@ struct ChatPanel {
 }
 
 impl ChatPanel {
-    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    /// The composer's own focus handle: what lets the shell hand the keyboard
+    /// to the conversation the moment the panel opens, without the pane beside
+    /// it keeping the keys.
+    pub(crate) fn composer_focus(&self, cx: &App) -> FocusHandle {
+        self.input.read(cx).focus_handle(cx).clone()
+    }
+
+    pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         // A multi-line composer: the input itself owns the Enter rule, so
         // Shift+Enter inserts a newline while a plain Enter submits.
         let input = cx.new(|cx| {

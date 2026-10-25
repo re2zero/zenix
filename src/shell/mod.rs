@@ -116,6 +116,10 @@ fn viewport_width_from_app(cx: &mut App) -> Option<f32> {
 
 pub(crate) struct ShellView {
     terminal: Entity<TerminalView>,
+    /// The conversation panel: owned here (not keyed per frame) so what the
+    /// composer holds survives the panel's closing, and so opening the panel
+    /// can hand it the keyboard.
+    chat: Entity<crate::shell::chat::ChatPanel>,
     connection: Connection,
     registry: Registry,
     /// Which sidebar view is in front. The rail changes it; the daemon has no
@@ -196,6 +200,9 @@ pub(crate) struct ShellView {
     /// else does not rebuild the sidebar.
     drawn: u64,
     _observe: Subscription,
+    /// Wakes the shell when the conversation panel moved: the composer grows
+    /// under the shell's own layout.
+    _chat: Subscription,
     _prefix: Subscription,
     _config: Subscription,
     /// Wakes the shell when the plugin registry moved. Held (not read) so the
@@ -213,8 +220,10 @@ pub(crate) struct ShellView {
 }
 
 impl ShellView {
-    pub(crate) fn new(cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let terminal = cx.new(TerminalView::new);
+        let chat = cx.new(|cx| crate::shell::chat::ChatPanel::new(window, cx));
+        let chat_observe = cx.observe(&chat, |_, _, cx| cx.notify());
         let connection = terminal.read(cx).connection();
         let observe = cx.observe(&terminal, |shell, terminal, cx| {
             let revision = terminal.read(cx).live().revision;
@@ -288,6 +297,7 @@ impl ShellView {
         let orchestrator = crate::mcp::start_orchestrator(String::new());
         let mut shell = Self {
             terminal,
+            chat,
             connection,
             registry: Registry::new(&plugins.state().ui),
             rail: SidebarView::Workspaces,
@@ -320,6 +330,7 @@ impl ShellView {
             prefix_armed: false,
             drawn: 0,
             _observe: observe,
+            _chat: chat_observe,
             _prefix: prefix,
             _config: config,
             _plugin_pulses: plugin_pulses,
@@ -575,6 +586,16 @@ impl ShellView {
             .sync(ui_data::loads(ui, screen), context, force);
     }
 
+    /// The keyboard follows an opened panel: the conversation's composer takes
+    /// the keys when the panel opens on its tab, so the user can type at once.
+    /// A pane beside an open panel keeps them until the panel is opened.
+    fn focus_aside_input(&self, window: &mut Window, cx: &mut App) {
+        if self.aside_tab == AsideTab::Chat {
+            let focus = self.chat.read(cx).composer_focus(cx);
+            window.focus(&focus, cx);
+        }
+    }
+
     /// The plugin settings page the dialog is open on, when one is: the page's
     /// qualified id, which is the key its data is read under. The dialog's own
     /// pages read the config global and are never asked for here.
@@ -698,6 +719,10 @@ impl ShellView {
                     Some(viewport_width(window)),
                     cx,
                 );
+                // An opened panel is opened to be typed into.
+                if visible {
+                    self.focus_aside_input(window, cx);
+                }
             }
             // The mode the chrome is drawn in is a setting, so the title bar's
             // button and the settings panel's item are the same write; the
@@ -1104,6 +1129,9 @@ impl ShellView {
             ShellRequest::ShowAsideTab(tab) => {
                 self.aside_tab = tab;
                 config::update(cx, |config| config.layout.aside_visible = true);
+                if tab == AsideTab::Chat {
+                    self.focus_aside_input(window, cx);
+                }
                 // The tab that just came forward may hold declarations nobody
                 // has read yet: ask for them now rather than on the next refresh.
                 self.request_ui_data(
@@ -1608,6 +1636,7 @@ impl Render for ShellView {
         // it only changes clothes while it is armed and claiming the next key.
         let prefix = self.keymap.prefix_label();
         let invocation = Invocation {
+            chat: &self.chat,
             snapshot: live.snapshot.as_deref(),
             surface: live.surface.as_deref(),
             status: live.status,
@@ -1917,6 +1946,8 @@ fn aside_close(invocation: &Invocation) -> AnyElement {
     let dispatch = invocation.dispatch.clone();
     div()
         .id("close-aside")
+        .role(Role::Button)
+        .aria_label(t("settings.close"))
         .w(px(22.))
         .h(px(22.))
         .flex()
@@ -1944,6 +1975,9 @@ fn aside_tab_button(
     let dispatch = invocation.dispatch.clone();
     h_flex()
         .id(("aside-tab", tab as usize))
+        .role(Role::Tab)
+        .aria_label(tab.label())
+        .aria_selected(selected)
         .h(px(24.))
         .px(px(8.))
         .gap(px(6.))
@@ -2318,6 +2352,9 @@ fn rail(current: SidebarView, invocation: &Invocation) -> AnyElement {
                 .child(
                     div()
                         .id(("rail", view as usize))
+                        .role(Role::Button)
+                        .aria_label(view.label())
+                        .aria_selected(selected)
                         .w(px(34.))
                         .h(px(34.))
                         .relative()
@@ -2600,6 +2637,7 @@ fn title_bar(
     bar.child(title_toggle(
         "toggle-sidebar",
         icons::SIDEBAR,
+        t("command.view.toggle-sidebar"),
         sidebar_visible,
         Command::ToggleSidebar,
         invocation,
@@ -2607,6 +2645,7 @@ fn title_bar(
     .child(title_toggle(
         "toggle-aside",
         icons::ASIDE,
+        t("command.view.toggle-chat"),
         aside_visible,
         Command::ToggleAside,
         invocation,
@@ -2622,6 +2661,8 @@ fn command_trigger(palette_hint: Option<String>, invocation: &Invocation) -> Any
     let dispatch = invocation.dispatch.clone();
     h_flex()
         .id("palette-trigger")
+        .role(Role::Button)
+        .aria_label(t("command.view.palette"))
         .w(px(420.))
         .h(px(24.))
         .px(px(8.))
@@ -2665,10 +2706,13 @@ fn key_cap(label: String, theme: &Theme) -> AnyElement {
 }
 
 /// One of the chrome's right-edge toggles: an icon, lit while the thing it
-/// opens is in front. A click is the same dispatch a chord runs.
+/// opens is in front. A click is the same dispatch a chord runs. The label is
+/// the command's directory name, so an assistive technology names the toggle
+/// the way the palette does.
 fn title_toggle(
     id: &'static str,
     icon: &'static [u8],
+    label: impl Into<SharedString>,
     active: bool,
     command: Command,
     invocation: &Invocation,
@@ -2677,6 +2721,13 @@ fn title_toggle(
     let dispatch = invocation.dispatch.clone();
     div()
         .id(id)
+        .role(Role::Button)
+        .aria_label(label)
+        .aria_toggled(if active {
+            Toggled::True
+        } else {
+            Toggled::False
+        })
         .w(px(26.))
         .h(px(24.))
         .flex()
@@ -2764,18 +2815,21 @@ fn tab_strip(invocation: &Invocation) -> AnyElement {
         .child(strip_button(
             "strip-new",
             icons::PLUS,
+            t("command.tab.new"),
             Command::NewTab,
             invocation,
         ))
         .child(strip_button(
             "strip-split",
             icons::SPLIT,
+            t("command.pane.split-right"),
             Command::SplitRight,
             invocation,
         ))
         .child(strip_button(
             "strip-palette",
             icons::SEARCH,
+            t("command.view.palette"),
             Command::TogglePalette,
             invocation,
         ))
@@ -2788,6 +2842,7 @@ fn tab_strip(invocation: &Invocation) -> AnyElement {
 fn strip_button(
     id: &'static str,
     icon: &'static [u8],
+    label: impl Into<SharedString>,
     command: Command,
     invocation: &Invocation,
 ) -> AnyElement {
@@ -2795,6 +2850,8 @@ fn strip_button(
     let dispatch = invocation.dispatch.clone();
     div()
         .id(id)
+        .role(Role::Button)
+        .aria_label(label)
         .w(px(22.))
         .h(px(22.))
         .flex()
@@ -2884,6 +2941,9 @@ fn tab_button(tab: &ClientShellTab, index: usize, invocation: &Invocation) -> An
         .unwrap_or(0);
     h_flex()
         .id(("tab", tab.number))
+        .role(Role::Tab)
+        .aria_label(label.clone())
+        .aria_selected(tab.focused)
         .h(px(26.))
         .min_w(px(88.))
         .max_w(px(240.))
