@@ -77,6 +77,42 @@ const RAIL_WIDTH: f32 = 46.;
 const SIDEBAR_HEAD_HEIGHT: f32 = 34.;
 /// The sidebar's foot: the one line naming where the view's rows come from.
 const SIDEBAR_FOOT_HEIGHT: f32 = 24.;
+/// Below this viewport width the right-hand panel is the viewport's to hide.
+/// The setting keeps its value, so growing the window brings the panel back —
+/// a breakpoint is not a second place where the user's choice is stored.
+const ASIDE_VIEWPORT_MIN: f32 = 1180.;
+/// Below this viewport width the sidebar hides the same way, the rail staying.
+const SIDEBAR_VIEWPORT_MIN: f32 = 900.;
+
+/// Whether the right-hand panel is on screen: what the user set, within a
+/// viewport wide enough to draw it.
+fn aside_on_screen(visible: bool, viewport_width: f32) -> bool {
+    visible && viewport_width >= ASIDE_VIEWPORT_MIN
+}
+
+/// Whether the sidebar is on screen, by the same rule as [`aside_on_screen`].
+fn sidebar_on_screen(visible: bool, viewport_width: f32) -> bool {
+    visible && viewport_width >= SIDEBAR_VIEWPORT_MIN
+}
+
+/// The viewport width a window in hand reports, in the one cast the shell's
+/// layout arithmetic uses.
+fn viewport_width(window: &Window) -> f32 {
+    window.viewport_size().width.to_f64() as f32
+}
+
+/// The viewport width asked of the window itself, for the one path that
+/// re-derives what is on screen without a window in hand: the plugin observer
+/// runs outside any window update and may reach the window through the app.
+/// Inside a window's own event handling this must not be used — the window is
+/// already borrowed — which is why the paths that have a `Window` pass its
+/// width instead.
+fn viewport_width_from_app(cx: &mut App) -> Option<f32> {
+    let handle = *cx.windows().first()?;
+    handle
+        .update(cx, |_, window, _| viewport_width(window))
+        .ok()
+}
 
 pub(crate) struct ShellView {
     terminal: Entity<TerminalView>,
@@ -350,7 +386,7 @@ impl ShellView {
         // that left the registry takes its chord with it.
         let catalog = Catalog::build(&state.actions, &state.ui).runnable(&state.plugins);
         self.keymap.set_plugins(&catalog);
-        self.request_ui_data(&state.ui, false, cx);
+        self.request_ui_data(&state.ui, false, viewport_width_from_app(cx), cx);
         // The review is where a link's answer belongs while it is open: the
         // sidebar's log block is behind it, and a refused link leaves no log
         // entry at all.
@@ -514,15 +550,25 @@ impl ShellView {
 
     /// Tell the reader what is on screen and how often each declaration wants
     /// to be read. A panel is asked for only while the aside shows the tab it
-    /// mounts in — a closed panel is not worth a process every ten seconds — a
+    /// mounts in, and only while the viewport is wide enough to show the aside
+    /// at all — a closed panel is not worth a process every ten seconds — a
     /// settings page only while the dialog is open on it, and a status segment
     /// always, because the bar is never hidden. `force` re-reads what is on
     /// screen now, which is what a refresh click means.
-    fn request_ui_data(&self, ui: &UiContributions, force: bool, cx: &App) {
+    fn request_ui_data(
+        &self,
+        ui: &UiContributions,
+        force: bool,
+        viewport_width: Option<f32>,
+        cx: &App,
+    ) {
         let live = self.terminal.read(cx).live().clone();
         let context = Arc::new(ui_data::context(live.snapshot.as_deref()));
         let screen = ui_data::OnScreen {
-            panels: config::get(cx).layout.aside_visible && self.aside_tab == AsideTab::Panels,
+            panels: aside_on_screen(
+                config::get(cx).layout.aside_visible,
+                viewport_width.unwrap_or(f32::MAX),
+            ) && self.aside_tab == AsideTab::Panels,
             settings: self.open_plugin_settings_page(),
         };
         self.ui_data_host
@@ -646,7 +692,12 @@ impl ShellView {
                 config::update(cx, |config| config.layout.aside_visible = visible);
                 // Opening or closing the panel changes what can be seen, and
                 // with it what the reader is responsible for.
-                self.request_ui_data(&self.plugins.state().ui, false, cx);
+                self.request_ui_data(
+                    &self.plugins.state().ui,
+                    false,
+                    Some(viewport_width(window)),
+                    cx,
+                );
             }
             // The mode the chrome is drawn in is a setting, so the title bar's
             // button and the settings panel's item are the same write; the
@@ -664,7 +715,7 @@ impl ShellView {
             // The plugin surface is read, not pushed: both blocks a user can
             // see ask for the same refresh, and it is the registry and the log
             // ring together, because the reason to look is the same.
-            Command::RefreshPlugins => self.refresh_plugins(cx),
+            Command::RefreshPlugins => self.refresh_plugins(window, cx),
             // Linking runs a directory's commands as the user, so the review
             // comes first, from wherever the command was reached.
             Command::LinkPlugin => self.dispatch(ShellRequest::OpenPluginTrust, window, cx),
@@ -730,7 +781,12 @@ impl ShellView {
         }
         // Opening may put a plugin's page on screen; closing takes it off. The
         // reader hears either way, so a page nobody sees is not read.
-        self.request_ui_data(&self.plugins.state().ui, false, cx);
+        self.request_ui_data(
+            &self.plugins.state().ui,
+            false,
+            Some(viewport_width(window)),
+            cx,
+        );
         cx.notify();
     }
 
@@ -767,12 +823,17 @@ impl ShellView {
     }
 
     /// Read the plugin surface again: what is installed, and what last ran.
-    fn refresh_plugins(&self, cx: &mut Context<Self>) {
+    fn refresh_plugins(&self, window: &mut Window, cx: &mut Context<Self>) {
         self.plugins.refresh();
         self.plugins.refresh_logs();
         // A refresh is "read it again": a declaration's data is read again too,
         // which is the only way the numbers in a panel move.
-        self.request_ui_data(&self.plugins.state().ui, true, cx);
+        self.request_ui_data(
+            &self.plugins.state().ui,
+            true,
+            Some(viewport_width(window)),
+            cx,
+        );
         cx.notify();
     }
 
@@ -1045,7 +1106,12 @@ impl ShellView {
                 config::update(cx, |config| config.layout.aside_visible = true);
                 // The tab that just came forward may hold declarations nobody
                 // has read yet: ask for them now rather than on the next refresh.
-                self.request_ui_data(&self.plugins.state().ui, false, cx);
+                self.request_ui_data(
+                    &self.plugins.state().ui,
+                    false,
+                    Some(viewport_width(window)),
+                    cx,
+                );
                 cx.notify();
             }
             // A settings page is the dialog's own state; the surface stays
@@ -1053,7 +1119,12 @@ impl ShellView {
             // pages changes what the reader may run, so it hears the page.
             ShellRequest::ShowSettingsPage(page) => {
                 self.settings_page = page;
-                self.request_ui_data(&self.plugins.state().ui, false, cx);
+                self.request_ui_data(
+                    &self.plugins.state().ui,
+                    false,
+                    Some(viewport_width(window)),
+                    cx,
+                );
                 cx.notify();
             }
             ShellRequest::FocusWorkspace(workspace_id) => {
@@ -1130,10 +1201,15 @@ impl ShellView {
             ShellRequest::ShowPluginPanels => {
                 self.aside_tab = AsideTab::Panels;
                 config::update(cx, |config| config.layout.aside_visible = true);
-                self.request_ui_data(&self.plugins.state().ui, false, cx);
+                self.request_ui_data(
+                    &self.plugins.state().ui,
+                    false,
+                    Some(viewport_width(window)),
+                    cx,
+                );
                 cx.notify();
             }
-            ShellRequest::RefreshPlugins => self.refresh_plugins(cx),
+            ShellRequest::RefreshPlugins => self.refresh_plugins(window, cx),
             ShellRequest::OpenPluginManager(start_at) => {
                 self.manager.open(start_at.as_deref());
                 let focus = self.manager_focus.clone();
@@ -1457,8 +1533,12 @@ impl Render for ShellView {
         let error = self.connection.footer();
         let theme = cx.theme().clone();
         let plugins = self.plugins.state();
-        let sidebar_visible = config::get(cx).layout.sidebar_visible;
-        let aside_visible = config::get(cx).layout.aside_visible;
+        let viewport_width = viewport_width(window);
+        // What the panels show is the user's setting within the viewport's
+        // reach: the breakpoints hide, the config remembers.
+        let sidebar_visible =
+            sidebar_on_screen(config::get(cx).layout.sidebar_visible, viewport_width);
+        let aside_visible = aside_on_screen(config::get(cx).layout.aside_visible, viewport_width);
         let dispatch: Dispatch = Rc::new({
             let connection = self.connection.clone();
             let snapshot = live.snapshot.clone();
@@ -2931,6 +3011,22 @@ mod tests {
     use super::*;
     use herdr_client::protocol::ClientShellSnapshot;
     use std::prelude::v1::test;
+
+    /// The breakpoints hide without storing: a panel configured on is on
+    /// screen exactly while the viewport can draw it, so growing the window
+    /// brings it back with no config write at all.
+    #[test]
+    fn a_panel_is_on_screen_only_within_its_breakpoint() {
+        assert!(aside_on_screen(true, ASIDE_VIEWPORT_MIN));
+        assert!(aside_on_screen(true, 1400.));
+        assert!(!aside_on_screen(true, ASIDE_VIEWPORT_MIN - 1.));
+        // A panel the user turned off stays off at any width.
+        assert!(!aside_on_screen(false, 4000.));
+
+        assert!(sidebar_on_screen(true, SIDEBAR_VIEWPORT_MIN));
+        assert!(!sidebar_on_screen(true, SIDEBAR_VIEWPORT_MIN - 1.));
+        assert!(!sidebar_on_screen(false, 4000.));
+    }
 
     fn snapshot(focused_tab: Option<&str>, panes: &[(&str, &str)]) -> ClientShellSnapshot {
         serde_json::from_value(serde_json::json!({
