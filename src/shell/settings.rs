@@ -703,7 +703,10 @@ fn stepper(
     let set: SetNumber = Rc::new(set);
     let nudge = |delta: f32| {
         let set = set.clone();
-        let next = (value + delta).clamp(limits.min, limits.max).round();
+        // No rounding here: a 0.05 step would lose every decimal to it. What
+        // a value may look like is the config field's own business (the
+        // widths take whole pixels there, the line height two decimals).
+        let next = (value + delta).clamp(limits.min, limits.max);
         move |window: &mut Window, cx: &mut App| {
             set(next, cx);
             window.refresh();
