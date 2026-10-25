@@ -37,7 +37,10 @@ use herdr_client::protocol::{
 };
 
 use crate::ai::endpoint::ApiEndpoint;
-use crate::config::{self, ASIDE_WIDTH_DEFAULT, ConfigStore, SIDEBAR_WIDTH_DEFAULT};
+use crate::config::{
+    self, ASIDE_WIDTH_DEFAULT, Appearance, ConfigStore, Layout, SIDEBAR_WIDTH_DEFAULT,
+    TerminalConfig,
+};
 use crate::events::{EventState, Stream};
 use crate::fleet::{FleetState, Tails, read_tails};
 use crate::herdr::Connection;
@@ -101,6 +104,10 @@ pub(crate) struct ShellView {
     /// Which page of the settings dialog is in front. Local like the rail's
     /// view; the page list writes it through a request.
     settings_page: usize,
+    /// The config page's restore confirm, armed by its first press and spent
+    /// by its second. Cleared when the dialog closes, so an armed confirm
+    /// never waits for a click that comes much later.
+    settings_reset_armed: bool,
     /// The keyboard while the settings surface is open, so the pane beside it
     /// stops receiving keystrokes.
     settings_focus: FocusHandle,
@@ -251,6 +258,7 @@ impl ShellView {
             aside_dragging: false,
             settings_open: false,
             settings_page: 0,
+            settings_reset_armed: false,
             settings_focus: cx.focus_handle(),
             palette: Palette::default(),
             palette_focus: cx.focus_handle(),
@@ -693,6 +701,7 @@ impl ShellView {
     /// it: the panel keeps its own page selection.
     fn toggle_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.settings_open = !self.settings_open;
+        self.settings_reset_armed = false;
         if self.settings_open {
             let focus = self.settings_focus.clone();
             window.focus(&focus, cx);
@@ -945,6 +954,23 @@ impl ShellView {
             ShellRequest::AcknowledgeAlerts => {
                 self.terminal
                     .update(cx, |terminal, cx| terminal.acknowledge_alerts(cx));
+            }
+            // The restore is two presses on purpose: the first arms, the
+            // second writes. The window's geometry is left alone — the
+            // closing window owns it, and a reset that changed what the next
+            // launch opens into would be the surface overstepping.
+            ShellRequest::ResetConfigDefaults => {
+                if self.settings_reset_armed {
+                    self.settings_reset_armed = false;
+                    config::update(cx, |config| {
+                        config.appearance = Appearance::default();
+                        config.terminal = TerminalConfig::default();
+                        config.layout = Layout::default();
+                    });
+                } else {
+                    self.settings_reset_armed = true;
+                    cx.notify();
+                }
             }
             // A local command is the shell's own, so it goes back through
             // [`Self::run`]: a palette row and a chord must end in the same
@@ -1329,6 +1355,7 @@ impl Render for ShellView {
                 | ShellRequest::ShowAsideTab(_)
                 | ShellRequest::ShowSettingsPage(_)
                 | ShellRequest::AcknowledgeAlerts
+                | ShellRequest::ResetConfigDefaults
                 | ShellRequest::StartRename(_)
                 | ShellRequest::CommitRename
                 | ShellRequest::CancelRename
@@ -1555,6 +1582,7 @@ impl Render for ShellView {
                 self.settings_page,
                 &self.settings_focus,
                 &dispatch,
+                self.settings_reset_armed,
                 cx,
             ));
         }

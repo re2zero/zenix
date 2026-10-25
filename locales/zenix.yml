@@ -219,6 +219,18 @@ settings:
     path:
       en: "File"
       zh-CN: "文件"
+    open:
+      en: "Open"
+      zh-CN: "打开"
+    reset:
+      en: "Restore defaults"
+      zh-CN: "恢复默认"
+    reset_description:
+      en: "Writes the appearance, terminal and layout sections back to their defaults. The window's size is the closing window's own."
+      zh-CN: "把外观、终端与布局三段写回默认值。窗口尺寸由关闭时的窗口自行记住，不在此列。"
+    reset_confirm:
+      en: "Press again to confirm"
+      zh-CN: "再按一次确认"
     problems:
       en: "Problems"
       zh-CN: "问题"

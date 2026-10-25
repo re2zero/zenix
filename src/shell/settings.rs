@@ -45,27 +45,27 @@ use crate::terminal::Theme as TerminalTheme;
 pub(crate) const SETTINGS_SECTIONS: &[SettingsSection] = &[
     SettingsSection {
         id: "appearance",
-        page: appearance_page,
+        page: |cx, _, _| appearance_page(cx),
     },
     SettingsSection {
         id: "terminal",
-        page: terminal_page,
+        page: |cx, _, _| terminal_page(cx),
     },
     SettingsSection {
         id: "layout",
-        page: layout_page,
+        page: |cx, _, _| layout_page(cx),
     },
     SettingsSection {
         id: "keys",
-        page: keys_page,
+        page: |cx, _, _| keys_page(cx),
     },
     SettingsSection {
         id: "plugins",
-        page: plugins_page,
+        page: |cx, _, _| plugins_page(cx),
     },
     SettingsSection {
         id: "mcp",
-        page: mcp_page,
+        page: |cx, _, _| mcp_page(cx),
     },
     SettingsSection {
         id: "config",
@@ -557,19 +557,48 @@ fn mcp_page(cx: &App) -> Page {
 }
 
 /// The file itself, and what was wrong with it: the one place a hand-edited
-/// value can be seen to have had no effect.
-fn config_page(cx: &App) -> Page {
+/// value can be seen to have had no effect. Both files named here open in the
+/// desktop's editor, and the page can put everything but the window's own
+/// geometry back — under a two-step confirm, because the second press is one
+/// mis-click away from every setting at once.
+fn config_page(cx: &App, reset_armed: bool, dispatch: &Dispatch) -> Page {
     let theme = cx.theme();
     let diagnostics = config::diagnostics(cx);
+    let path = config::path_of(cx).display().to_string();
+    let confirm = if reset_armed {
+        let dispatch = dispatch.clone();
+        Button::new("config-reset-confirm")
+            .label(t("settings.config.reset_confirm"))
+            .small()
+            .on_click(move |_, window, cx| {
+                dispatch(ShellRequest::ResetConfigDefaults, window, cx);
+            })
+            .into_any_element()
+    } else {
+        let dispatch = dispatch.clone();
+        Button::new("config-reset-arm")
+            .label(t("settings.config.reset"))
+            .ghost()
+            .small()
+            .on_click(move |_, window, cx| {
+                dispatch(ShellRequest::ResetConfigDefaults, window, cx);
+            })
+            .into_any_element()
+    };
     let page = page(t("settings.config.title"), t("settings.config.description")).section(
         Section::new()
             .field(
                 t("settings.config.path"),
                 None,
-                mono_text(config::path_of(cx).display().to_string(), theme),
+                path_row(&path, "config-open", theme),
             )
             .field(t("settings.config.problems"), None, diagnostics_field(cx))
-            .field(t("settings.config.daemon"), None, daemon_field(cx)),
+            .field(t("settings.config.daemon"), None, daemon_field(cx))
+            .field(
+                t("settings.config.reset"),
+                Some(t("settings.config.reset_description").into()),
+                confirm,
+            ),
     );
     // The nav's warning mark belongs to a config that actually has something
     // to say; a clean file needs no second "no problems" sentence below it.
@@ -578,6 +607,25 @@ fn config_page(cx: &App) -> Page {
     } else {
         page.warn()
     }
+}
+
+/// A file path with the button that opens it in the desktop's editor. The
+/// path is the fact, the button is the courtesy; the desktop decides what an
+/// editor is.
+fn path_row(path: &str, id: &'static str, theme: &Theme) -> AnyElement {
+    let url = format!("file://{path}");
+    h_flex()
+        .gap_2()
+        .items_center()
+        .child(mono_text(path, theme))
+        .child(
+            Button::new(id)
+                .label(t("settings.config.open"))
+                .ghost()
+                .small()
+                .on_click(move |_, _, cx| cx.open_url(&url)),
+        )
+        .into_any_element()
 }
 
 // ── controls ───────────────────────────────────────────────────────────────
@@ -801,8 +849,9 @@ fn daemon_field(cx: &App) -> AnyElement {
     let theme = cx.theme();
     v_flex()
         .gap_1()
-        .child(mono_text(
-            platform::herdr_config_path().display().to_string(),
+        .child(path_row(
+            &platform::herdr_config_path().display().to_string(),
+            "config-open-daemon",
             theme,
         ))
         .child(
@@ -848,10 +897,14 @@ pub(crate) fn overlay(
     selected: usize,
     focus: &FocusHandle,
     dispatch: &Dispatch,
+    reset_armed: bool,
     cx: &mut App,
 ) -> AnyElement {
     let theme = cx.theme().clone();
-    let pages: Vec<Page> = sections.iter().map(|section| (section.page)(cx)).collect();
+    let pages: Vec<Page> = sections
+        .iter()
+        .map(|section| (section.page)(cx, reset_armed, dispatch))
+        .collect();
     let selected = selected.min(pages.len().saturating_sub(1));
     // The nav reads names and marks off the pages before the open one is
     // consumed: its controls are elements and move into the frame.

@@ -280,8 +280,11 @@ pub(crate) struct SettingsSection {
     /// bar's diagnostic count, a future plugin contribution) can ask for it
     /// without knowing its position in the list.
     pub(crate) id: &'static str,
-    /// Builds the page, from the config as it is now.
-    pub(crate) page: fn(&App) -> super::settings::Page,
+    /// Builds the page, from the config as it is now. `reset_armed` is the
+    /// two-step confirm's state for pages that can put the file back (the
+    /// config page's restore): the first press arms, the second writes, and
+    /// `dispatch` is how a page's button reaches the shell.
+    pub(crate) page: fn(&App, bool, &Dispatch) -> super::settings::Page,
 }
 
 /// What the shell can be asked to do, by a chord or by a click on a
@@ -327,6 +330,10 @@ pub(crate) enum ShellRequest {
     /// Clear the status bar's unread count for terminal bells and
     /// notifications that asked for attention.
     AcknowledgeAlerts,
+    /// The config page's restore, two-step: the first press arms the confirm,
+    /// the second writes the defaults (the window's own geometry is not the
+    /// settings surface's to throw away).
+    ResetConfigDefaults,
     /// Run one plugin action. `source` names where the click came from, which
     /// is the one part of the invocation context the daemon cannot know.
     PluginAction {
