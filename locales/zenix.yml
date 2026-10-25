@@ -664,6 +664,79 @@ shell:
     panes:
       en: "Panes"
       zh-CN: "pane"
+    # The contract block: what binds the plugin to the daemon and to this
+    # client, spelled out on its page and in the drawer. `undeclared` is the
+    # daemon's absent key; the two directories are what the daemon hands the
+    # plugin's every command as HERDR_PLUGIN_STATE_DIR / HERDR_PLUGIN_CONFIG_DIR.
+    contract:
+      en: "Contract"
+      zh-CN: "契约"
+    contract_kind:
+      en: "Plugin"
+      zh-CN: "契约"
+    no_sandbox:
+      en: "no sandbox"
+      zh-CN: "无沙箱"
+    no_ui_declaration:
+      en: "no UI declared"
+      zh-CN: "无 UI 声明"
+    source:
+      en: "Source"
+      zh-CN: "来源"
+    source_local:
+      en: "local directory"
+      zh-CN: "本地目录"
+    manifest:
+      en: "Manifest"
+      zh-CN: "清单位置"
+    platforms:
+      en: "Platforms"
+      zh-CN: "平台"
+    min_herdr:
+      en: "Min daemon"
+      zh-CN: "最低 daemon"
+    undeclared:
+      en: "undeclared"
+      zh-CN: "未声明"
+    state_dir:
+      en: "State dir"
+      zh-CN: "状态目录"
+    config_dir:
+      en: "Config dir"
+      zh-CN: "配置目录"
+    # The argv readout: every command the daemon will run for the plugin,
+    # graded. `hazard_high` hides what will run or steps around the user;
+    # `hazard_mid` leaves the plugin's directory; `stays` is the muted third
+    # grade for a command that does neither.
+    argv_section:
+      en: "Commands it will run"
+      zh-CN: "将要执行的 argv"
+    argv_none:
+      en: "No command declared"
+      zh-CN: "没有可执行命令"
+    hazard_high:
+      en: "high"
+      zh-CN: "高危"
+    hazard_mid:
+      en: "caution"
+      zh-CN: "注意"
+    stays:
+      en: "in-plugin"
+      zh-CN: "插件内"
+    # The other half of the contexts the action rows name: what an invocation
+    # hands the command, as the daemon defines it.
+    contexts_hint:
+      en: "An action declares contexts = global / workspace / tab / pane; at invocation the host passes the workspace with its label and cwd, the focused pane and its agent status, the selected text, the clicked URL and a correlation id."
+      zh-CN: "action 声明 contexts = global / workspace / tab / pane；调用时宿主传 workspace、label、cwd、focused pane 及其 agent 状态、selected_text、clicked_url、correlation_id。"
+  # The plugin drawer: one plugin's page docked beside the shell, opened from a
+  # row in the plugins view or from a status segment.
+  drawer:
+    title:
+      en: "Plugin detail"
+      zh-CN: "插件详情"
+    manage:
+      en: "Manage…"
+      zh-CN: "打开管理器"
   views:
     reading:
       en: "reading"

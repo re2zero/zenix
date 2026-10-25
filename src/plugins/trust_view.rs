@@ -357,22 +357,41 @@ fn declared(preview: &Preview, theme: &Theme) -> AnyElement {
     }
     column = column.children(slots.iter().map(|slot| manager::slot_row(slot, theme)));
     for (index, command) in preview.commands.iter().enumerate() {
+        // The grade colors the line: hiding (inline code, elevation) reads in
+        // the danger, leaving (network, system paths, absolute programs) in
+        // the warning, and a command that stays inside the plugin keeps the
+        // foreground with the muted chip the manager grades clean rows by.
         let hazard = preview.hazards.iter().find(|hazard| hazard.index == index);
-        let line = trust::render_command(command);
+        let (color, level, reason) = match hazard {
+            Some(hazard) => {
+                let color = match hazard.level {
+                    trust::HazardLevel::High => theme.danger,
+                    trust::HazardLevel::Medium => theme.warning,
+                };
+                (color, Some(hazard.level), Some(hazard.reason))
+            }
+            None => (theme.foreground, None, None),
+        };
         let mut row = v_flex().w_full().gap_0p5().child(
-            div()
+            h_flex()
                 .w_full()
-                .min_w_0()
-                .text_xs()
-                .text_color(if hazard.is_some() {
-                    theme.danger
-                } else {
-                    theme.foreground
-                })
-                .child(line),
+                .gap_2()
+                .items_start()
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex_1()
+                        .text_xs()
+                        .text_color(color)
+                        .child(trust::render_command(command)),
+                )
+                .child(match level {
+                    Some(level) => manager::hazard_chip(level, theme),
+                    None => manager::stays_chip(theme),
+                }),
         );
-        if let Some(hazard) = hazard {
-            row = row.child(note(hazard.reason, theme.danger));
+        if let Some(reason) = reason {
+            row = row.child(note(reason, color));
         }
         column = column.child(row);
     }

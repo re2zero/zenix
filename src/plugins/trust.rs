@@ -52,6 +52,7 @@ use std::path::Path;
 
 use serde::Deserialize;
 
+use super::model::InstalledPlugin;
 use super::ui_manifest::UiContributions;
 
 /// The manifest file, inside the plugin directory.
@@ -102,6 +103,32 @@ pub(crate) struct Hazard {
     /// The rule that matched, as a sentence. A command gets at most one hazard:
     /// the first rule in [`HAZARD_RULES`] order that matches it.
     pub(crate) reason: &'static str,
+    /// How much the rule asks for, which is what the surfaces color it by.
+    pub(crate) level: HazardLevel,
+}
+
+/// How much a hazard asks for — the prototype's `.hazard.hi` / `.hazard.mid`
+/// pair, with everything unflagged drawing as the third grade. A *high* is a
+/// command whose argv hides what will run or that steps around the user's
+/// hands: inline code the manifest never shows, another user's privileges. A
+/// *medium* leaves the plugin's directory or the machine's boundary — an
+/// absolute program, the network, a package install, a system path — while
+/// still naming what it does.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum HazardLevel {
+    High,
+    Medium,
+}
+
+impl HazardLevel {
+    /// The i18n key tail the surfaces spell the grade with: `hazard_high` /
+    /// `hazard_mid`, beside the unflagged `stays`.
+    pub(crate) fn key(self) -> &'static str {
+        match self {
+            Self::High => "hazard_high",
+            Self::Medium => "hazard_mid",
+        }
+    }
 }
 
 /// Everything the manifest says about what it will run, in the order the parts
@@ -160,6 +187,53 @@ pub(crate) fn preview(dir: &Path) -> Result<Preview, String> {
     summarise(raw, &path)
 }
 
+/// The commands an *installed* plugin's contract carries, in the same
+/// vocabulary as [`preview`] — the manager's page and the drawer draw the
+/// daemon's own report, not a re-read of the file. `plugin.list` reports every
+/// manifest section as linked, so this is what the daemon will run, without a
+/// filesystem read and without asking a disabled plugin's directory to still
+/// exist.
+///
+/// A link handler names an action, and the daemon refuses a manifest whose
+/// handler names an unknown one — but this reads what the daemon reports, so a
+/// handler that names nothing runnable is skipped rather than invented.
+pub(crate) fn contract_commands(plugin: &InstalledPlugin) -> Vec<CommandLine> {
+    let mut commands: Vec<CommandLine> = Vec::new();
+    let mut push = |kind: CommandKind, id: &str, argv: &[String]| {
+        if !argv.is_empty() {
+            commands.push(CommandLine {
+                kind,
+                id: id.to_string(),
+                title: title_for(kind, id),
+                argv: argv.to_vec(),
+            });
+        }
+    };
+    for entry in &plugin.build {
+        push(CommandKind::Build, "", &entry.command);
+    }
+    for entry in &plugin.startup {
+        push(CommandKind::Startup, "", &entry.command);
+    }
+    let mut action_argv: HashMap<&str, &[String]> = HashMap::new();
+    for action in &plugin.actions {
+        action_argv.insert(action.id.as_str(), &action.command);
+        push(CommandKind::Action, &action.id, &action.command);
+    }
+    for hook in &plugin.events {
+        push(CommandKind::Event, &hook.on, &hook.command);
+    }
+    for pane in &plugin.panes {
+        push(CommandKind::Pane, &pane.id, &pane.command);
+    }
+    for handler in &plugin.link_handlers {
+        if let Some(argv) = action_argv.get(handler.action.as_str()) {
+            push(CommandKind::LinkHandler, &handler.id, argv);
+        }
+    }
+    commands
+}
+
 /// One command as one display line: `action slow: sh -c "sleep 1; echo done"`.
 /// Display only — tokens are quoted for a human to read, not for a shell to
 /// re-parse, so this string is never the thing that runs.
@@ -168,8 +242,9 @@ pub(crate) fn render_command(command: &CommandLine) -> String {
     format!("{}: {}", command.title, argv.join(" "))
 }
 
-/// One hazard rule: the sentence it reports, and the test that decides it.
-pub(crate) type HazardRule = (&'static str, fn(&[String]) -> bool);
+/// One hazard rule: the sentence it reports, the grade it asks for, and the
+/// test that decides it.
+pub(crate) type HazardRule = (&'static str, HazardLevel, fn(&[String]) -> bool);
 
 /// The hazard rules, in the order a command is tested against them — a command
 /// gets the first one that matches and nothing else. Every rule is a question
@@ -178,33 +253,43 @@ pub(crate) type HazardRule = (&'static str, fn(&[String]) -> bool);
 pub(crate) const HAZARD_RULES: &[HazardRule] = &[
     (
         "runs a program at an absolute path outside the plugin",
+        HazardLevel::Medium,
         runs_absolute_program,
     ),
-    ("asks for elevated privileges", asks_for_elevation),
+    (
+        "asks for elevated privileges",
+        HazardLevel::High,
+        asks_for_elevation,
+    ),
     (
         "runs inline shell code that is not in the manifest",
+        HazardLevel::High,
         runs_inline_shell_code,
     ),
     (
         "runs inline interpreter code that is not in the manifest",
+        HazardLevel::High,
         runs_inline_interpreter_code,
     ),
     (
         "reaches the network or installs packages",
+        HazardLevel::Medium,
         reaches_network_or_installs,
     ),
     (
         "touches a system path outside the plugin",
+        HazardLevel::Medium,
         touches_system_path,
     ),
 ];
 
-/// The first rule that matches, which is the one hazard a command carries.
-fn hazard_for(argv: &[String]) -> Option<&'static str> {
+/// The first rule that matches, which is the one hazard a command carries —
+/// the sentence and the grade, without a place in any list.
+pub(crate) fn hazard_for(argv: &[String]) -> Option<(&'static str, HazardLevel)> {
     HAZARD_RULES
         .iter()
-        .find(|(_, matches)| matches(argv))
-        .map(|(reason, _)| *reason)
+        .find(|(_, _, matches)| matches(argv))
+        .map(|(reason, level, _)| (*reason, *level))
 }
 
 /// One hazard at most per command, in command order.
@@ -213,7 +298,11 @@ fn hazards_for(commands: &[CommandLine]) -> Vec<Hazard> {
         .iter()
         .enumerate()
         .filter_map(|(index, command)| {
-            hazard_for(&command.argv).map(|reason| Hazard { index, reason })
+            hazard_for(&command.argv).map(|(reason, level)| Hazard {
+                index,
+                reason,
+                level,
+            })
         })
         .collect();
     hazards.sort_by_key(|hazard| hazard.index);
@@ -623,9 +712,15 @@ mod tests {
     fn reason_for(needle: &str) -> &'static str {
         HAZARD_RULES
             .iter()
-            .find(|(reason, _)| reason.contains(needle))
-            .map(|(reason, _)| *reason)
+            .find(|(reason, _, _)| reason.contains(needle))
+            .map(|(reason, _, _)| *reason)
             .unwrap_or_else(|| panic!("a hazard rule mentions {needle:?}"))
+    }
+
+    /// The sentence `hazard_for` answers, without the grade — what most of these
+    /// tests pin is which rule fired, not how hard.
+    fn matched(argv: &[String]) -> Option<&'static str> {
+        hazard_for(argv).map(|(reason, _)| reason)
     }
 
     /// The review reads the UI the plugin would declare as well as the commands
@@ -794,25 +889,105 @@ panel = "board"
             "one sample per hazard rule, in order"
         );
 
-        for (sample, (reason, matches)) in samples.iter().zip(HAZARD_RULES) {
+        for (sample, (reason, _, matches)) in samples.iter().zip(HAZARD_RULES) {
             let tokens = argv(sample);
-            assert_eq!(hazard_for(&tokens), Some(*reason), "{sample:?}");
+            assert_eq!(matched(&tokens), Some(*reason), "{sample:?}");
             assert!(matches(&tokens), "{sample:?} should match {reason}");
         }
+    }
+
+    /// The grades the table assigns, in one place: code the manifest does not
+    /// show or another user's privileges is high; leaving the plugin's
+    /// directory or the machine's boundary is medium. The surfaces color the
+    /// two grades differently and leave the unflagged ones muted.
+    #[test]
+    fn the_grades_split_hiding_from_leaving() {
+        let grade = |sample: &[&str]| hazard_for(&argv(sample)).map(|(_, level)| level);
+        assert_eq!(grade(&["sudo", "true"]), Some(HazardLevel::High));
+        assert_eq!(grade(&["bash", "-c", "echo hi"]), Some(HazardLevel::High));
+        assert_eq!(
+            grade(&["python3", "-c", "print(1)"]),
+            Some(HazardLevel::High)
+        );
+        assert_eq!(
+            grade(&["/usr/local/bin/deploy", "--now"]),
+            Some(HazardLevel::Medium)
+        );
+        assert_eq!(
+            grade(&["curl", "https://example.com"]),
+            Some(HazardLevel::Medium)
+        );
+        assert_eq!(grade(&["cat", "/etc/hosts"]), Some(HazardLevel::Medium));
+        assert_eq!(grade(&["sh", "mark.sh"]), None);
+    }
+
+    /// The daemon's own report becomes the same command list the pre-link
+    /// preview would have made of the manifest: sections in manifest order, a
+    /// link handler resolved to the argv of the action it names, and an entry
+    /// with no command simply absent.
+    #[test]
+    fn an_installed_plugins_report_becomes_its_contract_commands() {
+        let plugin: InstalledPlugin = serde_json::from_value(serde_json::json!({
+            "plugin_id": "zenix.smoke",
+            "name": "Zenix Smoke",
+            "version": "0.1.0",
+            "manifest_path": "/tmp/plugin/herdr-plugin.toml",
+            "plugin_root": "/tmp/plugin",
+            "enabled": true,
+            "build": [{"command": ["npm", "ci"]}],
+            "startup": [{"command": ["node", "restore.js"]}],
+            "actions": [
+                {"id": "mark", "command": ["sh", "mark.sh"]},
+                {"id": "slow", "command": ["sh", "-c", "sleep 1; echo slow done"]}
+            ],
+            "events": [{"on": "worktree.created", "command": ["herdr", "workspace", "list"]}],
+            "panes": [{"id": "board", "title": "Board", "placement": "tab",
+                        "command": ["./bin/board"]}],
+            "link_handlers": [
+                {"id": "issue", "action": "slow"},
+                {"id": "gone", "action": "missing"}
+            ],
+        }))
+        .expect("decodes an installed plugin");
+        let commands = contract_commands(&plugin);
+        let titles: Vec<&str> = commands
+            .iter()
+            .map(|command| command.title.as_str())
+            .collect();
+        assert_eq!(
+            titles,
+            vec![
+                "build",
+                "startup",
+                "action mark",
+                "action slow",
+                "event worktree.created",
+                "pane board",
+                "link handler issue",
+            ]
+        );
+        // The handler runs the action's argv — the same list the trust review
+        // shows before the link. The handler naming a missing action is absent:
+        // the daemon refuses such a manifest at link, and this reads what the
+        // daemon reports rather than inventing a run.
+        assert_eq!(
+            commands[6].argv,
+            argv(&["sh", "-c", "sleep 1; echo slow done"])
+        );
     }
 
     #[test]
     fn only_the_first_matching_rule_is_reported() {
         assert_eq!(
-            hazard_for(&argv(&["/usr/bin/env", "sh"])),
+            matched(&argv(&["/usr/bin/env", "sh"])),
             Some(reason_for("absolute path"))
         );
         assert_eq!(
-            hazard_for(&argv(&["sh", "-c", "sudo true"])),
+            matched(&argv(&["sh", "-c", "sudo true"])),
             Some(reason_for("inline shell"))
         );
         assert_eq!(
-            hazard_for(&argv(&["sudo", "sh", "-c", "true"])),
+            matched(&argv(&["sudo", "sh", "-c", "true"])),
             Some(reason_for("elevated"))
         );
     }
@@ -827,7 +1002,7 @@ panel = "board"
             vec!["su", "-c", "whoami"],
             vec!["sh", "deploy.sh", "sudo"],
         ] {
-            assert_eq!(hazard_for(&argv(&sample)), Some(elevation), "{sample:?}");
+            assert_eq!(matched(&argv(&sample)), Some(elevation), "{sample:?}");
         }
     }
 
@@ -842,7 +1017,7 @@ panel = "board"
             vec!["dash", "-c", "true"],
         ] {
             assert_eq!(
-                hazard_for(&argv(&sample)),
+                matched(&argv(&sample)),
                 Some(reason_for("inline shell")),
                 "{sample:?}"
             );
@@ -854,13 +1029,13 @@ panel = "board"
             vec!["perl", "-p", "s/a/b/"],
         ] {
             assert_eq!(
-                hazard_for(&argv(&sample)),
+                matched(&argv(&sample)),
                 Some(reason_for("inline interpreter")),
                 "{sample:?}"
             );
         }
         // A shell program with any other argument is not inline code.
-        assert_eq!(hazard_for(&argv(&["sh", "-x", "mark.sh"])), None);
+        assert_eq!(matched(&argv(&["sh", "-x", "mark.sh"])), None);
     }
 
     #[test]
@@ -884,7 +1059,7 @@ panel = "board"
             vec!["go", "get", "example.com/x"],
             vec!["gem", "install", "x"],
         ] {
-            assert_eq!(hazard_for(&argv(&sample)), Some(network), "{sample:?}");
+            assert_eq!(matched(&argv(&sample)), Some(network), "{sample:?}");
         }
     }
 
@@ -901,7 +1076,7 @@ panel = "board"
             vec!["cat", "~/.ssh/id_ed25519"],
             vec!["cp", "~/.ssh/config", "backup"],
         ] {
-            assert_eq!(hazard_for(&argv(&sample)), Some(system), "{sample:?}");
+            assert_eq!(matched(&argv(&sample)), Some(system), "{sample:?}");
         }
     }
 
@@ -920,14 +1095,14 @@ panel = "board"
             vec!["npm", "run", "build"],
             vec!["cargo", "build"],
         ] {
-            assert_eq!(hazard_for(&argv(&sample)), None, "{sample:?}");
+            assert_eq!(matched(&argv(&sample)), None, "{sample:?}");
         }
     }
 
     #[test]
     fn a_command_with_nothing_to_run_is_not_a_hazard() {
-        assert_eq!(hazard_for(&[]), None);
-        assert_eq!(hazard_for(&argv(&[""])), None);
+        assert_eq!(matched(&[]), None);
+        assert_eq!(matched(&argv(&[""])), None);
     }
 
     #[test]

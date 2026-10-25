@@ -143,7 +143,9 @@ pub(crate) fn sidebar_item(
 
 /// One status segment: whose it is, and the declared format with the answer's
 /// fields in it. The segment is narrower than a row, so the plugin is named by
-/// its id in the accent rather than by a badge.
+/// its id in the accent rather than by a badge. Clicking it opens that
+/// plugin's page as the drawer — the one place its whole contract is spelled
+/// out, from the argv it runs to the directories it writes.
 pub(crate) fn status_item(
     spec: &StatusItemSpec,
     invocation: &Invocation,
@@ -151,19 +153,38 @@ pub(crate) fn status_item(
     _: &mut App,
 ) -> AnyElement {
     let theme = invocation.theme;
+    let dispatch = invocation.dispatch.clone();
     let answer = match invocation.ui_data.get(&spec.qualified_id()) {
         Some(Data::Ready(value)) => Some(value.as_ref()),
         _ => None,
     };
+    let filled = fill(&spec.format, answer);
     h_flex()
+        .id(spec.qualified_id())
+        .role(Role::Button)
+        .aria_label(format!("{} · {filled}", spec.plugin_id))
         .flex_none()
         .gap_1()
         .items_center()
+        .px_1()
+        .rounded_sm()
+        .cursor_pointer()
+        .hover(|style| style.bg(theme.secondary))
+        .on_click({
+            let plugin_id = spec.plugin_id.clone();
+            move |_, window, cx| {
+                dispatch(
+                    ShellRequest::OpenPluginDrawer(plugin_id.clone()),
+                    window,
+                    cx,
+                );
+            }
+        })
         .text_xs()
         .text_color(theme.magenta)
         .child(div().child(spec.plugin_id.clone()))
         .child(div().child("·"))
-        .child(div().child(fill(&spec.format, answer)))
+        .child(div().child(filled))
         .into_any_element()
 }
 

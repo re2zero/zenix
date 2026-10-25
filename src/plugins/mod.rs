@@ -21,14 +21,17 @@
 //! * [`ui_data`] — the JSON the declarations' commands print, read off-thread.
 //! * [`views`] — how a declaration is drawn: panel, sidebar line, status item.
 //! * [`manager`] — one plugin's page: its declaration, its slots, its actions.
+//! * [`drawer`] — that page at drawer width, docked to the window's right edge.
 //! * [`panels`] — the sidebar blocks the registry mounts.
 
 pub(crate) mod actions;
 pub(crate) mod api;
+pub(crate) mod drawer;
 pub(crate) mod host;
 pub(crate) mod manager;
 pub(crate) mod model;
 pub(crate) mod panels;
+pub(crate) mod paths;
 pub(crate) mod trust;
 pub(crate) mod trust_view;
 pub(crate) mod ui_data;

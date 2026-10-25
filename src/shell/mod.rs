@@ -160,9 +160,13 @@ pub(crate) struct ShellView {
     trust: TrustReview,
     /// The plugin manager: the registry one plugin at a time.
     manager: Manager,
+    /// One plugin's page docked beside the shell: what a row and a status
+    /// segment open.
+    drawer: crate::plugins::drawer::PluginDrawer,
     /// The keyboard while the review is open.
     trust_focus: FocusHandle,
     manager_focus: FocusHandle,
+    drawer_focus: FocusHandle,
     /// The installed plugins, and where an action's outcome appears. Nothing
     /// pushes a plugin change, so this is read rather than painted from a
     /// stream, and refreshed on demand — see `crate::plugins::host`.
@@ -314,8 +318,10 @@ impl ShellView {
             palette: Palette::default(),
             trust: TrustReview::default(),
             manager: Manager::default(),
+            drawer: crate::plugins::drawer::PluginDrawer::default(),
             trust_focus: cx.focus_handle(),
             manager_focus: cx.focus_handle(),
+            drawer_focus: cx.focus_handle(),
             plugins,
             ui_data_host,
             ui_data: UiData::default(),
@@ -1240,12 +1246,25 @@ impl ShellView {
             ShellRequest::RefreshPlugins => self.refresh_plugins(window, cx),
             ShellRequest::OpenPluginManager(start_at) => {
                 self.manager.open(start_at.as_deref());
+                self.drawer.close();
                 let focus = self.manager_focus.clone();
                 window.focus(&focus, cx);
                 cx.notify();
             }
             ShellRequest::ClosePluginManager => {
                 self.manager.close();
+                let focus = self.terminal.read(cx).focus_handle().clone();
+                window.focus(&focus, cx);
+                cx.notify();
+            }
+            ShellRequest::OpenPluginDrawer(plugin_id) => {
+                self.drawer.open(&plugin_id);
+                let focus = self.drawer_focus.clone();
+                window.focus(&focus, cx);
+                cx.notify();
+            }
+            ShellRequest::ClosePluginDrawer => {
+                self.drawer.close();
                 let focus = self.terminal.read(cx).focus_handle().clone();
                 window.focus(&focus, cx);
                 cx.notify();
@@ -1426,6 +1445,15 @@ impl ShellView {
             || self.palette.is_open()
             || self.trust.is_open()
             || self.manager.is_open()
+            || self.drawer.is_open()
+    }
+
+    /// A keystroke while the drawer is open: Escape closes it, and nothing
+    /// else is typed into it — every command it offers is a click.
+    fn drawer_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
+        if event.keystroke.key == "escape" {
+            self.dispatch(ShellRequest::ClosePluginDrawer, window, cx);
+        }
     }
 
     /// A keystroke while the manager is open: Escape closes it, and nothing else
@@ -1615,6 +1643,8 @@ impl Render for ShellView {
                 | ShellRequest::ClosePluginTrust
                 | ShellRequest::OpenPluginManager(_)
                 | ShellRequest::ClosePluginManager
+                | ShellRequest::OpenPluginDrawer(_)
+                | ShellRequest::ClosePluginDrawer
                 | ShellRequest::SelectPlugin(_)
                 | ShellRequest::SetPluginEnabled { .. }
                 | ShellRequest::UnlinkPlugin(_)
@@ -1837,6 +1867,23 @@ impl Render for ShellView {
                 window,
                 cx,
             ));
+        }
+        // Beside the shell, before the dialogs: the drawer is opened from the
+        // plugins view and from a status segment, and takes the keys the same
+        // way the other overlays do.
+        if let Some(drawer) = crate::plugins::drawer::overlay(
+            &self.drawer,
+            &plugins,
+            Availability::of(live.snapshot.as_deref()),
+            &dispatch,
+            crate::plugins::drawer::DrawerKeys {
+                focus: &self.drawer_focus,
+                key: Rc::new(cx.listener(Self::drawer_key)),
+            },
+            window,
+            cx,
+        ) {
+            root = root.child(drawer);
         }
         // Over the settings and the palette: the manager is opened from the
         // plugin view and from the review, and holding the keyboard is what
@@ -3296,30 +3343,11 @@ mod tests {
         );
 
         let mut plugins = crate::plugins::host::PluginState::default();
-        plugins.plugins = vec![
-            crate::plugins::model::InstalledPlugin {
-                plugin_id: "a".into(),
-                name: "a".into(),
-                version: "0.1.0".into(),
-                plugin_root: "/tmp/a".into(),
-                description: None,
-                enabled: true,
-                panes: vec![],
-                events: vec![],
-                warnings: vec![],
-            },
-            crate::plugins::model::InstalledPlugin {
-                plugin_id: "b".into(),
-                name: "b".into(),
-                version: "0.1.0".into(),
-                plugin_root: "/tmp/b".into(),
-                description: None,
-                enabled: false,
-                panes: vec![],
-                events: vec![],
-                warnings: vec![],
-            },
-        ];
+        let mut enabled = crate::plugins::model::InstalledPlugin::fixture("a");
+        enabled.enabled = true;
+        let mut disabled = crate::plugins::model::InstalledPlugin::fixture("b");
+        disabled.enabled = false;
+        plugins.plugins = vec![enabled, disabled];
         assert_eq!(
             plugins_count(&plugins),
             rust_i18n::t!("shell.head.plugins", plugins = 2, enabled = 1).to_string()

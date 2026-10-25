@@ -1063,17 +1063,10 @@ id = "ok"
     }
 
     fn plugin(plugin_id: &str, root: &PluginRoot, enabled: bool) -> InstalledPlugin {
-        InstalledPlugin {
-            plugin_id: plugin_id.into(),
-            name: plugin_id.into(),
-            version: "0.1.0".into(),
-            plugin_root: root.0.to_string_lossy().into_owned(),
-            description: None,
-            enabled,
-            panes: Vec::new(),
-            events: Vec::new(),
-            warnings: Vec::new(),
-        }
+        let mut plugin = InstalledPlugin::fixture(plugin_id);
+        plugin.plugin_root = root.0.to_string_lossy().into_owned();
+        plugin.enabled = enabled;
+        plugin
     }
 
     #[test]

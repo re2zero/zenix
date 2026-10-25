@@ -17,6 +17,16 @@ pub(crate) struct InstalledPlugin {
     pub(crate) plugin_id: String,
     pub(crate) name: String,
     pub(crate) version: String,
+    /// The daemon version the manifest asks for. Part of the contract the
+    /// manager's page spells out; empty when the manifest declares none, which
+    /// the daemon accepts with a warning at link time.
+    #[serde(default)]
+    pub(crate) min_herdr_version: String,
+    /// Where the manifest file sits. The daemon reports it because it re-reads
+    /// it; the manager shows it because it is the file every argv on the page
+    /// comes from.
+    #[serde(default)]
+    pub(crate) manifest_path: String,
     /// Where the plugin lives on this machine. The daemon reports it because the
     /// host needs it: `<plugin_root>/zenix-ui.toml` is the UI the plugin
     /// declares for this client, which the daemon neither reads nor validates.
@@ -24,6 +34,24 @@ pub(crate) struct InstalledPlugin {
     #[serde(default)]
     pub(crate) description: Option<String>,
     pub(crate) enabled: bool,
+    /// The platforms the manifest names. `None` is the daemon's own "absent
+    /// key" for a manifest that does not say, which it warns about at link.
+    #[serde(default)]
+    pub(crate) platforms: Option<Vec<Platform>>,
+    /// Where the plugin was linked from: a local directory or a managed GitHub
+    /// checkout, with the coordinates that identify it.
+    #[serde(default)]
+    pub(crate) source: PluginSource,
+    /// The manifest's `[[build]]` commands, as linked.
+    #[serde(default)]
+    pub(crate) build: Vec<ManifestCommand>,
+    /// The manifest's `[[startup]]` commands, as linked.
+    #[serde(default)]
+    pub(crate) startup: Vec<ManifestCommand>,
+    /// The manifest's `[[actions]]`, as linked — declarations, not the
+    /// effective list, which is [`PluginAction`] off `plugin.action.list`.
+    #[serde(default)]
+    pub(crate) actions: Vec<ManifestAction>,
     #[serde(default)]
     pub(crate) panes: Vec<ManifestPane>,
     /// The manifest's `[[events]]` hooks: what the daemon runs when one of these
@@ -31,6 +59,10 @@ pub(crate) struct InstalledPlugin {
     /// installed plugin is listening for.
     #[serde(default)]
     pub(crate) events: Vec<ManifestEventHook>,
+    /// The manifest's `[[link_handlers]]`: each runs one action's argv when a
+    /// clicked link matches its pattern.
+    #[serde(default)]
+    pub(crate) link_handlers: Vec<ManifestLinkHandler>,
     /// What the daemon found wrong at link or registry load: an undeclared
     /// platform list, an unknown event name. Non-fatal, and the only signal a
     /// user gets about either.
@@ -48,13 +80,41 @@ impl InstalledPlugin {
     }
 }
 
-/// One `[[events]]` hook: the event it fires on. The daemon also reports the
-/// command it would run, and this client does not read it: what a hook *would*
-/// run is the trust review's subject before the plugin is linked, and what it
-/// *did* run is in the log ring beside this.
+/// One `[[events]]` hook: the event it fires on, and the command it runs when
+/// it does. The command is the manifest's own declaration — what a hook *did*
+/// run is in the log ring beside this, and what runs *before* a link is the
+/// trust review's subject.
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct ManifestEventHook {
     pub(crate) on: String,
+    #[serde(default)]
+    pub(crate) command: Vec<String>,
+}
+
+/// One command the manifest declares, as `plugin.list` reports it: `[[build]]`
+/// and `[[startup]]` entries, which have no id of their own.
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct ManifestCommand {
+    #[serde(default)]
+    pub(crate) command: Vec<String>,
+}
+
+/// One `[[actions]]` entry as the manifest declares it: the id and the argv it
+/// runs. The effective action list with its contexts is [`PluginAction`].
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct ManifestAction {
+    pub(crate) id: String,
+    #[serde(default)]
+    pub(crate) command: Vec<String>,
+}
+
+/// One `[[link_handlers]]` entry: when a clicked link matches its pattern, the
+/// daemon runs the named action's argv. The pattern and title are the daemon's
+/// to match; what the manager shows is which handler runs whose argv.
+#[derive(Clone, Debug, Deserialize)]
+pub(crate) struct ManifestLinkHandler {
+    pub(crate) id: String,
+    pub(crate) action: String,
 }
 
 /// One pane a plugin declares. Opening it is `plugin.pane.open`, and the
@@ -66,6 +126,56 @@ pub(crate) struct ManifestPane {
     pub(crate) title: String,
     #[serde(default)]
     pub(crate) placement: Placement,
+    #[serde(default)]
+    pub(crate) command: Vec<String>,
+}
+
+/// One platform a manifest may name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Platform {
+    Linux,
+    Macos,
+    Windows,
+}
+
+impl Platform {
+    /// The name the daemon uses, for the row that lists them.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Linux => "linux",
+            Self::Macos => "macos",
+            Self::Windows => "windows",
+        }
+    }
+}
+
+/// Where a plugin was linked from, as `plugin.list` reports it
+/// (`PluginSourceInfo`), narrowed to the fields this client shows. A local
+/// link carries none of the GitHub coordinates; a managed checkout carries
+/// the repo, the ref that was asked for and the commit it resolved to.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub(crate) struct PluginSource {
+    #[serde(default)]
+    pub(crate) kind: SourceKind,
+    #[serde(default)]
+    pub(crate) owner: Option<String>,
+    #[serde(default)]
+    pub(crate) repo: Option<String>,
+    #[serde(default)]
+    pub(crate) subdir: Option<String>,
+    #[serde(default)]
+    pub(crate) requested_ref: Option<String>,
+    #[serde(default)]
+    pub(crate) resolved_commit: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SourceKind {
+    #[default]
+    Local,
+    Github,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -299,6 +409,33 @@ pub(crate) struct OpenedPane {
 #[derive(Clone, Debug, Deserialize)]
 pub(crate) struct PaneId {
     pub(crate) pane_id: String,
+}
+
+#[cfg(test)]
+impl InstalledPlugin {
+    /// The plugin a test builds on: one id, every contract field at its
+    /// default, so a test literal names only what it is about.
+    pub(crate) fn fixture(id: &str) -> Self {
+        Self {
+            plugin_id: id.to_owned(),
+            name: id.to_owned(),
+            version: "0.1.0".to_owned(),
+            min_herdr_version: String::new(),
+            manifest_path: format!("/tmp/{id}/herdr-plugin.toml"),
+            plugin_root: format!("/tmp/{id}"),
+            description: None,
+            enabled: true,
+            platforms: None,
+            source: PluginSource::default(),
+            build: Vec::new(),
+            startup: Vec::new(),
+            actions: Vec::new(),
+            panes: Vec::new(),
+            events: Vec::new(),
+            link_handlers: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
 }
 
 #[cfg(test)]

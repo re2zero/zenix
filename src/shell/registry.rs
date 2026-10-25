@@ -415,6 +415,11 @@ pub(crate) enum ShellRequest {
     OpenPluginManager(Option<String>),
     /// Close the plugin manager.
     ClosePluginManager,
+    /// Dock one plugin's page beside the shell, as the drawer. A row in the
+    /// plugins view and a status segment both name their plugin this way.
+    OpenPluginDrawer(String),
+    /// Close the drawer.
+    ClosePluginDrawer,
     /// Bring one plugin's page to the front in the manager.
     SelectPlugin(String),
     /// Turn a linked plugin on or off, which the daemon decides.

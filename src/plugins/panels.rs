@@ -431,8 +431,11 @@ fn plugin_row(index: usize, plugin: &InstalledPlugin, invocation: &Invocation) -
             .cursor_pointer()
             .hover(|style| style.bg(theme.sidebar_accent))
             .on_click(move |_, window, cx| {
+                // The prototype's entry: a row opens the plugin's page as the
+                // drawer, not the manager — the glance that stays beside the
+                // shell. The manager is the view's own button.
                 dispatch(
-                    ShellRequest::OpenPluginManager(Some(plugin_id.clone())),
+                    ShellRequest::OpenPluginDrawer(plugin_id.clone()),
                     window,
                     cx,
                 );
@@ -653,21 +656,14 @@ mod tests {
     use crate::plugins::model::{ManifestEventHook, ManifestPane, Placement};
 
     fn plugin(id: &str) -> InstalledPlugin {
-        InstalledPlugin {
-            plugin_id: id.into(),
-            name: id.into(),
-            version: "0.1.0".into(),
-            plugin_root: "/tmp/plugin".into(),
-            description: None,
-            enabled: true,
-            panes: vec![ManifestPane {
-                id: "board".into(),
-                title: "Project board".into(),
-                placement: Placement::Overlay,
-            }],
-            events: Vec::new(),
-            warnings: Vec::new(),
-        }
+        let mut plugin = InstalledPlugin::fixture(id);
+        plugin.panes = vec![ManifestPane {
+            id: "board".into(),
+            title: "Project board".into(),
+            placement: Placement::Overlay,
+            command: Vec::new(),
+        }];
+        plugin
     }
 
     /// The inventory is the registry's own tally: the shell's own count beside
@@ -768,6 +764,7 @@ title = "Cache"
         let mut hooked = plugin("a");
         hooked.events = vec![ManifestEventHook {
             on: "pane.exited".into(),
+            command: Vec::new(),
         }];
         let state = PluginState {
             logs: vec![

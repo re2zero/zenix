@@ -237,17 +237,7 @@ mod tests {
     }
 
     fn plugin(id: &str) -> InstalledPlugin {
-        InstalledPlugin {
-            plugin_id: id.into(),
-            name: id.into(),
-            version: "0.1.0".into(),
-            plugin_root: "/tmp/plugin".into(),
-            description: None,
-            enabled: true,
-            panes: Vec::new(),
-            events: Vec::new(),
-            warnings: Vec::new(),
-        }
+        InstalledPlugin::fixture(id)
     }
 
     fn ui(text: &str) -> UiContributions {

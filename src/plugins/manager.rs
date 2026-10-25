@@ -22,6 +22,8 @@ use std::rc::Rc;
 use super::host::PluginState;
 use super::model::{Availability, Context, InstalledPlugin, LogStatus, Placement, PluginAction};
 use super::panels::{button, line, section, status_dot};
+use super::paths;
+use super::trust::{self, CommandLine, HazardLevel};
 use super::ui_manifest::UiContributions;
 use super::views::source_badge;
 use crate::i18n::t;
@@ -345,8 +347,9 @@ fn detail(
 }
 
 /// Everything the page says about one plugin: whose it is, what it declares,
-/// what it offers, and what the daemon last ran for it.
-fn body(
+/// what it offers, and what the daemon last ran for it. The drawer reuses this
+/// same body — one plugin's page, at two widths.
+pub(crate) fn body(
     plugin: &InstalledPlugin,
     state: &PluginState,
     availability: Availability,
@@ -393,6 +396,91 @@ fn body(
     if let Some(description) = plugin.description.as_deref() {
         column = column.child(line(description, theme.sidebar_foreground));
     }
+
+    // The contract: what binds this plugin to the daemon and to this client,
+    // read off `plugin.list` itself. The state and config directories are the
+    // paths the daemon hands the plugin's every command, so a user can look at
+    // what a plugin wrote without asking the daemon for anything.
+    column = column.child(section(&t("shell.manager.contract"), theme));
+    column = column.child(kv_row(
+        &t("shell.manager.contract_kind"),
+        plain(
+            &contract_value(ui.is_empty()),
+            theme.foreground,
+            false,
+            theme,
+        ),
+        theme,
+    ));
+    column = column.child(kv_row(
+        &t("shell.manager.source"),
+        plain(&source_line(&plugin.source), theme.foreground, false, theme),
+        theme,
+    ));
+    column = column.child(kv_row(
+        &t("shell.manager.manifest"),
+        plain(&plugin.manifest_path, theme.muted_foreground, true, theme),
+        theme,
+    ));
+    column = column.child(kv_row(
+        &t("shell.manager.platforms"),
+        plain(
+            &plugin
+                .platforms
+                .as_ref()
+                .map(|platforms| {
+                    platforms
+                        .iter()
+                        .map(|platform| platform.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_else(|| t("shell.manager.undeclared")),
+            theme.foreground,
+            false,
+            theme,
+        ),
+        theme,
+    ));
+    column = column.child(kv_row(
+        &t("shell.manager.min_herdr"),
+        plain(
+            &if plugin.min_herdr_version.is_empty() {
+                t("shell.manager.undeclared")
+            } else {
+                plugin.min_herdr_version.clone()
+            },
+            theme.foreground,
+            false,
+            theme,
+        ),
+        theme,
+    ));
+    column = column.child(kv_row(
+        &t("shell.manager.state_dir"),
+        plain(
+            paths::plugin_state_dir(&plugin.plugin_id)
+                .to_string_lossy()
+                .as_ref(),
+            theme.muted_foreground,
+            true,
+            theme,
+        ),
+        theme,
+    ));
+    column = column.child(kv_row(
+        &t("shell.manager.config_dir"),
+        plain(
+            paths::plugin_config_dir(&plugin.plugin_id)
+                .to_string_lossy()
+                .as_ref(),
+            theme.muted_foreground,
+            true,
+            theme,
+        ),
+        theme,
+    ));
+
     column = column.child(line(
         &format!(
             "{} · {} actions · {} panes · {} logs",
@@ -492,6 +580,13 @@ fn body(
         )
     }));
 
+    // What an invocation hands the command, as the daemon defines it — the
+    // other half of the contexts the rows above name.
+    column = column.child(line(
+        &t("shell.manager.contexts_hint"),
+        theme.muted_foreground,
+    ));
+
     if !plugin.panes.is_empty() {
         column = column.child(section(&t("shell.manager.panes"), theme));
         column = column.children(plugin.panes.iter().enumerate().map(|(index, pane)| {
@@ -532,6 +627,22 @@ fn body(
                 )
         }));
     }
+
+    // What the daemon will run for this plugin, graded — the same argv the
+    // trust review shows before a link, now read off the installed contract
+    // rather than off the file.
+    let commands = trust::contract_commands(plugin);
+    column = column.child(section(&t("shell.manager.argv_section"), theme));
+    if commands.is_empty() {
+        column = column.child(line(&t("shell.manager.argv_none"), theme.muted_foreground));
+    }
+    column = column.children(
+        commands
+            .iter()
+            .enumerate()
+            .map(|(index, command)| argv_line(index, command, theme))
+            .collect::<Vec<_>>(),
+    );
 
     if !logs.is_empty() {
         column = column.child(section(&t("shell.plugins.logs"), theme));
@@ -673,6 +784,178 @@ pub(crate) fn slots_of<'a>(ui: &'a UiContributions, plugin_id: &str) -> Vec<Slot
     slots
 }
 
+/// One contract fact, as the prototype's definition list: the label, then the
+/// value. A value that is a path reads in the mono face, the way a chip reads
+/// machine-owned text.
+fn kv_row(label: &str, value: AnyElement, theme: &Theme) -> AnyElement {
+    h_flex()
+        .w_full()
+        .gap_2()
+        .items_start()
+        .child(
+            div()
+                .flex_none()
+                .w(px(110.))
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .child(label.to_owned()),
+        )
+        .child(div().min_w_0().flex_1().child(value))
+        .into_any_element()
+}
+
+/// A plain text value for a [`kv_row`].
+fn plain(text: &str, color: Hsla, mono: bool, theme: &Theme) -> AnyElement {
+    let mut value = div().w_full().text_xs().text_color(color);
+    if mono {
+        value = value.font_family(theme.mono_font_family.clone());
+    }
+    value.child(text.to_owned()).into_any_element()
+}
+
+/// What the contract row says: the daemon's plugin vocabulary this client
+/// speaks, what it does not promise, and whether the plugin declares any UI
+/// for this client at all.
+fn contract_value(no_ui: bool) -> String {
+    let mut parts = vec!["herdr plugin v1".to_owned(), t("shell.manager.no_sandbox")];
+    parts.push(if no_ui {
+        t("shell.manager.no_ui_declaration")
+    } else {
+        "zenix-ui.toml".to_owned()
+    });
+    parts.join(" · ")
+}
+
+/// Where a plugin was linked from, as one line: a local directory, or the
+/// GitHub coordinates the daemon resolved at install.
+fn source_line(source: &super::model::PluginSource) -> String {
+    use super::model::SourceKind;
+    match source.kind {
+        SourceKind::Local => t("shell.manager.source_local"),
+        SourceKind::Github => {
+            let mut parts = vec!["GitHub".to_owned()];
+            if let (Some(owner), Some(repo)) = (source.owner.as_deref(), source.repo.as_deref()) {
+                parts.push(format!("{owner}/{repo}"));
+            }
+            match (
+                source.requested_ref.as_deref(),
+                source.resolved_commit.as_deref(),
+            ) {
+                // The ref a user asked for, with the commit it resolved to
+                // when the two differ enough to tell apart.
+                (Some(reference), Some(commit)) if commit.starts_with(reference) => {
+                    let short: String = commit.chars().take(7).collect();
+                    parts.push(format!("@{short}"));
+                }
+                (Some(reference), Some(commit)) => {
+                    let short: String = commit.chars().take(7).collect();
+                    parts.push(format!("@{reference} ({short})"));
+                }
+                (Some(reference), None) => parts.push(format!("@{reference}")),
+                (None, Some(commit)) => {
+                    let short: String = commit.chars().take(7).collect();
+                    parts.push(format!("@{short}"));
+                }
+                (None, None) => {}
+            }
+            if let Some(subdir) = source.subdir.as_deref() {
+                parts.push(subdir.to_owned());
+            }
+            parts.join(" ")
+        }
+    }
+}
+
+/// One command the daemon will run, numbered, with its grade: the reason a
+/// rule matched in the rule's color, or the muted word for a command that
+/// stays inside the plugin — the prototype's three chip grades, hi / mid / lo.
+fn argv_line(index: usize, command: &CommandLine, theme: &Theme) -> AnyElement {
+    let verdict = trust::hazard_for(&command.argv);
+    let (color, reason, level) = match verdict {
+        Some((reason, level)) => {
+            let color = match level {
+                HazardLevel::High => theme.danger,
+                HazardLevel::Medium => theme.warning,
+            };
+            (color, Some(reason), Some(level))
+        }
+        None => (theme.muted_foreground, None, None),
+    };
+    // The reason wraps to its own line under the command, so the line's width
+    // belongs to the argv — a full-width child inside the flex row would
+    // squeeze the command to its min-content and wrap it one character wide.
+    let mut row = v_flex().w_full().gap_0p5().child(
+        h_flex()
+            .w_full()
+            .gap_2()
+            .items_start()
+            .child(
+                div()
+                    .flex_none()
+                    .w(px(14.))
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .child((index + 1).to_string()),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .flex_1()
+                    .text_xs()
+                    .font_family(theme.mono_font_family.clone())
+                    .text_color(color)
+                    .child(trust::render_command(command)),
+            )
+            .child(match level {
+                Some(level) => hazard_chip(level, theme),
+                None => stays_chip(theme),
+            }),
+    );
+    if let Some(reason) = reason {
+        row = row.child(line(reason, color));
+    }
+    row.into_any_element()
+}
+
+/// The grade a hazard draws as: a small bordered word in the grade's color,
+/// the way the prototype chips a command.
+pub(crate) fn hazard_chip(level: HazardLevel, theme: &Theme) -> AnyElement {
+    let color = match level {
+        HazardLevel::High => theme.danger,
+        HazardLevel::Medium => theme.warning,
+    };
+    div()
+        .flex_none()
+        .px_1()
+        .rounded(px(3.))
+        .border_1()
+        .border_color(color.opacity(0.45))
+        .bg(color.opacity(0.10))
+        .text_color(color)
+        .text_size(px(9.5))
+        .font_family(theme.mono_font_family.clone())
+        .child(t(&format!("shell.manager.{}", level.key())))
+        .into_any_element()
+}
+
+/// The third grade: a command whose argv leaves nothing to stop on, in the
+/// muted the prototype gives its `lo` chip.
+pub(crate) fn stays_chip(theme: &Theme) -> AnyElement {
+    div()
+        .flex_none()
+        .px_1()
+        .rounded(px(3.))
+        .border_1()
+        .border_color(theme.border)
+        .text_color(theme.muted_foreground)
+        .text_size(px(9.5))
+        .font_family(theme.mono_font_family.clone())
+        .child(t("shell.manager.stays"))
+        .into_any_element()
+}
+
+/// One slot a plugin declared, named as the shell's own contribution ids are:
+/// the kind, the local id, and what the user sees.
 pub(crate) fn slot_row(slot: &Slot<'_>, theme: &Theme) -> AnyElement {
     h_flex()
         .w_full()
@@ -728,17 +1011,7 @@ mod tests {
     use std::prelude::v1::test;
 
     fn plugin(id: &str) -> InstalledPlugin {
-        InstalledPlugin {
-            plugin_id: id.into(),
-            name: id.into(),
-            version: "0.1.0".into(),
-            plugin_root: "/tmp/plugin".into(),
-            description: None,
-            enabled: true,
-            panes: Vec::new(),
-            events: Vec::new(),
-            warnings: Vec::new(),
-        }
+        InstalledPlugin::fixture(id)
     }
 
     /// The selected page follows the registry: a plugin that was unlinked leaves
