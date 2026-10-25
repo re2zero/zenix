@@ -579,9 +579,6 @@ shell:
     tab_count:
       en: "%{count} tabs"
       zh-CN: "%{count} 个标签"
-    more:
-      en: "%{count} more"
-      zh-CN: "还有 %{count} 项"
   plugins:
     title:
       en: "Plugins"

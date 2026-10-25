@@ -11,12 +11,19 @@
 //! entry the keymap binds a chord to and the MCP bridge exposes as a tool, so a
 //! row cannot outlive the action it would run.
 //!
-//! The query is typed straight into the palette: it holds the keyboard while it
-//! is open, so the shell needs no text input and no IME client here.
+//! The query is a real input: it holds the keyboard while the palette is
+//! open, so IME, the caret and paste are the component's, not a hand-rolled
+//! keystroke scanner. The four keys around it — up, down, enter, escape —
+//! are the palette's own actions, bound in the [`CONTEXT`] key context the
+//! dialog carries: one ring out from the input. A single-line input has no
+//! caret movement of its own to answer up and down, and enter and escape
+//! propagate, so the palette's bindings are what the four keys reach.
 
+use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{ActiveTheme, Icon, Theme, h_flex, v_flex};
 use gpui_kit::*;
 
+use std::rc::Rc;
 use std::sync::Arc;
 
 use super::commands::{COMMANDS, Command};
@@ -25,8 +32,24 @@ use super::registry::{Dispatch, ShellRequest};
 use crate::i18n::t;
 use crate::plugins::actions::Exposed;
 
-/// How many rows the palette shows at once. The rest are reached by typing.
-const ROWS_SHOWN: usize = 8;
+/// The key context the palette's dialog carries. The four bindings the shell
+/// registers against it (`shell::keymap::bind_keys`) match only while this
+/// context is on the focused path, so no other input in the app loses a key.
+pub(crate) const CONTEXT: &str = "Palette";
+
+gpui_kit::actions!(
+    zenix,
+    [
+        PaletteSelectPrev,
+        PaletteSelectNext,
+        PaletteRun,
+        PaletteDismiss
+    ]
+);
+
+/// How many runs the recency ring remembers. A ring, not a list: the one
+/// after the last forgets the first.
+const RECENT_LEN: usize = 16;
 
 /// One row the palette can run.
 #[derive(Clone)]
@@ -128,26 +151,36 @@ impl Entry {
             }
         }
     }
+
+    /// The identity the recency ring remembers a run by. Ids, not labels: a
+    /// label follows the locale, an id is what the next snapshot names the
+    /// same way.
+    fn key(&self) -> String {
+        match self {
+            Self::Command(command) => COMMANDS
+                .iter()
+                .find(|info| info.command == *command)
+                .map(|info| info.id.to_owned())
+                .unwrap_or_else(|| format!("{command:?}")),
+            Self::Workspace { workspace_id, .. } => workspace_id.clone(),
+            Self::Plugin(entry) => entry.action.qualified_id(),
+        }
+    }
 }
 
-/// The palette's own state: whether it is open, what has been typed into it and
-/// which row that leaves selected.
+/// The palette's own state: whether it is open, the query input it lends the
+/// keyboard to, the scroll state of the drawn rows, which row is selected,
+/// and the ring of recently run rows.
 #[derive(Default)]
 pub(crate) struct Palette {
     open: bool,
-    query: String,
+    query: Option<Entity<InputState>>,
+    list: Option<ListState>,
     selected: usize,
-}
-
-/// What a keystroke asked the palette to do.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Key {
-    /// Held: the palette swallowed it.
-    Handled,
-    /// Escape: close and hand the keyboard back.
-    Close,
-    /// Enter: run the row at this index of [`Palette::matches`].
-    Run(usize),
+    recent: Vec<String>,
+    /// The subscription to the query input's events, held from the first
+    /// open on: a dropped subscription would stop delivering.
+    subscription: Option<Subscription>,
 }
 
 impl Palette {
@@ -156,150 +189,286 @@ impl Palette {
     }
 
     /// Open with an empty query: a palette that remembered the last search
-    /// would hide the command the user is about to look for.
-    pub(crate) fn open(&mut self) {
+    /// would hide the command the user is about to look for. The input is
+    /// created on the first open — it wants a window, which construction
+    /// does not have — and returned, because the shell has to focus it and
+    /// subscribe to it once.
+    pub(crate) fn open(&mut self, window: &mut Window, cx: &mut App) -> Entity<InputState> {
         self.open = true;
-        self.query.clear();
         self.selected = 0;
+        let input = match &self.query {
+            Some(input) => input.clone(),
+            None => {
+                let input = cx.new(|cx| InputState::new(window, cx));
+                input.update(cx, |state, cx| {
+                    state.set_placeholder(t("shell.palette.prompt").to_string(), window, cx);
+                });
+                self.query = Some(input.clone());
+                input
+            }
+        };
+        input.update(cx, |state, cx| state.set_value("", window, cx));
+        input
     }
 
     pub(crate) fn close(&mut self) {
         self.open = false;
     }
 
-    /// The rows this query leaves, in the order they are shown.
-    pub(crate) fn matches<'a>(&self, entries: &'a [Entry]) -> Vec<&'a Entry> {
-        let query = self.query.trim().to_lowercase();
-        entries
+    /// The input the keyboard sits in while the palette is open.
+    pub(crate) fn input(&self) -> Option<Entity<InputState>> {
+        self.query.clone()
+    }
+
+    /// Whether the input's events are already subscribed to.
+    pub(crate) fn input_subscribed(&self) -> Option<&Subscription> {
+        self.subscription.as_ref()
+    }
+
+    /// Hold the subscription the shell took on the first open.
+    pub(crate) fn hold_subscription(&mut self, subscription: Subscription) {
+        self.subscription = Some(subscription);
+    }
+
+    /// A clone of the rows' scroll state, for the selection to take the
+    /// scroll with it.
+    pub(crate) fn list(&self) -> Option<ListState> {
+        self.list.clone()
+    }
+
+    /// The query as typed, read off the input.
+    fn query_text(&self, cx: &App) -> String {
+        self.query
+            .as_ref()
+            .map(|input| input.read(cx).value().to_string())
+            .unwrap_or_default()
+    }
+
+    /// The rows this query leaves. [`Self::matches`] reads the live query off
+    /// the input; this is the pure core the tests drive without a window.
+    pub(crate) fn filtered<'a>(
+        query: &str,
+        recent: &[String],
+        entries: &'a [Entry],
+    ) -> Vec<&'a Entry> {
+        let query = query.trim().to_lowercase();
+        let rank = |entry: &Entry| {
+            recent
+                .iter()
+                .position(|key| *key == entry.key())
+                .unwrap_or(usize::MAX)
+        };
+        let mut matches: Vec<&Entry> = entries
             .iter()
             .filter(|entry| {
                 query.is_empty()
                     || entry.label().to_lowercase().contains(&query)
                     || entry.detail().to_lowercase().contains(&query)
             })
-            .collect()
+            .collect();
+        // Sections stay contiguous — the recency only reorders inside one, so
+        // a header keeps meaning what it says.
+        matches.sort_by_key(|entry| (entry.group(), rank(entry)));
+        matches
     }
 
-    /// The row Enter runs, as an index into `entries`.
-    pub(crate) fn keystroke(&mut self, keystroke: &Keystroke, rows: usize) -> Key {
-        // The keyboard stays inside the rows the palette draws. The rest are
-        // reached by narrowing the query or by scrolling to them with the
-        // pointer, so Enter can never run a row the user cannot see.
-        let visible = rows.min(ROWS_SHOWN);
-        // A chord is never query text: the palette has no shortcuts of its own,
-        // and typing a modified key into the search would be a surprise. Shift is
-        // not a chord: it is how an upper-case letter or a shifted symbol is typed.
-        let chord = keystroke.modifiers.control
-            || keystroke.modifiers.alt
-            || keystroke.modifiers.platform
-            || keystroke.modifiers.function;
-        match keystroke.key.as_str() {
-            "escape" => Key::Close,
-            "enter" => {
-                if visible == 0 {
-                    Key::Handled
-                } else {
-                    Key::Run(self.selected.min(visible - 1))
-                }
-            }
-            "up" => {
-                self.selected = self.selected.saturating_sub(1);
-                Key::Handled
-            }
-            "down" => {
-                if visible > 0 {
-                    self.selected = (self.selected + 1).min(visible - 1);
-                }
-                Key::Handled
-            }
-            "backspace" => {
-                self.query.pop();
-                self.selected = 0;
-                Key::Handled
-            }
-            _ if !chord => {
-                let typed = keystroke
-                    .key_char
-                    .as_deref()
-                    .filter(|text| !text.is_empty())
-                    .unwrap_or(keystroke.key.as_str());
-                if typed.chars().count() == 1 {
-                    self.query.push_str(typed);
-                    self.selected = 0;
-                }
-                Key::Handled
-            }
-            _ => Key::Handled,
+    /// The rows this query leaves, most recently run first inside each
+    /// section.
+    pub(crate) fn matches<'a>(&self, entries: &'a [Entry], cx: &App) -> Vec<&'a Entry> {
+        Self::filtered(&self.query_text(cx), &self.recent, entries)
+    }
+
+    /// A row was run: the ring remembers it, most recent first.
+    pub(crate) fn note_run(&mut self, entry: &Entry) {
+        let key = entry.key();
+        self.recent.retain(|seen| seen != &key);
+        self.recent.insert(0, key);
+        self.recent.truncate(RECENT_LEN);
+    }
+
+    /// Move the selection `step` rows, stopping at the ends instead of
+    /// wrapping: an end is information, and a wrap past it is a jump to a row
+    /// the eye did not travel to.
+    pub(crate) fn step(&mut self, step: isize, rows: usize) {
+        if rows == 0 {
+            return;
+        }
+        self.selected = if step < 0 {
+            self.selected.saturating_sub(step.unsigned_abs())
+        } else {
+            (self.selected + step as usize).min(rows - 1)
+        };
+    }
+
+    /// Follow the rows the palette draws changing underneath the selection.
+    pub(crate) fn clamp_selection(&mut self, rows: usize) {
+        if rows == 0 {
+            self.selected = 0;
+        } else if self.selected >= rows {
+            self.selected = rows - 1;
         }
     }
 
-    fn query(&self) -> &str {
-        &self.query
+    pub(crate) fn selected(&self) -> usize {
+        self.selected
     }
 
-    fn selected(&self) -> usize {
-        self.selected
+    /// Return the selection to the first row: the rows the query leaves
+    /// changed underneath it.
+    pub(crate) fn reset_selection(&mut self) {
+        self.selected = 0;
+    }
+
+    /// The row running answers to.
+    pub(crate) fn selected_entry<'a>(&self, matches: &[&'a Entry]) -> Option<&'a Entry> {
+        matches.get(self.selected).copied()
+    }
+
+    /// Point the rows' scroll state at `count`: called from the events that
+    /// change what the rows are — a keystroke, a snapshot push — never from
+    /// render. A changed count resets the scroll, which is right: a new set
+    /// of rows is a new list.
+    pub(crate) fn sync_rows(&mut self, count: usize) {
+        match &self.list {
+            Some(list) if list.item_count() == count => {}
+            Some(list) => list.reset(count),
+            None => {
+                self.list = Some(ListState::new(count, ListAlignment::Top, px(200.)));
+            }
+        }
+        self.clamp_selection(count);
     }
 }
 
-/// The palette, laid over the shell while it is open. It holds the keyboard,
-/// so the pane beside it is not typed into while a command is being looked up.
+/// One drawn row: a section's name where the rows change kind, or an entry.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum PlanRow {
+    Header(u8),
+    /// An index into the matches.
+    Item(usize),
+}
+
+/// The flat row plan the list draws: the matches in their matched order, with
+/// a header wherever the section changes. Both the render and the selection's
+/// scroll-to-view walk this, so they cannot disagree about which row is
+/// where.
+pub(crate) fn plan(matches: &[&Entry]) -> Vec<PlanRow> {
+    let mut rows = Vec::new();
+    let mut last_group: Option<u8> = None;
+    for (index, entry) in matches.iter().enumerate() {
+        let group = entry.group();
+        if last_group != Some(group) {
+            rows.push(PlanRow::Header(group));
+            last_group = Some(group);
+        }
+        rows.push(PlanRow::Item(index));
+    }
+    rows
+}
+
+/// What one list slot draws, as owned data: the list's render callback is
+/// `'static`, so the matched entries and their precomputed hints move into it
+/// rather than borrow the frame.
+enum ListItem {
+    Header(u8),
+    Item {
+        entry: Entry,
+        hint: Option<String>,
+        selected: bool,
+        index: usize,
+    },
+}
+
+/// One of the palette's listeners, as the shell hears it.
+pub(crate) type PaletteListener<A> = Rc<dyn Fn(&A, &mut Window, &mut App)>;
+
+/// The palette's four keys, as the shell listens for them. The overlay is a
+/// free function over the shell's data, so its listeners ride in together.
+pub(crate) struct PaletteActions {
+    pub(crate) select_prev: PaletteListener<PaletteSelectPrev>,
+    pub(crate) select_next: PaletteListener<PaletteSelectNext>,
+    pub(crate) run: PaletteListener<PaletteRun>,
+    pub(crate) dismiss: PaletteListener<PaletteDismiss>,
+}
+
+/// The palette, laid over the shell while it is open. The query input holds
+/// the keyboard, so the pane beside it is not typed into while a command is
+/// being looked up; the four listeners are the palette's own actions (see
+/// [`CONTEXT`]).
 pub(crate) fn overlay(
     palette: &Palette,
     entries: &[Entry],
     keymap: &Keymap,
-    focus: &FocusHandle,
     dispatch: &Dispatch,
-    key: impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static,
+    actions: PaletteActions,
     cx: &mut App,
 ) -> AnyElement {
     let theme = cx.theme().clone();
-    let matches = palette.matches(entries);
-    let selected = palette.selected();
-    // What the keyboard cannot reach without narrowing the query.
-    let hidden = matches.len().saturating_sub(ROWS_SHOWN);
+    let matches = palette.matches(entries, cx);
+    let rows = plan(&matches);
     let close = dispatch.clone();
-    let query = if palette.query().is_empty() {
-        div()
-            .text_sm()
-            .text_color(theme.muted_foreground)
-            .child(t("shell.palette.prompt"))
-    } else {
-        div()
-            .text_sm()
-            .text_color(theme.foreground)
-            .child(palette.query().to_owned())
-    };
-    let mut list = v_flex().w_full().gap_0p5();
-    // The rows keep the flat order the entries were built in — commands, then
-    // workspaces, then plugin actions — and a header goes where the section
-    // changes.
-    let mut last_group: Option<u8> = None;
-    for (index, entry) in matches.iter().enumerate().take(ROWS_SHOWN) {
-        let group = entry.group();
-        if last_group != Some(group) {
-            list = list.child(group_header(group, &theme));
-            last_group = Some(group);
+
+    let input = palette.input().expect("an open palette has its input");
+    let focus = input.read(cx).focus_handle(cx).clone();
+    let list_state = palette.list().expect("an open palette has its rows");
+
+    let mut items: Vec<ListItem> = Vec::with_capacity(rows.len());
+    let mut drawn = 0usize;
+    for row in &rows {
+        match row {
+            PlanRow::Header(group) => items.push(ListItem::Header(*group)),
+            PlanRow::Item(index) => {
+                let entry = matches[*index];
+                items.push(ListItem::Item {
+                    entry: entry.clone(),
+                    hint: entry.hint(keymap),
+                    selected: *index == palette.selected(),
+                    index: drawn,
+                });
+                drawn += 1;
+            }
         }
-        list = list.child(row(
-            index,
+    }
+
+    // The section headers and the rows the keyboard can reach. The list
+    // scrolls what the dialog's height leaves room for, and the selection's
+    // own moves take the scroll with them.
+    let empty = items.is_empty();
+    let list_theme = theme.clone();
+    let list_dispatch = dispatch.clone();
+    let list = list(list_state, move |index, _, _| match items.get(index) {
+        Some(ListItem::Header(group)) => group_header(*group, &list_theme),
+        Some(ListItem::Item {
             entry,
-            index == selected,
-            keymap,
-            &theme,
-            dispatch,
-        ));
-    }
-    if matches.is_empty() {
-        list = list.child(
-            div()
-                .px_2()
-                .py_1()
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .child(t("shell.palette.no_matches")),
-        );
-    }
+            hint,
+            selected,
+            index,
+        }) => row(
+            entry,
+            hint.as_deref(),
+            *selected,
+            *index,
+            &list_theme,
+            &list_dispatch,
+        ),
+        None => div().into_any_element(),
+    })
+    .w_full()
+    .flex_1()
+    .min_h_0();
+
+    let body: AnyElement = if empty {
+        div()
+            .px_2()
+            .py_1()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(t("shell.palette.no_matches"))
+            .into_any_element()
+    } else {
+        list.into_any_element()
+    };
+
     let boxed = v_flex()
         .id("palette")
         .w(px(680.))
@@ -315,14 +484,25 @@ pub(crate) fn overlay(
             BoxShadow::new(px(0.), px(18.), black().opacity(0.45)).blur_radius(px(48.)),
             BoxShadow::new(px(0.), px(2.), black().opacity(0.3)).blur_radius(px(8.)),
         ])
-        // A press inside the dialog belongs to the dialog: stopping it keeps
-        // the scrim's listener from reading a row's click as a dismiss.
+        .key_context(CONTEXT)
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .track_focus(focus)
-        // Every key belongs to the palette while it is open, including the ones
-        // nothing is bound to: the shell's own handler decides what a keystroke
-        // means here, and stops it before the pane below sees it.
-        .on_key_down(key)
+        .track_focus(&focus)
+        .on_action({
+            let actions = actions.select_prev.clone();
+            move |event: &PaletteSelectPrev, window, cx| actions(event, window, cx)
+        })
+        .on_action({
+            let actions = actions.select_next.clone();
+            move |event: &PaletteSelectNext, window, cx| actions(event, window, cx)
+        })
+        .on_action({
+            let actions = actions.run.clone();
+            move |event: &PaletteRun, window, cx| actions(event, window, cx)
+        })
+        .on_action({
+            let actions = actions.dismiss.clone();
+            move |event: &PaletteDismiss, window, cx| actions(event, window, cx)
+        })
         .child(
             h_flex()
                 .w_full()
@@ -337,16 +517,15 @@ pub(crate) fn overlay(
                         .data(super::icons::SEARCH)
                         .w(px(14.))
                         .h(px(14.))
+                        .flex_none()
                         .text_color(theme.muted_foreground),
                 )
-                .child(query)
-                .child(div().flex_1())
-                .children((hidden > 0).then(|| {
-                    div()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(rust_i18n::t!("shell.palette.more", count = hidden).to_string())
-                }))
+                .child(
+                    Input::new(&input)
+                        .appearance(false)
+                        .bordered(false)
+                        .w_full(),
+                )
                 .child(
                     div()
                         .px_1()
@@ -358,11 +537,7 @@ pub(crate) fn overlay(
                         .child("Esc"),
                 ),
         )
-        // Exactly the rows the keyboard can reach: what is drawn is what Enter
-        // can run. Further matches are reached by narrowing the query, and the
-        // count beside the query says how many are left. Scrolling (and keeping
-        // the selection in view) lands with the real input in Wave 2.
-        .child(div().w_full().child(list))
+        .child(body)
         // The keyboard path, where a first-time look for it ends: the same
         // three keys the rows above answer to, and the one fact that keeps the
         // plugin section from reading like a second command system. It carries
@@ -421,19 +596,18 @@ fn group_header(group: u8, theme: &Theme) -> AnyElement {
         .into_any_element()
 }
 
-/// One row: the label, the dim detail under it, and the key that reaches it
-/// without the palette.
+/// One row: the label and the key that reaches it without the palette. The
+/// row the selection sits on is an opaque step above the dialog.
 fn row(
-    index: usize,
     entry: &Entry,
+    hint: Option<&str>,
     selected: bool,
-    keymap: &Keymap,
+    index: usize,
     theme: &Theme,
     dispatch: &Dispatch,
 ) -> AnyElement {
     let request = entry.request();
     let run = dispatch.clone();
-    let hint = entry.hint(keymap);
     let mut row = h_flex()
         .id(("palette-row", index))
         .w_full()
@@ -475,7 +649,7 @@ fn row(
                 .font_family(theme.mono_font_family.clone())
                 .text_size(px(10.5))
                 .text_color(theme.muted_foreground)
-                .child(hint),
+                .child(hint.to_owned()),
         );
     }
     if selected {
@@ -533,113 +707,118 @@ key = "{key}"
         ]
     }
 
-    fn typed(key: &str) -> Keystroke {
-        Keystroke::parse(key).expect("the test keystrokes parse")
-    }
-
     #[test]
     fn an_empty_query_shows_every_row() {
-        let palette = Palette::default();
-        assert_eq!(palette.matches(&entries()).len(), 2);
+        assert_eq!(Palette::filtered("", &[], &entries()).len(), 2);
     }
 
     #[test]
     fn a_query_narrows_on_the_label_and_on_the_plugin_id() {
-        let mut palette = Palette::default();
-        palette.open();
-        for character in "apply".chars() {
-            palette.keystroke(&typed(&character.to_string()), 2);
-        }
-        let entries = entries();
-        let matches = palette.matches(&entries);
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].label(), "Apply project layout");
+        assert_eq!(Palette::filtered("apply", &[], &entries()).len(), 1);
+        assert_eq!(
+            Palette::filtered("apply", &[], &entries())[0].label(),
+            "Apply project layout"
+        );
 
         // The plugin id matches too, so a user can search by the plugin.
-        let mut palette = Palette::default();
-        palette.open();
-        for character in "board".chars() {
-            palette.keystroke(&typed(&character.to_string()), 2);
-        }
-        assert_eq!(palette.matches(&entries).len(), 1);
+        assert_eq!(Palette::filtered("board", &[], &entries()).len(), 1);
     }
 
+    /// The query is matched against the whole entry: a label's case is the
+    /// label's own business, and the trim is the shell's.
     #[test]
-    fn enter_runs_the_selected_row_and_escape_closes() {
-        let mut palette = Palette::default();
-        palette.open();
-        assert_eq!(palette.keystroke(&typed("down"), 2), Key::Handled);
-        assert_eq!(palette.keystroke(&typed("enter"), 2), Key::Run(1));
-        assert_eq!(palette.keystroke(&typed("escape"), 2), Key::Close);
-        // An empty list has nothing to run.
-        assert_eq!(palette.keystroke(&typed("enter"), 0), Key::Handled);
+    fn a_query_ignores_case_and_edges() {
+        assert_eq!(Palette::filtered("  APPLY ", &[], &entries()).len(), 1);
     }
 
     #[test]
     fn selection_stops_at_the_ends_instead_of_wrapping() {
         let mut palette = Palette::default();
-        palette.open();
-        for _ in 0..5 {
-            palette.keystroke(&typed("down"), 3);
-        }
+        palette.step(1, 3);
+        palette.step(1, 3);
+        palette.step(1, 3);
         assert_eq!(palette.selected(), 2);
         for _ in 0..5 {
-            palette.keystroke(&typed("up"), 3);
+            palette.step(-1, 3);
         }
+        assert_eq!(palette.selected(), 0);
+        // An empty list has nothing to move across, and nothing to run.
+        palette.step(1, 0);
+        assert_eq!(palette.selected(), 0);
+        assert!(palette.selected_entry(&[]).is_none());
+    }
+
+    /// The rows change under the selection: a query narrowed, a snapshot
+    /// pushed. The selection follows the rows, not the other way round.
+    #[test]
+    fn the_selection_follows_a_shrinking_row_set() {
+        let mut palette = Palette::default();
+        palette.step(1, 3);
+        palette.sync_rows(2);
+        assert_eq!(palette.selected(), 1);
+        palette.sync_rows(0);
         assert_eq!(palette.selected(), 0);
     }
 
-    /// Twenty matches, eight rows drawn: the keyboard may not run the twelfth.
+    /// A run puts its row in front of its section — and never out of it: a
+    /// recency rank reorders inside a section, the sections keep their order.
     #[test]
-    fn the_keyboard_stays_inside_the_rows_the_palette_draws() {
+    fn a_run_ranks_its_row_first_inside_the_section() {
         let mut palette = Palette::default();
-        palette.open();
-        for _ in 0..20 {
-            palette.keystroke(&typed("down"), 20);
+        let second = Entry::Command(Command::MoveTabNext);
+        palette.note_run(&second);
+        let mut entries = entries();
+        entries.insert(0, second);
+        let matches = Palette::filtered("", &palette.recent, &entries);
+        assert_eq!(matches[0].detail(), "tab.move-right");
+        // Sections stay contiguous: a header goes where the section changes,
+        // and the plugin section stays behind the commands'.
+        let rows = plan(&matches);
+        assert!(matches!(rows[0], PlanRow::Header(0)));
+        assert!(matches!(rows[1], PlanRow::Item(0)));
+    }
+
+    /// The ring is a ring: the run after the last forgets the first.
+    #[test]
+    fn the_recency_ring_forgets_its_oldest() {
+        let mut palette = Palette::default();
+        let entries: Vec<Entry> = COMMANDS
+            .iter()
+            .take(RECENT_LEN + 2)
+            .map(|info| Entry::Command(info.command))
+            .collect();
+        let keys: Vec<String> = entries.iter().map(|entry| entry.key()).collect();
+        for entry in &entries {
+            palette.note_run(entry);
         }
-        assert_eq!(palette.selected(), ROWS_SHOWN - 1);
+        assert_eq!(palette.recent.len(), RECENT_LEN);
+        // Most recent first: the last run leads, and the first two runs fell
+        // off the end.
+        assert_eq!(palette.recent.first(), keys.last());
+        assert!(!palette.recent.contains(&keys[0]));
+        assert!(!palette.recent.contains(&keys[1]));
+    }
+
+    /// The plan is the rows the list draws: a header wherever the section
+    /// changes, an item for every match.
+    #[test]
+    fn the_plan_puts_a_header_where_the_section_changes() {
+        let entries = entries();
+        let matches = Palette::filtered("", &[], &entries);
+        let rows = plan(&matches);
         assert_eq!(
-            palette.keystroke(&typed("enter"), 20),
-            Key::Run(ROWS_SHOWN - 1)
+            rows,
+            vec![
+                PlanRow::Header(0),
+                PlanRow::Item(0),
+                PlanRow::Header(2),
+                PlanRow::Item(1)
+            ]
         );
     }
 
-    /// The query changes which rows exist, so a selection from the previous
-    /// query would point at a different command.
-    #[test]
-    fn typing_returns_the_selection_to_the_first_row() {
-        let mut palette = Palette::default();
-        palette.open();
-        palette.keystroke(&typed("down"), 2);
-        assert_eq!(palette.selected(), 1);
-        palette.keystroke(&typed("a"), 2);
-        assert_eq!(palette.selected(), 0);
-        palette.keystroke(&typed("backspace"), 2);
-        assert_eq!(palette.selected(), 0);
-        assert_eq!(palette.query(), "");
-    }
-
-    /// A chord is not query text: the palette has no shortcuts of its own, and
-    /// a modified key pasted into the search would be a surprise.
-    #[test]
-    fn a_modified_keystroke_is_not_typed_into_the_query() {
-        let mut palette = Palette::default();
-        palette.open();
-        palette.keystroke(&typed("cmd-a"), 2);
-        assert_eq!(palette.query(), "");
-    }
-
-    /// Shift is how an upper-case letter or a shifted symbol gets into the query,
-    /// and the keystroke's key_char is what the user actually typed.
-    #[test]
-    fn a_shifted_character_is_typed_into_the_query() {
-        let mut palette = Palette::default();
-        palette.open();
-        palette.keystroke(&typed("shift-c->C"), 2);
-        palette.keystroke(&typed("shift-p->P"), 2);
-        assert_eq!(palette.query(), "CP");
-    }
-
+    /// A row runs what it says it runs: the same request a sidebar click on
+    /// the same subject would send.
     #[test]
     fn a_command_row_runs_its_command_and_a_plugin_row_runs_its_action() {
         match Entry::Command(Command::ToggleSettings).request() {
@@ -679,13 +858,8 @@ key = "{key}"
             Some(rust_i18n::t!("shell.palette.tab_count", count = 2).to_string())
         );
 
-        let mut palette = Palette::default();
-        palette.open();
         let entries = vec![Entry::Command(Command::ToggleSettings), row];
-        for character in "feat".chars() {
-            palette.keystroke(&typed(&character.to_string()), 1);
-        }
-        let matches = palette.matches(&entries);
+        let matches = Palette::filtered("feat", &[], &entries);
         assert_eq!(matches.len(), 1, "the query reaches the branch");
         assert_eq!(matches[0].label(), "BitFun — feat/x");
     }

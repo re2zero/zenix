@@ -27,7 +27,7 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui_kit::component::input::{Input, InputState};
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{ActiveTheme, Icon, Theme, ThemeMode, TitleBar, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -58,7 +58,7 @@ use crate::terminal::view::TerminalView;
 use crate::terminal::{CursorShape, Theme as TerminalTheme};
 use commands::{COMMANDS, Command};
 use keymap::{Chord, Keymap, RunCommand};
-use palette::{Entry, Key as PaletteKey, Palette};
+use palette::{Entry, Palette, PlanRow};
 use panel_resize::{ASIDE, AsideDrag, Edge, PanelWidth, SIDEBAR, SidebarDrag};
 use registry::{
     AsideTab, Dispatch, Invocation, Registry, RenameSubject, ShellRequest, SidebarView,
@@ -112,10 +112,9 @@ pub(crate) struct ShellView {
     /// stops receiving keystrokes.
     settings_focus: FocusHandle,
     /// The command palette: the shell's own directory plus the daemon's plugin
-    /// actions, over the shell while it is open.
+    /// actions, over the shell while it is open. Its query input holds the
+    /// keyboard while it is up.
     palette: Palette,
-    /// The keyboard while the palette is open.
-    palette_focus: FocusHandle,
     /// The pre-link review: a path is typed into it, and what that path would
     /// run is shown before anything is linked.
     trust: TrustReview,
@@ -208,6 +207,12 @@ impl ShellView {
                 })
                 .unwrap_or_default();
             shell.fleet_stream.watch(panes);
+            // The palette reads the session too: a workspace or an agent the
+            // push brought in (or took away) is a row the open palette does
+            // not yet draw, or one its selection may point past.
+            if shell.palette.is_open() {
+                shell.palette_sync(cx);
+            }
             // A scan is a handful of directory checks and one small file, so it
             // runs when the focused pane's cwd moves and not on every revision.
             let mut scanned = false;
@@ -261,7 +266,6 @@ impl ShellView {
             settings_reset_armed: false,
             settings_focus: cx.focus_handle(),
             palette: Palette::default(),
-            palette_focus: cx.focus_handle(),
             trust: TrustReview::default(),
             manager: Manager::default(),
             trust_focus: cx.focus_handle(),
@@ -714,7 +718,9 @@ impl ShellView {
 
     /// Show the palette, or hide it and give the keyboard back to the pane. The
     /// settings surface keeps the keyboard while it is open, so the palette
-    /// does not open over it.
+    /// does not open over it. Opening hands the keyboard to the query input —
+    /// it is a real input, so IME and the caret are its own — and the first
+    /// open subscribes to it once.
     fn toggle_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.settings_open {
             return;
@@ -724,8 +730,19 @@ impl ShellView {
             let focus = self.terminal.read(cx).focus_handle().clone();
             window.focus(&focus, cx);
         } else {
-            self.palette.open();
-            let focus = self.palette_focus.clone();
+            let input = self.palette.open(window, cx);
+            if self.palette.input_subscribed().is_none() {
+                let subscription = cx.subscribe_in(
+                    &input,
+                    window,
+                    |shell, _, event: &InputEvent, window, cx| {
+                        shell.palette_input_event(event, window, cx);
+                    },
+                );
+                self.palette.hold_subscription(subscription);
+            }
+            self.palette_sync(cx);
+            let focus = input.read(cx).focus_handle(cx).clone();
             window.focus(&focus, cx);
         }
         cx.notify();
@@ -782,33 +799,125 @@ impl ShellView {
         entries
     }
 
-    /// The palette holds the keyboard while it is open: a keystroke moves its
-    /// selection, and Enter hands the row's request to the same dispatch a
-    /// click uses, so the two cannot behave differently.
-    fn palette_key(&mut self, event: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
-        let entries = self.palette_entries(cx);
-        let matches = self.palette.matches(&entries);
-        match self.palette.keystroke(&event.keystroke, matches.len()) {
-            PaletteKey::Close => self.toggle_palette(window, cx),
-            PaletteKey::Run(index) => {
-                let Some(entry) = matches.get(index) else {
-                    return;
-                };
-                let request = entry.request();
-                self.palette.close();
-                self.dispatch(request, window, cx);
-                // A request that opened an overlay — the settings surface, the
-                // review, or the palette itself — claimed the keyboard itself
-                // while it ran; handing it back to the pane here would take it
-                // away again before the overlay has been used.
-                if !self.overlay_owns_keyboard() {
-                    let focus = self.terminal.read(cx).focus_handle().clone();
-                    window.focus(&focus, cx);
-                }
-                cx.notify();
-            }
-            PaletteKey::Handled => cx.notify(),
+    /// Re-derive the rows the open palette draws: the query or the entries
+    /// moved under it. This runs from events — a keystroke in the query, a
+    /// snapshot push — never from render, where the rows are only drawn.
+    fn palette_sync(&mut self, cx: &mut Context<Self>) {
+        if !self.palette.is_open() {
+            return;
         }
+        let entries = self.palette_entries(cx);
+        let matches = self.palette.matches(&entries, cx);
+        self.palette.sync_rows(palette::plan(&matches).len());
+    }
+
+    /// The query input's events. A change re-derives the rows and returns the
+    /// selection to the first one — a selection is a view of the rows, not a
+    /// fact of its own. Enter arrives here as `PressEnter` too, but it is
+    /// already answered by the palette's own action (the input's single-line
+    /// Enter propagates), so answering it here as well would run one row twice.
+    fn palette_input_event(
+        &mut self,
+        event: &InputEvent,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            InputEvent::Change => {
+                self.palette.reset_selection();
+                self.palette_sync(cx);
+            }
+            InputEvent::PressEnter { .. } => {}
+            InputEvent::Focus | InputEvent::Blur => cx.notify(),
+        }
+    }
+
+    /// Move the palette's selection a row, taking the scroll with it: the
+    /// selected row is always one the palette has drawn.
+    fn palette_step(&mut self, step: isize, cx: &mut Context<Self>) {
+        let entries = self.palette_entries(cx);
+        let matches = self.palette.matches(&entries, cx);
+        if matches.is_empty() {
+            return;
+        }
+        let rows = palette::plan(&matches);
+        self.palette.step(step, rows.len());
+        let selected = self.palette.selected();
+        let list = self.palette.list();
+        if let (Some(list), Some(row)) = (
+            list,
+            rows.iter()
+                .position(|row| matches!(row, PlanRow::Item(index) if *index == selected)),
+        ) {
+            list.scroll_to_reveal_item(row);
+        }
+        cx.notify();
+    }
+
+    /// Up and down in the palette: one row at a time, stopping at the ends.
+    fn palette_select_prev(
+        &mut self,
+        _: &palette::PaletteSelectPrev,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.palette_step(-1, cx);
+    }
+
+    fn palette_select_next(
+        &mut self,
+        _: &palette::PaletteSelectNext,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.palette_step(1, cx);
+    }
+
+    /// Enter in the palette: hand the row's request to the same dispatch a
+    /// click uses, so the two cannot behave differently.
+    fn palette_run(
+        &mut self,
+        _: &palette::PaletteRun,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let entries = self.palette_entries(cx);
+        let matches = self.palette.matches(&entries, cx);
+        let Some(entry) = self.palette.selected_entry(&matches) else {
+            return;
+        };
+        let request = entry.request();
+        self.palette.note_run(entry);
+        self.palette.close();
+        self.dispatch(request, window, cx);
+        // A request that opened an overlay — the settings surface, the
+        // review, or the palette itself — claimed the keyboard itself
+        // while it ran; handing it back to the pane here would take it
+        // away again before the overlay has been used.
+        if !self.overlay_owns_keyboard() {
+            let focus = self.terminal.read(cx).focus_handle().clone();
+            window.focus(&focus, cx);
+        }
+        cx.notify();
+    }
+
+    /// Escape in the palette: a non-empty query clears first — the same
+    /// two-step the command palettes the user knows speak — and an empty one
+    /// hands the keyboard back to the pane.
+    fn palette_dismiss(
+        &mut self,
+        _: &palette::PaletteDismiss,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(input) = self.palette.input() else {
+            return;
+        };
+        if !input.read(cx).value().trim().is_empty() {
+            input.update(cx, |state, cx| state.set_value("", window, cx));
+            return;
+        }
+        self.toggle_palette(window, cx);
     }
 
     /// A keystroke GPUI bound directly, dispatched as its action. The prefix
@@ -1570,9 +1679,13 @@ impl Render for ShellView {
                 &self.palette,
                 &entries,
                 &self.keymap,
-                &self.palette_focus,
                 &dispatch,
-                cx.listener(Self::palette_key),
+                palette::PaletteActions {
+                    select_prev: Rc::new(cx.listener(Self::palette_select_prev)),
+                    select_next: Rc::new(cx.listener(Self::palette_select_next)),
+                    run: Rc::new(cx.listener(Self::palette_run)),
+                    dismiss: Rc::new(cx.listener(Self::palette_dismiss)),
+                },
                 cx,
             ));
         }

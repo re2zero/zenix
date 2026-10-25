@@ -20,6 +20,7 @@
 use gpui_kit::{Action, App, KeyBinding, Keystroke};
 
 use super::commands::{COMMANDS, Command};
+use super::palette;
 use crate::plugins::actions::Catalog;
 use crate::plugins::model::PluginAction;
 
@@ -207,6 +208,18 @@ pub(crate) fn bind_keys(cx: &mut App) {
             .into_iter()
             .map(|(command, keystroke)| KeyBinding::new(&keystroke, RunCommand { command }, None)),
     );
+    // The palette's four keys, in the key context its dialog carries. These
+    // are registered after gpui-component's own keymap, and a keystroke's
+    // bindings are tried best-first — the query input's context first, then
+    // this one — so they answer what the input does not: a single-line input
+    // has no up/down caret movement, and its Enter and Escape propagate.
+    // Outside the palette the context is absent and none of these match.
+    cx.bind_keys([
+        KeyBinding::new("up", palette::PaletteSelectPrev, Some(palette::CONTEXT)),
+        KeyBinding::new("down", palette::PaletteSelectNext, Some(palette::CONTEXT)),
+        KeyBinding::new("enter", palette::PaletteRun, Some(palette::CONTEXT)),
+        KeyBinding::new("escape", palette::PaletteDismiss, Some(palette::CONTEXT)),
+    ]);
 }
 
 /// A plugin's chord as a keystroke, or nothing when it is not one. A
