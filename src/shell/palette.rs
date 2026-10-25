@@ -439,9 +439,11 @@ pub(crate) fn overlay(
         }
     }
 
-    // The section headers and the rows the keyboard can reach. The list
-    // scrolls what the dialog's height leaves room for, and the selection's
-    // own moves take the scroll with them.
+    // The section headers and the rows the keyboard can reach. Infer sizing
+    // is what makes the dialog content-sized up to its cap and scrollable
+    // past it: the list reports its content height while there is room, and
+    // becomes its own scroll container once the cap bites — which is also
+    // the viewport the selection's scroll-to-view measures against.
     let empty = items.is_empty();
     let list_theme = theme.clone();
     let list_dispatch = dispatch.clone();
@@ -462,9 +464,8 @@ pub(crate) fn overlay(
         ),
         None => div().into_any_element(),
     })
-    .w_full()
-    .flex_1()
-    .min_h_0();
+    .with_sizing_behavior(ListSizingBehavior::Infer)
+    .w_full();
 
     let body: AnyElement = if empty {
         div()
