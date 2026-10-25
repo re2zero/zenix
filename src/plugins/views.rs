@@ -16,7 +16,9 @@ use serde_json::Value;
 
 use super::panels::{header, line};
 use super::ui_data::Data;
-use super::ui_manifest::{Declared, PanelSpec, SidebarItemSpec, StatusItemSpec, ViewKind};
+use super::ui_manifest::{
+    Declared, PanelSpec, SettingsSectionSpec, SidebarItemSpec, StatusItemSpec, ViewKind,
+};
 use crate::shell::registry::{Invocation, ShellRequest};
 
 /// The mark a plugin's own contribution carries: the plugin's id, in the accent
@@ -62,16 +64,43 @@ pub(crate) fn panel(
         invocation,
     ));
     column
-        .child(match invocation.ui_data.get(&spec.qualified_id()) {
-            Some(Data::Ready(value)) => draw(rows(spec.view, value), theme),
-            Some(Data::Failed(why)) => failure(why, theme),
-            // Nothing yet and nothing wrong: the command has not answered.
-            Some(Data::Loading) | None => line(
-                &crate::i18n::t("shell.views.reading"),
-                theme.muted_foreground,
-            ),
-        })
+        .child(data_block(
+            spec.view,
+            invocation.ui_data.get(&spec.qualified_id()),
+            theme,
+        ))
         .into_any_element()
+}
+
+/// One declared settings page's body: the data view alone, without the panel
+/// card's head — the page it mounts in already carries the title. A section
+/// that names no source says so rather than reading forever.
+pub(crate) fn settings_section(spec: &SettingsSectionSpec, invocation: &Invocation) -> AnyElement {
+    let theme = invocation.theme;
+    match spec.source.as_ref() {
+        Some(_) => data_block(
+            spec.view,
+            invocation.ui_data.get(&spec.qualified_id()),
+            theme,
+        ),
+        None => line(
+            &crate::i18n::t("settings.plugin.no_source"),
+            theme.muted_foreground,
+        ),
+    }
+}
+
+/// What one declaration's last answer draws, whichever kind of slot mounts it.
+fn data_block(view: ViewKind, data: Option<&Data>, theme: &Theme) -> AnyElement {
+    match data {
+        Some(Data::Ready(value)) => draw(rows(view, value), theme),
+        Some(Data::Failed(why)) => failure(why, theme),
+        // Nothing yet and nothing wrong: the command has not answered.
+        Some(Data::Loading) | None => line(
+            &crate::i18n::t("shell.views.reading"),
+            theme.muted_foreground,
+        ),
+    }
 }
 
 /// A sidebar line that opens the panels a plugin declared. A drawer panel

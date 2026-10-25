@@ -45,6 +45,7 @@ pub(crate) struct UiContributions {
     pub(crate) sidebar_items: Vec<Arc<SidebarItemSpec>>,
     pub(crate) panels: Vec<Arc<PanelSpec>>,
     pub(crate) status_items: Vec<Arc<StatusItemSpec>>,
+    pub(crate) settings_sections: Vec<Arc<SettingsSectionSpec>>,
     /// What reading the file had to downgrade or skip, and why. An unknown
     /// field is not in here: being ignored is what "unknown field" means.
     pub(crate) warnings: Vec<String>,
@@ -137,6 +138,20 @@ impl Declared for StatusItemSpec {
     }
 }
 
+impl Declared for SettingsSectionSpec {
+    fn plugin_id(&self) -> &str {
+        &self.plugin_id
+    }
+
+    fn kind(&self) -> &'static str {
+        "settings_section"
+    }
+
+    fn local_id(&self) -> &str {
+        &self.local_id
+    }
+}
+
 /// What one installed plugin declares for this client, read from its own
 /// `zenix-ui.toml`. Kept per plugin beside the mounted set because the two
 /// differ for exactly one reason: a disabled plugin still declares its slots,
@@ -187,12 +202,16 @@ pub(crate) fn mount(plugins: &[InstalledPlugin], declared: &[DeclaredUi]) -> UiC
         mounted
             .status_items
             .extend(entry.ui.status_items.iter().cloned());
+        mounted
+            .settings_sections
+            .extend(entry.ui.settings_sections.iter().cloned());
     }
     let mut warnings = std::mem::take(&mut mounted.warnings);
     mounted.commands = dedupe(mounted.commands, &mut warnings);
     mounted.sidebar_items = dedupe(mounted.sidebar_items, &mut warnings);
     mounted.panels = dedupe(mounted.panels, &mut warnings);
     mounted.status_items = dedupe(mounted.status_items, &mut warnings);
+    mounted.settings_sections = dedupe(mounted.settings_sections, &mut warnings);
     // A stable sort, so two items asking for the same order keep the order their
     // plugins were read in.
     mounted.sidebar_items.sort_by_key(|item| item.order);
@@ -283,6 +302,25 @@ pub(crate) struct StatusItemSpec {
     pub(crate) source: Option<Source>,
 }
 
+/// One page of the settings surface a plugin declares. The page is a view of
+/// one data source, drawn with the same machinery a panel's is — there is no
+/// writable field here, because nothing stores a plugin's setting values: the
+/// daemon has no plugin-config API, and the client's config is not a plugin's
+/// to extend. A page that states what the plugin's command last printed is the
+/// honest shape until that exists.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SettingsSectionSpec {
+    pub(crate) plugin_id: String,
+    pub(crate) local_id: String,
+    pub(crate) title: String,
+    /// The plugin's own directory, as for a panel's source.
+    pub(crate) plugin_root: PathBuf,
+    pub(crate) view: ViewKind,
+    pub(crate) source: Option<Source>,
+    /// How often the source command runs again, as for a panel's.
+    pub(crate) refresh_s: Option<u64>,
+}
+
 /// How a panel's JSON is drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ViewKind {
@@ -342,10 +380,8 @@ struct RawManifest {
     panels: Vec<RawPanel>,
     #[serde(default, rename = "status_item")]
     status_items: Vec<RawStatusItem>,
-    /// Only counted: a plugin settings section has no shipped consumer yet, so
-    /// the declared shape is not interpreted here at all.
     #[serde(default, rename = "settings_section")]
-    settings_sections: Vec<toml::Value>,
+    settings_sections: Vec<RawSettingsSection>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -396,6 +432,22 @@ struct RawStatusItem {
     id: Option<String>,
     #[serde(default)]
     format: Option<String>,
+    #[serde(default)]
+    source: Option<RawSource>,
+    #[serde(default)]
+    refresh_s: Option<u64>,
+}
+
+/// The settings section's raw shape: a panel's without the `placement`, which
+/// is a drawer-panel idea and has no meaning inside a dialog.
+#[derive(Debug, Deserialize)]
+struct RawSettingsSection {
+    #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    view: Option<String>,
     #[serde(default)]
     source: Option<RawSource>,
     #[serde(default)]
@@ -560,11 +612,27 @@ pub(crate) fn parse(plugin_id: &str, plugin_root: &Path, text: &str) -> UiContri
         }));
     }
 
-    if !raw.settings_sections.is_empty() {
-        warnings.push(format!(
-            "{} settings section(s) declared; plugin settings are not mounted yet",
-            raw.settings_sections.len()
-        ));
+    for (index, item) in raw.settings_sections.into_iter().enumerate() {
+        let Some(local_id) = identified("settings_section", index, item.id, &mut warnings) else {
+            continue;
+        };
+        let title = item
+            .title
+            .filter(|title| !title.is_empty())
+            .unwrap_or_else(|| local_id.clone());
+        let (view, downgrade) = ViewKind::of(item.view.as_deref());
+        if let Some(downgrade) = downgrade {
+            warnings.push(format!("settings_section \"{local_id}\": {downgrade}"));
+        }
+        ui.settings_sections.push(Arc::new(SettingsSectionSpec {
+            plugin_id: plugin_id.to_owned(),
+            local_id,
+            title,
+            plugin_root: plugin_root.to_path_buf(),
+            view,
+            source: source(item.source, "settings_section", &mut warnings),
+            refresh_s: item.refresh_s,
+        }));
     }
 
     ui.warnings = warnings
@@ -675,6 +743,7 @@ mod tests {
             && ui.sidebar_items.is_empty()
             && ui.panels.is_empty()
             && ui.status_items.is_empty()
+            && ui.settings_sections.is_empty()
     }
 
     /// The plugin root a declaration's source command would run in. Nothing
@@ -713,6 +782,12 @@ command = ["sh", "board.sh"]
 id = "wip"
 source = { command = ["sh", "wip.sh"] }
 format = "{count} WIP"
+
+[[settings_section]]
+id = "cache"
+title = "Cache"
+refresh_s = 0
+source = { command = ["sh", "cache.sh"] }
 "#;
 
     #[test]
@@ -743,6 +818,9 @@ format = "{count} WIP"
         );
         assert_eq!(ui.status_items.len(), 1);
         assert_eq!(ui.status_items[0].format, "{count} WIP");
+        assert_eq!(ui.settings_sections.len(), 1);
+        assert_eq!(ui.settings_sections[0].view, ViewKind::Kv);
+        assert_eq!(ui.settings_sections[0].refresh_s, Some(0));
         assert_eq!(
             ui.panels
                 .iter()
@@ -928,15 +1006,22 @@ id = "ok"
         );
     }
 
+    /// A settings section mounts as its own kind, so its data key cannot
+    /// collide with a panel of the same local id.
     #[test]
-    fn plugin_settings_sections_are_counted_as_unmounted() {
+    fn a_settings_section_mounts_under_its_own_kind() {
         let ui = parse(
             "a.b",
             root(),
             "[[settings_section]]\nid = \"general\"\ntitle = \"Layout\"\n",
         );
-        assert!(mounted_nothing(&ui));
-        assert!(ui.warnings[0].contains("settings"), "{:?}", ui.warnings);
+        assert_eq!(ui.settings_sections.len(), 1);
+        assert_eq!(ui.settings_sections[0].title, "Layout");
+        assert_eq!(
+            ui.settings_sections[0].qualified_id(),
+            "a.b:settings_section:general"
+        );
+        assert!(ui.warnings.is_empty(), "{:?}", ui.warnings);
     }
 
     #[test]

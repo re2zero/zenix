@@ -29,7 +29,7 @@ use gpui_kit::*;
 
 use super::commands::{self, Command};
 use super::keymap::Keymap;
-use super::registry::{Dispatch, SettingsSection, ShellRequest};
+use super::registry::{Dispatch, Invocation, SettingsContribution, SettingsSection, ShellRequest};
 use crate::config::{
     self, ASIDE_WIDTH_MAX, ASIDE_WIDTH_MIN, Appearance, CURSOR_SHAPES, DENSITIES, FONT_SIZE_MAX,
     FONT_SIZE_MIN, LINE_HEIGHT_MAX, LINE_HEIGHT_MIN, Layout, SIDEBAR_WIDTH_MAX, SIDEBAR_WIDTH_MIN,
@@ -37,6 +37,8 @@ use crate::config::{
 };
 use crate::i18n::t;
 use crate::platform;
+use crate::plugins::ui_manifest::SettingsSectionSpec;
+use crate::plugins::views;
 use crate::terminal::Theme as TerminalTheme;
 
 /// The built-in pages, in the order the settings nav lists them: one per config
@@ -75,11 +77,30 @@ pub(crate) const SETTINGS_SECTIONS: &[SettingsSection] = &[
 
 /// Where a named page sits in [`SETTINGS_SECTIONS`]. The status bar asks for
 /// the config page by name rather than by position, so a page added in front
-/// of it cannot turn the diagnostic count into a link to the wrong page.
+/// of it cannot turn the diagnostic count into a link to the wrong page. A
+/// plugin's pages mount behind the built-ins, so an index answered here stays
+/// the same page in the combined list.
 pub(crate) fn page_index(id: &str) -> Option<usize> {
     SETTINGS_SECTIONS
         .iter()
         .position(|section| section.id == id)
+}
+
+/// A plugin's declared page: its title, one line naming the plugin it came
+/// from, and the data view its command last answered with. Like the reference
+/// pages, it states facts and has nothing to put back — nowhere stores a
+/// plugin's setting values, so there is no field here to write one into.
+pub(crate) fn plugin_page(spec: &SettingsSectionSpec, invocation: &Invocation) -> Page {
+    let description =
+        rust_i18n::t!("settings.plugin.description", plugin = spec.plugin_id).to_string();
+    page(spec.title.clone(), description).section(Section {
+        title: None,
+        rows: vec![Row {
+            label: None,
+            description: None,
+            control: views::settings_section(spec, invocation),
+        }],
+    })
 }
 
 // ── the page model ─────────────────────────────────────────────────────────
@@ -892,22 +913,36 @@ fn icon_button(
 
 // ── the surface ────────────────────────────────────────────────────────────
 
-/// The settings dialog, mounted over the shell while it is open. `focus` is
+/// The dialog's shell-side state, handed in as one value: which page is open,
+/// where the dialog's keyboard lives, and the config page's two-step confirm.
+pub(crate) struct SurfaceState<'a> {
+    pub(crate) selected: usize,
+    pub(crate) focus: &'a FocusHandle,
+    pub(crate) reset_armed: bool,
+}
+
+/// The settings dialog, mounted over the shell while it is open. The focus is
 /// the shell's, so the pane beside it stops taking keystrokes; Escape (or the
-/// close button) hands it back.
+/// close button) hands it back. The pages are the registry's slot: the shell's
+/// own and the plugins' declared ones come through one list and the nav cannot
+/// tell them apart by shape.
 pub(crate) fn overlay(
-    sections: &'static [SettingsSection],
-    selected: usize,
-    focus: &FocusHandle,
+    invocation: &Invocation,
+    sections: &[SettingsContribution],
+    surface: SurfaceState<'_>,
     dispatch: &Dispatch,
-    reset_armed: bool,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
+    let SurfaceState {
+        selected,
+        focus,
+        reset_armed,
+    } = surface;
     let theme = cx.theme().clone();
     let pages: Vec<Page> = sections
         .iter()
-        .map(|section| (section.page)(cx, reset_armed, dispatch))
+        .map(|section| section.build_page(invocation, window, cx, reset_armed, dispatch))
         .collect();
     let selected = selected.min(pages.len().saturating_sub(1));
     // The nav reads names and marks off the pages before the open one is

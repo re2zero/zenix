@@ -514,17 +514,32 @@ impl ShellView {
 
     /// Tell the reader what is on screen and how often each declaration wants
     /// to be read. A panel is asked for only while the aside shows the tab it
-    /// mounts in — a closed panel is not worth a process every ten seconds —
-    /// and a status segment always, because the bar is never hidden. `force`
-    /// re-reads what is on screen now, which is what a refresh click means.
+    /// mounts in — a closed panel is not worth a process every ten seconds — a
+    /// settings page only while the dialog is open on it, and a status segment
+    /// always, because the bar is never hidden. `force` re-reads what is on
+    /// screen now, which is what a refresh click means.
     fn request_ui_data(&self, ui: &UiContributions, force: bool, cx: &App) {
         let live = self.terminal.read(cx).live().clone();
         let context = Arc::new(ui_data::context(live.snapshot.as_deref()));
         let screen = ui_data::OnScreen {
             panels: config::get(cx).layout.aside_visible && self.aside_tab == AsideTab::Panels,
+            settings: self.open_plugin_settings_page(),
         };
         self.ui_data_host
             .sync(ui_data::loads(ui, screen), context, force);
+    }
+
+    /// The plugin settings page the dialog is open on, when one is: the page's
+    /// qualified id, which is the key its data is read under. The dialog's own
+    /// pages read the config global and are never asked for here.
+    fn open_plugin_settings_page(&self) -> Option<String> {
+        if !self.settings_open {
+            return None;
+        }
+        self.registry
+            .settings_sections()
+            .get(self.settings_page)
+            .and_then(|section| section.plugin_page_id())
     }
 
     /// The terminal keeps the keyboard: the shell has no focus of its own.
@@ -713,6 +728,9 @@ impl ShellView {
             let focus = self.terminal.read(cx).focus_handle().clone();
             window.focus(&focus, cx);
         }
+        // Opening may put a plugin's page on screen; closing takes it off. The
+        // reader hears either way, so a page nobody sees is not read.
+        self.request_ui_data(&self.plugins.state().ui, false, cx);
         cx.notify();
     }
 
@@ -1031,9 +1049,11 @@ impl ShellView {
                 cx.notify();
             }
             // A settings page is the dialog's own state; the surface stays
-            // open, because the click named a page, not an exit.
+            // open, because the click named a page, not an exit. Switching
+            // pages changes what the reader may run, so it hears the page.
             ShellRequest::ShowSettingsPage(page) => {
                 self.settings_page = page;
+                self.request_ui_data(&self.plugins.state().ui, false, cx);
                 cx.notify();
             }
             ShellRequest::FocusWorkspace(workspace_id) => {
@@ -1697,11 +1717,14 @@ impl Render for ShellView {
         }
         if self.settings_open {
             root = root.child(settings::overlay(
+                &invocation,
                 self.registry.settings_sections(),
-                self.settings_page,
-                &self.settings_focus,
+                settings::SurfaceState {
+                    selected: self.settings_page,
+                    focus: &self.settings_focus,
+                    reset_armed: self.settings_reset_armed,
+                },
                 &dispatch,
-                self.settings_reset_armed,
                 window,
                 cx,
             ));

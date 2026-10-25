@@ -137,7 +137,7 @@ fn inventory(state: &PluginState) -> Inventory {
         (
             "settings page",
             crate::shell::settings::SETTINGS_SECTIONS.len(),
-            0,
+            ui.settings_sections.len(),
         ),
         ("command / palette", COMMANDS.len(), catalogued),
         ("MCP tool", McpToolHandler::build_tools().len(), catalogued),
@@ -705,6 +705,10 @@ format = "{count} WIP"
 id = "sync"
 title = "Sync"
 action = "one"
+
+[[settings_section]]
+id = "cache"
+title = "Cache"
 "#,
         );
         let state = PluginState {
@@ -716,7 +720,7 @@ action = "one"
         let filled = inventory(&state);
         let plugins: Vec<usize> = filled.iter().map(|(_, _, plugins)| *plugins).collect();
         let before: Vec<usize> = empty.iter().map(|(_, _, plugins)| *plugins).collect();
-        assert_eq!(plugins, vec![1, 1, 1, 0, 0, 0], "one declaration each");
+        assert_eq!(plugins, vec![1, 1, 1, 1, 0, 0], "one declaration each");
         assert_eq!(before, vec![0; 6]);
         // The shell's own half does not move because a plugin declared something.
         let builtin_after: Vec<usize> = filled.iter().map(|(_, builtin, _)| *builtin).collect();

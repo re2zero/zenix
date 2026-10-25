@@ -118,6 +118,13 @@ settings:
   effective:
     en: "Every change takes effect at once, and each load walks the file against the schema."
     zh-CN: "写入即生效 · 每次加载都按 schema 校验"
+  plugin:
+    description:
+      en: "Declared by the plugin %{plugin}: a read-only view of what its data command last printed."
+      zh-CN: "由插件 %{plugin} 声明：只读展示其数据命令的最近一次输出。"
+    no_source:
+      en: "This section names no data source, so it has nothing to show."
+      zh-CN: "该小节未声明数据源，因此没有可展示的内容。"
   layout:
     title:
       en: "Layout"

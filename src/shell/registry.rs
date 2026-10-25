@@ -22,7 +22,9 @@ use crate::layout::LayoutState;
 use crate::plugins::host::PluginState;
 use crate::plugins::model::{Placement, PluginAction};
 use crate::plugins::ui_data::UiData;
-use crate::plugins::ui_manifest::{PanelSpec, SidebarItemSpec, StatusItemSpec, UiContributions};
+use crate::plugins::ui_manifest::{
+    Declared, PanelSpec, SettingsSectionSpec, SidebarItemSpec, StatusItemSpec, UiContributions,
+};
 use crate::plugins::views;
 
 /// One sidebar view: what the activity rail switches between. Every sidebar
@@ -287,6 +289,60 @@ pub(crate) struct SettingsSection {
     pub(crate) page: fn(&App, bool, &Dispatch) -> super::settings::Page,
 }
 
+/// One page the settings surface mounts, the shell's own or a plugin's
+/// declared one. Like the status bar's slot, both kinds come through one type:
+/// the dialog's nav lists them the same way, and a plugin's page is a page of
+/// *this* dialog, not a second surface beside it.
+pub(crate) struct SettingsContribution {
+    body: SettingsBody,
+}
+
+enum SettingsBody {
+    Builtin(&'static SettingsSection),
+    Plugin(Arc<SettingsSectionSpec>),
+}
+
+impl SettingsContribution {
+    fn builtin(section: &'static SettingsSection) -> Self {
+        Self {
+            body: SettingsBody::Builtin(section),
+        }
+    }
+
+    fn plugin(spec: &Arc<SettingsSectionSpec>) -> Self {
+        Self {
+            body: SettingsBody::Plugin(spec.clone()),
+        }
+    }
+
+    /// Builds the page as it is right now. A built-in page reads the config
+    /// global; a plugin's reads the last answer of the command its declaration
+    /// named, through the same data reader a panel's does.
+    pub(crate) fn build_page(
+        &self,
+        invocation: &Invocation,
+        _window: &mut Window,
+        cx: &mut App,
+        reset_armed: bool,
+        dispatch: &Dispatch,
+    ) -> super::settings::Page {
+        match &self.body {
+            SettingsBody::Builtin(section) => (section.page)(cx, reset_armed, dispatch),
+            SettingsBody::Plugin(spec) => super::settings::plugin_page(spec, invocation),
+        }
+    }
+
+    /// The qualified id of the plugin page, when one is: what the data reader
+    /// is told is on screen while the dialog is open here. The shell's own
+    /// pages read the config global and ask for no data.
+    pub(crate) fn plugin_page_id(&self) -> Option<String> {
+        match &self.body {
+            SettingsBody::Builtin(_) => None,
+            SettingsBody::Plugin(spec) => Some(spec.qualified_id()),
+        }
+    }
+}
+
 /// What the shell can be asked to do, by a chord or by a click on a
 /// contribution's element. Cloning one is the normal case: an element that
 /// dispatches a request has to own it for as long as the frame's tree lives.
@@ -454,12 +510,19 @@ pub(crate) struct Invocation<'a> {
     pub(crate) row_height: f32,
 }
 
-/// Where the shell mounts its contributions.
+/// Where the shell mounts its contributions. The surface has six slots — the
+/// sidebar's blocks, the right-hand panel's blocks, the status bar's segments,
+/// the settings surface's pages, the command directory the palette and keymap
+/// read, and the MCP tools — and this is the one place that knows what fills
+/// them. A plugin's half of a slot is read off the same declarations for every
+/// slot; the actions' one derivation (`crate::plugins::actions::Catalog`) is
+/// what the command and MCP slots' plugin halves come from, and the settings
+/// slot's is declared here.
 pub(crate) struct Registry {
     panels: Vec<Contribution>,
     aside: Vec<Contribution>,
     status: Vec<StatusContribution>,
-    settings: &'static [SettingsSection],
+    settings: Vec<SettingsContribution>,
 }
 
 impl Registry {
@@ -494,11 +557,23 @@ impl Registry {
             .map(StatusContribution::builtin)
             .collect();
         status.extend(ui.status_items.iter().map(StatusContribution::plugin));
+        // The settings surface's own pages first, so a page's position among
+        // the built-ins never moves when a plugin links: the status bar asks
+        // for the config page by index, and that ask stays true.
+        let mut settings: Vec<SettingsContribution> = super::settings::SETTINGS_SECTIONS
+            .iter()
+            .map(SettingsContribution::builtin)
+            .collect();
+        settings.extend(
+            ui.settings_sections
+                .iter()
+                .map(SettingsContribution::plugin),
+        );
         Self {
             panels,
             aside,
             status,
-            settings: super::settings::SETTINGS_SECTIONS,
+            settings,
         }
     }
 
@@ -525,9 +600,10 @@ impl Registry {
         &self.status
     }
 
-    /// The settings surface's pages, in the order it lists them.
-    pub(crate) fn settings_sections(&self) -> &'static [SettingsSection] {
-        self.settings
+    /// The settings surface's pages, in the order it lists them: the shell's
+    /// own first, then whatever the plugins declare.
+    pub(crate) fn settings_sections(&self) -> &[SettingsContribution] {
+        &self.settings
     }
 }
 
@@ -576,8 +652,9 @@ mod tests {
     }
 
     /// The one thing a plugin's declaration cannot do is pick its slot freely:
-    /// a sidebar item goes to the sidebar, a panel to the right-hand panel, and
-    /// a status item to the status bar, each behind the shell's own blocks.
+    /// a sidebar item goes to the sidebar, a panel to the right-hand panel, a
+    /// status item to the status bar, and a settings section to the settings
+    /// surface — each behind the shell's own contributions.
     #[test]
     fn a_plugins_contributions_mount_in_the_slots_their_kind_names() {
         let registry = with_ui(
@@ -594,6 +671,10 @@ title = "Board"
 [[status_item]]
 id = "wip"
 format = "{count} WIP"
+
+[[settings_section]]
+id = "cache"
+title = "Cache"
 "#,
         );
         let declared_board = |item: &Contribution| match &item.body {
@@ -625,6 +706,23 @@ format = "{count} WIP"
             status.first().map(|segment| &segment.body),
             Some(StatusBody::Builtin(_))
         ));
+        // A plugin's settings page closes the surface's list, behind every
+        // page the shell is born with — whose order never moves, because the
+        // status bar asks for the config page by position in it.
+        let settings = registry.settings_sections();
+        let last = settings.last().expect("the surface mounts a plugin page");
+        assert!(matches!(&last.body, SettingsBody::Plugin(spec) if spec.local_id == "cache"));
+        assert!(
+            matches!(&last.body, SettingsBody::Plugin(spec) if spec.qualified_id() == "a.b:settings_section:cache")
+        );
+        for (position, section) in crate::shell::settings::SETTINGS_SECTIONS.iter().enumerate() {
+            match &settings[position].body {
+                SettingsBody::Builtin(builtin) => assert_eq!(builtin.id, section.id),
+                SettingsBody::Plugin(_) => {
+                    panic!("a plugin page moved in front of {:?}", section.id)
+                }
+            }
+        }
         // Each view and shell tab opens with the shell's own block.
         for view in [
             SidebarView::Workspaces,

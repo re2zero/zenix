@@ -5,9 +5,10 @@
 //! that, and both are about a plugin's commands being real processes:
 //!
 //! * **On screen only.** A panel's command runs while the aside is showing the
-//!   panels tab, a status segment's always (the bar is always painted). A
-//!   declaration nobody can see is not run — a closed panel is not worth a
-//!   process every ten seconds.
+//!   panels tab, a status segment's always (the bar is always painted), a
+//!   settings page's while the dialog is open on that page. A declaration
+//!   nobody can see is not run — a closed panel is not worth a process every
+//!   ten seconds.
 //! * **The declaration sets the cadence.** `refresh_s` in the declaration is how
 //!   often the command is run again; absent means [`DEFAULT_EVERY`], and `0`
 //!   means once and never again. A board wants a heartbeat; a layout dump does
@@ -65,16 +66,20 @@ pub(crate) struct Load {
 }
 
 /// What can be seen right now, which decides what is read at all.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct OnScreen {
     /// The aside is open on the tab the declared panels mount in.
     pub(crate) panels: bool,
+    /// The settings dialog is open on one plugin page, named by the page's
+    /// qualified id. The dialog's other pages are no more on screen than a
+    /// closed panel is.
+    pub(crate) settings: Option<String>,
 }
 
 impl OnScreen {
     /// Whether a slot with a source is on screen. Status segments are always
     /// painted, so they are always asked for.
-    pub(crate) fn shows_panels(self) -> bool {
+    pub(crate) fn shows_panels(&self) -> bool {
         self.panels
     }
 }
@@ -438,6 +443,21 @@ pub(crate) fn loads(ui: &UiContributions, screen: OnScreen) -> Vec<Load> {
             every: every(item.refresh_s),
         })
     }));
+    // The settings dialog reads the page it is open on, and nothing beside it:
+    // the nav's other rows are off screen exactly as a closed panel is.
+    if let Some(id) = screen.settings.as_deref() {
+        loads.extend(ui.settings_sections.iter().filter_map(|section| {
+            if section.qualified_id() != id {
+                return None;
+            }
+            section.source.as_ref().map(|source| Load {
+                id: section.qualified_id(),
+                command: source.command.clone(),
+                cwd: section.plugin_root.clone(),
+                every: every(section.refresh_s),
+            })
+        }));
+    }
     loads
 }
 
@@ -553,7 +573,13 @@ id = "quiet"
 title = "Quiet"
 "#,
         );
-        let loads = loads(&ui, OnScreen { panels: true });
+        let loads = loads(
+            &ui,
+            OnScreen {
+                panels: true,
+                ..Default::default()
+            },
+        );
         let ids: Vec<&str> = loads.iter().map(|load| load.id.as_str()).collect();
         assert_eq!(ids, vec!["a.b:panel:board", "a.b:status:wip"]);
         // Every load runs where the declaration lives.
@@ -596,17 +622,72 @@ format = "{count} WIP"
 source = { command = ["sh", "wip.sh"] }
 "#,
         );
-        let hidden = loads(&ui, OnScreen { panels: false });
+        let hidden = loads(
+            &ui,
+            OnScreen {
+                panels: false,
+                ..Default::default()
+            },
+        );
         let ids: Vec<&str> = hidden.iter().map(|load| load.id.as_str()).collect();
         assert_eq!(ids, vec!["a.b:status:wip"]);
 
-        let shown = loads(&ui, OnScreen { panels: true });
+        let shown = loads(
+            &ui,
+            OnScreen {
+                panels: true,
+                ..Default::default()
+            },
+        );
         let ids: Vec<&str> = shown.iter().map(|load| load.id.as_str()).collect();
         assert_eq!(ids, vec!["a.b:panel:board", "a.b:status:wip"]);
         // The panel asked to be read once; the segment asked for nothing, which
         // is the host's default.
         assert_eq!(shown[0].every, None);
         assert_eq!(shown[1].every, Some(DEFAULT_EVERY));
+    }
+
+    /// A settings page is read while the dialog is open on it, and only then:
+    /// the dialog's other pages are off screen, whatever the nav lists.
+    #[test]
+    fn a_settings_page_is_read_only_while_the_dialog_is_open_on_it() {
+        let ui = crate::plugins::ui_manifest::parse(
+            "a.b",
+            std::path::Path::new("/tmp/zenix-ui-root"),
+            r#"
+[[settings_section]]
+id = "cache"
+title = "Cache"
+source = { command = ["sh", "cache.sh"] }
+
+[[settings_section]]
+id = "quiet"
+title = "Quiet"
+"#,
+        );
+        let closed = loads(&ui, OnScreen::default());
+        assert!(closed.is_empty());
+
+        let open_on_other = loads(
+            &ui,
+            OnScreen {
+                settings: Some("a.b:settings_section:missing".to_owned()),
+                ..Default::default()
+            },
+        );
+        assert!(open_on_other.is_empty());
+
+        let open = loads(
+            &ui,
+            OnScreen {
+                settings: Some("a.b:settings_section:cache".to_owned()),
+                ..Default::default()
+            },
+        );
+        let ids: Vec<&str> = open.iter().map(|load| load.id.as_str()).collect();
+        assert_eq!(ids, vec!["a.b:settings_section:cache"]);
+        // The page asked for nothing, so the host's heartbeat is its cadence.
+        assert_eq!(open[0].every, Some(DEFAULT_EVERY));
     }
 
     /// A declaration that asks for a cadence is read again on its own, without
