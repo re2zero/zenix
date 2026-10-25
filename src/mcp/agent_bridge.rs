@@ -93,12 +93,11 @@ impl AgentBridge {
     }
 
     fn tool_def(name: &str, desc: &str, schema: Value) -> Tool {
-        serde_json::from_value(json!({
-            "name": name,
-            "description": desc,
-            "inputSchema": schema
-        }))
-        .expect("a tool definition is well formed")
+        Tool::new(
+            name.to_owned(),
+            desc.to_owned(),
+            schema.as_object().cloned().unwrap_or_default(),
+        )
     }
 
     /// Dispatch one call. Unknown names and unusable arguments are answered as
@@ -185,19 +184,11 @@ impl AgentBridge {
     }
 
     fn ok(text: String) -> CallToolResult {
-        serde_json::from_value(json!({
-            "content": [{"type": "text", "text": text}],
-            "isError": false
-        }))
-        .expect("a text result is well formed")
+        CallToolResult::success(vec![ContentBlock::text(text)])
     }
 
     fn err(text: String) -> CallToolResult {
-        serde_json::from_value(json!({
-            "content": [{"type": "text", "text": text}],
-            "isError": true
-        }))
-        .expect("a text result is well formed")
+        CallToolResult::error(vec![ContentBlock::text(text)])
     }
 }
 

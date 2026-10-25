@@ -1670,7 +1670,7 @@ mod tests {
         };
         let result = executor.execute(&call);
         assert!(result.is_error);
-        assert!(result.content.contains("未知工具"));
+        assert!(result.content.contains("Unknown tool"));
     }
 
     #[test]

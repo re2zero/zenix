@@ -417,9 +417,13 @@ pub(crate) fn overlay(
     let width = px(680.).min(viewport.width * 0.92);
     let max_height = viewport.height * 0.68;
 
-    let input = palette.input().expect("an open palette has its input");
+    // `open` creates the input and `palette_sync` the row state before any
+    // render sees the open palette; a None here is a bug, and a bug in render
+    // must not take the window down — draw nothing instead.
+    let Some((input, list_state)) = palette.input().zip(palette.list()) else {
+        return div().into_any_element();
+    };
     let focus = input.read(cx).focus_handle(cx).clone();
-    let list_state = palette.list().expect("an open palette has its rows");
 
     let mut items: Vec<ListItem> = Vec::with_capacity(rows.len());
     let mut drawn = 0usize;

@@ -81,16 +81,23 @@ impl ConfigMap {
                     obj.insert(seg.to_string(), value.clone());
                 }
             } else {
-                // Ensure next level is an object
+                // Ensure next level is an object, then walk into it. A segment
+                // that still refuses to be an object ends the walk rather than
+                // panicking: a schema path is data, not an invariant.
                 if !current.is_object() {
                     *current = Value::Object(serde_json::Map::new());
                 }
-                let obj = current.as_object_mut().unwrap();
+                let Some(obj) = current.as_object_mut() else {
+                    return;
+                };
                 if !obj.contains_key(*seg) {
                     obj.insert(seg.to_string(), Value::Object(serde_json::Map::new()));
                 }
                 // Reborrow: navigate into the object
-                current = obj.get_mut(*seg).unwrap();
+                match obj.get_mut(*seg) {
+                    Some(next) => current = next,
+                    None => return,
+                }
             }
         }
     }

@@ -468,12 +468,11 @@ fn tails<'a>(
         );
     for pair in shown.chunks(2) {
         section = section.child(h_flex().w_full().items_stretch().children(pair.iter().map(
-            |agent| {
-                let tail = invocation
-                    .tails
-                    .get(&agent.pane_id)
-                    .expect("the filter kept only panes with a tail");
-                tail_card(agent, tail, theme)
+            |agent| match invocation.tails.get(&agent.pane_id) {
+                Some(tail) => tail_card(agent, tail, theme),
+                // The filter above keeps only panes with a tail; if that ever
+                // drifts, one card goes missing instead of the window.
+                None => div().into_any_element(),
             },
         )));
     }

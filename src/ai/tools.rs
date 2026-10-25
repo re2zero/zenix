@@ -16,8 +16,14 @@
 //!   - `list_workers`:   List running workers
 //!   - `close_worker`:   Terminate and remove a worker pane
 //!
-//! The tool names, parameter schemas and result texts are the MCP contract
-//! (`crate::mcp::handler`), so their shapes stay put across this rewrite.
+//! The tool names and parameter schemas are the MCP contract
+//! (`crate::mcp::handler`), so their shapes stay put across this rewrite. The
+//! *texts* are not shared: the handler writes its own English copies, and the
+//! result strings here resolve through the locale table (`ai.tool.*`) for the
+//! chat face. What stays hardcoded is deliberate: descriptions and parameter
+//! docs are read by the model, not the user, so translating them per locale
+//! would only make the orchestrator's view of its own tools shift with the
+//! chrome's language.
 
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -87,7 +93,8 @@ pub trait Tool: Send + Sync {
     /// Unique tool name (e.g. "spawn_worker").
     fn name(&self) -> &str;
 
-    /// Human-readable description of what the tool does (in Chinese).
+    /// Human-readable description of what the tool does. Read by the model,
+    /// not rendered — kept verbatim on purpose (see the module docs).
     fn description(&self) -> &str;
 
     /// JSON Schema describing the tool's parameters.
@@ -137,7 +144,7 @@ impl ToolExecutor {
                 return tool.execute(self, call.arguments.clone());
             }
         }
-        ToolResult::error("tool_dispatch", format!("未知工具: {}", call.name))
+        ToolResult::error("tool_dispatch", unknown_tool(&call.name))
     }
 
     /// Return all built-in tools available to the orchestrator.
@@ -149,6 +156,19 @@ impl ToolExecutor {
 /// The one place a tool turns an API failure into the text the LLM sees.
 fn report(tool: &str, action: &str, error: EndpointError) -> ToolResult {
     ToolResult::error(tool, format!("{action}: {error}"))
+}
+
+/// User-facing tool texts, resolved through the locale table (`ai.tool.*`).
+fn unknown_tool(name: &str) -> String {
+    rust_i18n::t!("ai.tool.unknown", name = name).to_string()
+}
+
+fn param_required(param: &str) -> String {
+    rust_i18n::t!("ai.tool.param_required", param = param).to_string()
+}
+
+fn param_string(param: &str) -> String {
+    rust_i18n::t!("ai.tool.param_string", param = param).to_string()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -220,11 +240,11 @@ impl Tool for SpawnWorker {
     fn execute(&self, executor: &ToolExecutor, args: serde_json::Value) -> ToolResult {
         let agent = match args.get("agent").and_then(|value| value.as_str()) {
             Some(value) if !value.is_empty() => value,
-            _ => return ToolResult::error("spawn_worker", "参数 agent 是必需的非空字符串"),
+            _ => return ToolResult::error("spawn_worker", param_required("agent")),
         };
         let instruction = match args.get("instruction").and_then(|value| value.as_str()) {
             Some(value) if !value.is_empty() => value,
-            _ => return ToolResult::error("spawn_worker", "参数 instruction 是必需的非空字符串"),
+            _ => return ToolResult::error("spawn_worker", param_required("instruction")),
         };
         let cwd = args.get("cwd").and_then(|value| value.as_str());
         let worker_name = args.get("worker_name").and_then(|value| value.as_str());
@@ -239,7 +259,10 @@ impl Tool for SpawnWorker {
         let endpoint = executor.endpoint();
         let pane = match endpoint.split_pane(executor.workspace(), cwd, direction) {
             Ok(pane) => pane,
-            Err(error) => return report("spawn_worker", "创建 worker pane 失败", error),
+            Err(error) => {
+                let action = crate::i18n::t("ai.tool.spawn.split_failed");
+                return report("spawn_worker", &action, error);
+            }
         };
 
         let started = match endpoint.start_agent(
@@ -254,7 +277,9 @@ impl Tool for SpawnWorker {
                 // The pane is already there; leaving it behind would silently change
                 // the layout the caller asked for, so it is closed again.
                 let _ = endpoint.close_pane(&pane.pane_id);
-                return report("spawn_worker", &format!("启动 Agent '{agent}' 失败"), error);
+                let action =
+                    rust_i18n::t!("ai.tool.spawn.agent_start_failed", agent = agent).to_string();
+                return report("spawn_worker", &action, error);
             }
         };
 
@@ -266,20 +291,27 @@ impl Tool for SpawnWorker {
         {
             return ToolResult::error(
                 "spawn_worker",
-                format!(
-                    "Worker '{agent}' 的 pane 已创建（pane_id={}），但 Agent 未就绪: {error}",
-                    started.pane_id
-                ),
+                rust_i18n::t!(
+                    "ai.tool.spawn.not_ready",
+                    agent = agent,
+                    pane_id = started.pane_id,
+                    error = error
+                )
+                .to_string(),
             );
         }
 
         if let Err(error) = endpoint.prompt_agent(&name, instruction) {
             return ToolResult::error(
                 "spawn_worker",
-                format!(
-                    "Worker '{agent}' 已启动（pane_id={}, name={}），但发送指令失败: {error}",
-                    started.pane_id, name
-                ),
+                rust_i18n::t!(
+                    "ai.tool.spawn.prompt_failed",
+                    agent = agent,
+                    pane_id = started.pane_id,
+                    name = name,
+                    error = error
+                )
+                .to_string(),
             );
         }
 
@@ -294,16 +326,20 @@ impl Tool for SpawnWorker {
             Some(_) => {
                 let row = position_value(position, "row");
                 let col = position_value(position, "col");
-                format!(", 位置=({row},{col})")
+                rust_i18n::t!("ai.tool.spawn.position", row = row, col = col).to_string()
             }
             None => String::new(),
         };
         ToolResult::ok(
             "spawn_worker",
-            format!(
-                "Worker '{agent}' 已启动: pane_id={}, terminal_id={terminal_id}{position}",
-                started.pane_id
-            ),
+            rust_i18n::t!(
+                "ai.tool.spawn.ok",
+                agent = agent,
+                pane_id = started.pane_id,
+                terminal_id = terminal_id,
+                position = position
+            )
+            .to_string(),
         )
     }
 }
@@ -384,19 +420,25 @@ impl Tool for SendText {
     fn execute(&self, executor: &ToolExecutor, args: serde_json::Value) -> ToolResult {
         let pane_id = match args.get("pane_id").and_then(|value| value.as_str()) {
             Some(value) if !value.is_empty() => value,
-            _ => return ToolResult::error("send_text", "参数 pane_id 是必需的非空字符串"),
+            _ => return ToolResult::error("send_text", param_required("pane_id")),
         };
         let text = match args.get("text").and_then(|value| value.as_str()) {
             Some(value) => value,
-            _ => return ToolResult::error("send_text", "参数 text 是必需的字符串"),
+            _ => return ToolResult::error("send_text", param_string("text")),
         };
 
         match executor
             .endpoint()
             .send_pane_text(pane_id, &format!("{text}\r"))
         {
-            Ok(()) => ToolResult::ok("send_text", format!("文本已发送到 pane {pane_id}")),
-            Err(error) => report("send_text", "发送文本失败", error),
+            Ok(()) => ToolResult::ok(
+                "send_text",
+                rust_i18n::t!("ai.tool.send.ok", pane_id = pane_id).to_string(),
+            ),
+            Err(error) => {
+                let action = crate::i18n::t("ai.tool.send.failed");
+                report("send_text", &action, error)
+            }
         }
     }
 }
@@ -436,7 +478,7 @@ impl Tool for ReadOutput {
     fn execute(&self, executor: &ToolExecutor, args: serde_json::Value) -> ToolResult {
         let pane_id = match args.get("pane_id").and_then(|value| value.as_str()) {
             Some(value) if !value.is_empty() => value,
-            _ => return ToolResult::error("read_output", "参数 pane_id 是必需的非空字符串"),
+            _ => return ToolResult::error("read_output", param_required("pane_id")),
         };
         let lines = args
             .get("lines")
@@ -449,7 +491,10 @@ impl Tool for ReadOutput {
             .read_pane(pane_id, ReadSource::Recent, lines)
         {
             Ok(read) => ToolResult::ok("read_output", clipped(read.text)),
-            Err(error) => report("read_output", &format!("读取 pane {pane_id} 失败"), error),
+            Err(error) => {
+                let action = rust_i18n::t!("ai.tool.read.failed", pane_id = pane_id).to_string();
+                report("read_output", &action, error)
+            }
         }
     }
 }
@@ -463,7 +508,8 @@ fn clipped(text: String) -> String {
     while end > 0 && !text.is_char_boundary(end) {
         end -= 1;
     }
-    format!("{}...[已截断，共 {} 字符]", &text[..end], text.len())
+    let suffix = rust_i18n::t!("ai.tool.read.truncated", count = text.len()).to_string();
+    format!("{}{}", &text[..end], suffix)
 }
 
 // ── wait_for_output ────────────────────────────────────────────────────
@@ -505,11 +551,11 @@ impl Tool for WaitForOutput {
     fn execute(&self, executor: &ToolExecutor, args: serde_json::Value) -> ToolResult {
         let pane_id = match args.get("pane_id").and_then(|value| value.as_str()) {
             Some(value) if !value.is_empty() => value,
-            _ => return ToolResult::error("wait_for_output", "参数 pane_id 是必需的非空字符串"),
+            _ => return ToolResult::error("wait_for_output", param_required("pane_id")),
         };
         let pattern = match args.get("pattern").and_then(|value| value.as_str()) {
             Some(value) if !value.is_empty() => value,
-            _ => return ToolResult::error("wait_for_output", "参数 pattern 是必需的非空字符串"),
+            _ => return ToolResult::error("wait_for_output", param_required("pattern")),
         };
         let timeout_ms = args
             .get("timeout_ms")
@@ -521,7 +567,10 @@ impl Tool for WaitForOutput {
             .wait_for_output(pane_id, pattern, WAIT_CONTEXT_LINES, timeout_ms)
         {
             Ok(read) => ToolResult::ok("wait_for_output", clipped(read.text)),
-            Err(error) => report("wait_for_output", "等待超时或失败", error),
+            Err(error) => {
+                let action = crate::i18n::t("ai.tool.wait.failed");
+                report("wait_for_output", &action, error)
+            }
         }
     }
 }
@@ -551,10 +600,13 @@ impl Tool for ListWorkers {
     fn execute(&self, executor: &ToolExecutor, _args: serde_json::Value) -> ToolResult {
         let agents = match executor.endpoint().list_agents() {
             Ok(agents) => agents,
-            Err(error) => return report("list_workers", "获取 worker 列表失败", error),
+            Err(error) => {
+                let action = crate::i18n::t("ai.tool.list.failed");
+                return report("list_workers", &action, error);
+            }
         };
         if agents.is_empty() {
-            return ToolResult::ok("list_workers", "当前没有运行中的 worker。");
+            return ToolResult::ok("list_workers", crate::i18n::t("ai.tool.list.empty"));
         }
         let lines: Vec<String> = agents
             .iter()
@@ -572,7 +624,12 @@ impl Tool for ListWorkers {
             .collect();
         ToolResult::ok(
             "list_workers",
-            format!("找到 {} 个 worker:\n{}", agents.len(), lines.join("\n")),
+            rust_i18n::t!(
+                "ai.tool.list.ok",
+                count = agents.len(),
+                list = lines.join("\n")
+            )
+            .to_string(),
         )
     }
 }
@@ -607,12 +664,18 @@ impl Tool for CloseWorker {
     fn execute(&self, executor: &ToolExecutor, args: serde_json::Value) -> ToolResult {
         let pane_id = match args.get("pane_id").and_then(|value| value.as_str()) {
             Some(value) if !value.is_empty() => value,
-            _ => return ToolResult::error("close_worker", "参数 pane_id 是必需的非空字符串"),
+            _ => return ToolResult::error("close_worker", param_required("pane_id")),
         };
 
         match executor.endpoint().close_pane(pane_id) {
-            Ok(()) => ToolResult::ok("close_worker", format!("Worker pane {pane_id} 已关闭")),
-            Err(error) => report("close_worker", "关闭 pane 失败", error),
+            Ok(()) => ToolResult::ok(
+                "close_worker",
+                rust_i18n::t!("ai.tool.close.ok", pane_id = pane_id).to_string(),
+            ),
+            Err(error) => {
+                let action = crate::i18n::t("ai.tool.close.failed");
+                report("close_worker", &action, error)
+            }
         }
     }
 }
@@ -644,7 +707,7 @@ pub fn find_tool(name: &str) -> Option<Box<dyn Tool>> {
 pub fn execute_tool_call(call: &ToolCall, executor: &ToolExecutor) -> ToolResult {
     match find_tool(&call.name) {
         Some(tool) => tool.execute(executor, call.arguments.clone()),
-        None => ToolResult::error("tool_dispatch", format!("未知工具: {}", call.name)),
+        None => ToolResult::error("tool_dispatch", unknown_tool(&call.name)),
     }
 }
 
@@ -700,7 +763,7 @@ mod tests {
             arguments: serde_json::json!({}),
         });
         assert!(result.is_error);
-        assert!(result.content.contains("获取 worker 列表失败"));
+        assert!(result.content.contains("listing workers failed"));
     }
 
     #[test]
@@ -785,7 +848,7 @@ mod tests {
         let text = "汉".repeat(MAX_READ_BYTES);
         let clipped = clipped(text);
         assert!(clipped.starts_with('汉'));
-        assert!(clipped.contains("已截断"));
+        assert!(clipped.contains("truncated"));
     }
 
     #[test]

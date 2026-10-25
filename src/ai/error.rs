@@ -64,48 +64,50 @@ impl From<anyhow::Error> for AiError {
 }
 
 /// Returns a user-friendly error message suitable for display in the UI.
+///
+/// Resolved through the locale table (`ai.error.*`): the guidance names the
+/// surfaces that actually exist — `~/.config/zenix/api-providers.json` for
+/// providers and `PATH` for agent CLIs — not the settings pages of an older
+/// information architecture.
 #[allow(dead_code)]
 pub fn user_friendly(err: &AiError) -> String {
     match err {
         AiError::ConfigMissing(msg) => {
             if msg.contains("provider") {
-                "请先在「设置 → 扩展 → API 提供商」中配置一个 API Provider。".into()
+                crate::i18n::t("ai.error.config_provider")
             } else if msg.contains("model") {
-                "请先在 API 提供商中选择或输入一个模型名称。".into()
+                crate::i18n::t("ai.error.config_model")
             } else {
-                format!("AI 配置不完整：{msg}")
+                rust_i18n::t!("ai.error.config_generic", msg = msg).to_string()
             }
         }
         AiError::ApiUnavailable(msg) => {
-            format!(
-                "无法连接 AI 服务。请检查 API 配置和网络连接：{}",
-                truncate_err(msg, 60)
-            )
+            rust_i18n::t!("ai.error.api_unavailable", msg = truncate_err(msg, 60)).to_string()
         }
         AiError::ApiError(msg) => {
             if msg.contains("401") {
-                "API Key 无效或已过期，请检查 API 提供商配置。".into()
+                crate::i18n::t("ai.error.api_401")
             } else if msg.contains("403") {
-                "API 权限不足，请检查 API 提供商配置。".into()
+                crate::i18n::t("ai.error.api_403")
             } else if msg.contains("429") {
-                "请求过于频繁，请稍后重试。".into()
+                crate::i18n::t("ai.error.api_429")
             } else if msg.contains("400") {
-                "模型请求格式有误，请检查模型名称和配置。".into()
+                crate::i18n::t("ai.error.api_400")
             } else {
-                format!("AI 服务返回错误：{}", truncate_err(msg, 80))
+                rust_i18n::t!("ai.error.api_error", msg = truncate_err(msg, 80)).to_string()
             }
         }
         AiError::AgentCliNotFound(agent) => {
-            format!("Agent CLI「{agent}」未安装。请在「设置 → 扩展 → Agent CLI」中安装该工具。",)
+            rust_i18n::t!("ai.error.agent_cli_missing", agent = agent).to_string()
         }
         AiError::IpcError(msg) => {
-            format!("herdr 通信失败：{}", truncate_err(msg, 60))
+            rust_i18n::t!("ai.error.ipc", msg = truncate_err(msg, 60)).to_string()
         }
         AiError::SerializationError(msg) => {
-            format!("数据序列化失败：{}", truncate_err(msg, 60))
+            rust_i18n::t!("ai.error.serialization", msg = truncate_err(msg, 60)).to_string()
         }
         AiError::Timeout(msg) => {
-            format!("操作超时：{}", truncate_err(msg, 40))
+            rust_i18n::t!("ai.error.timeout", msg = truncate_err(msg, 40)).to_string()
         }
     }
 }
@@ -162,20 +164,47 @@ mod tests {
         let e = AiError::ConfigMissing("no provider".into());
         let msg = user_friendly(&e);
         assert!(msg.contains("API Provider"));
+        // The guidance names the surface that exists, not a settings page of
+        // an older information architecture.
+        assert!(msg.contains("api-providers.json"));
     }
 
     #[test]
     fn test_user_friendly_401() {
         let e = AiError::ApiError("HTTP 401 unauthorized".into());
         let msg = user_friendly(&e);
-        assert!(msg.contains("API Key"));
+        assert!(msg.contains("api-providers.json"));
     }
 
     #[test]
     fn test_user_friendly_429() {
         let e = AiError::ApiError("HTTP 429 rate limit".into());
         let msg = user_friendly(&e);
-        assert!(msg.contains("请求过于频繁"));
+        assert!(msg.contains("Too many requests"));
+    }
+
+    #[test]
+    fn no_error_message_points_at_a_settings_page() {
+        let errors = [
+            AiError::ConfigMissing("no provider".into()),
+            AiError::ConfigMissing("no model".into()),
+            AiError::ConfigMissing("something else".into()),
+            AiError::ApiUnavailable("closed".into()),
+            AiError::ApiError("HTTP 401".into()),
+            AiError::ApiError("HTTP 403".into()),
+            AiError::ApiError("HTTP 429".into()),
+            AiError::ApiError("HTTP 400".into()),
+            AiError::ApiError("HTTP 500 boom".into()),
+            AiError::AgentCliNotFound("claude".into()),
+            AiError::IpcError("broken pipe".into()),
+            AiError::SerializationError("bad json".into()),
+            AiError::Timeout("slow".into()),
+        ];
+        for err in &errors {
+            let msg = user_friendly(err);
+            assert!(!msg.contains("设置 → 扩展"), "{msg:?}");
+            assert!(!msg.is_empty(), "{err:?}");
+        }
     }
 
     #[test]

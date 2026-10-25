@@ -66,34 +66,30 @@ impl McpToolHandler {
     }
 
     pub(crate) fn ok(text: String) -> CallToolResult {
-        serde_json::from_value(serde_json::json!({
-            "content": [{"type": "text", "text": text}],
-            "isError": false
-        }))
-        .unwrap_or_else(|_| Self::err("failed to serialize ok response".into()))
+        CallToolResult::success(vec![ContentBlock::text(text)])
     }
 
     pub(crate) fn err(text: String) -> CallToolResult {
-        serde_json::from_value(serde_json::json!({
-            "content": [{"type": "text", "text": text}],
-            "isError": true
-        }))
-        .unwrap_or_else(|_| {
-            serde_json::from_value(serde_json::json!({
-                "content": [{"type": "text", "text": "internal error"}],
-                "isError": true
-            }))
-            .unwrap()
-        })
+        CallToolResult::error(vec![ContentBlock::text(text)])
     }
 
+    /// A tool definition for the listing. The schema usually arrives as an
+    /// object; one that does not is advertised bare rather than taking the
+    /// request down — a malformed schema is the caller's to discover.
     pub(crate) fn tool_def(name: &str, desc: &str, schema: Value) -> Tool {
-        serde_json::from_value(serde_json::json!({
+        match serde_json::from_value(serde_json::json!({
             "name": name,
             "description": desc,
             "inputSchema": schema
-        }))
-        .unwrap()
+        })) {
+            Ok(tool) => tool,
+            Err(error) => {
+                tracing::warn!(
+                    "mcp: tool {name}'s schema was rejected, advertising it bare: {error}"
+                );
+                Tool::new(name.to_owned(), desc.to_owned(), Arc::default())
+            }
+        }
     }
 
     pub fn build_tools() -> Vec<Tool> {
