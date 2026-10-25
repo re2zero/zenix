@@ -17,6 +17,8 @@ use gpui_kit::component::scroll::ScrollableElement;
 use gpui_kit::component::{ActiveTheme, Theme, h_flex, v_flex};
 use gpui_kit::*;
 
+use std::rc::Rc;
+
 use super::host::PluginState;
 use super::model::{Availability, Context, InstalledPlugin, LogStatus, Placement, PluginAction};
 use super::panels::{button, line, section, status_dot};
@@ -72,23 +74,43 @@ impl Manager {
     }
 }
 
-/// The manager, laid over the shell. `key` is the shell's own handler, so a
-/// keystroke means the same here as it does in the palette.
+/// The shell's own keystroke handler, as the dialog hears it.
+pub(crate) type KeyHandler = Rc<dyn Fn(&KeyDownEvent, &mut Window, &mut App)>;
+
+/// The manager's keyboard, as the shell holds it: the focus the dialog
+/// tracks and the one keystroke handler it answers.
+pub(crate) struct ManagerKeys<'a> {
+    pub(crate) focus: &'a FocusHandle,
+    pub(crate) key: KeyHandler,
+}
+
+/// The manager, laid over the shell. The keyboard rides in with
+/// [`ManagerKeys`], so a keystroke means the same here as it does in the
+/// palette.
 pub(crate) fn overlay(
     manager: &Manager,
     state: &PluginState,
     availability: Availability,
-    focus: &FocusHandle,
     dispatch: &Dispatch,
-    key: impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static,
+    keys: ManagerKeys<'_>,
+    window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let theme = cx.theme().clone();
     let close = dispatch.clone();
+    // The prototype's own numbers: min(1060px, 95vw) wide, min(680px, 90vh)
+    // tall, so a small window shrinks the dialog instead of clipping it. The
+    // two columns scroll inside whatever height is left.
+    let viewport = window.viewport_size();
+    let width = px(1060.).min(viewport.width * 0.95);
+    let height = px(680.).min(viewport.height * 0.9);
+    let key = keys.key;
     let mut boxed = v_flex()
         .id("plugin-manager")
-        .w(px(1060.))
-        .h(px(680.))
+        .w(width)
+        .max_w_full()
+        .h(height)
+        .max_h_full()
         .overflow_hidden()
         .rounded(px(8.))
         .bg(theme.background)
@@ -102,8 +124,8 @@ pub(crate) fn overlay(
         // A press inside the dialog belongs to the dialog: stopping it keeps
         // the scrim's listener from reading a control's click as a dismiss.
         .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-        .track_focus(focus)
-        .on_key_down(key)
+        .track_focus(keys.focus)
+        .on_key_down(move |event, window, cx| key(event, window, cx))
         .child(
             h_flex()
                 .w_full()

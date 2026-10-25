@@ -1686,6 +1686,7 @@ impl Render for ShellView {
                     run: Rc::new(cx.listener(Self::palette_run)),
                     dismiss: Rc::new(cx.listener(Self::palette_dismiss)),
                 },
+                window,
                 cx,
             ));
         }
@@ -1696,6 +1697,7 @@ impl Render for ShellView {
                 &self.settings_focus,
                 &dispatch,
                 self.settings_reset_armed,
+                window,
                 cx,
             ));
         }
@@ -1707,9 +1709,12 @@ impl Render for ShellView {
                 &self.manager,
                 &plugins,
                 Availability::of(live.snapshot.as_deref()),
-                &self.manager_focus,
                 &dispatch,
-                cx.listener(Self::manager_key),
+                manager::ManagerKeys {
+                    focus: &self.manager_focus,
+                    key: Rc::new(cx.listener(Self::manager_key)),
+                },
+                window,
                 cx,
             ));
         }
@@ -1721,6 +1726,7 @@ impl Render for ShellView {
                 &self.trust_focus,
                 &dispatch,
                 cx.listener(Self::trust_key),
+                window,
                 cx,
             ));
         }

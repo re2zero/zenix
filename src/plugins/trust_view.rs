@@ -146,6 +146,7 @@ pub(crate) fn overlay(
     focus: &FocusHandle,
     dispatch: &Dispatch,
     key: impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static,
+    window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let theme = cx.theme().clone();
@@ -157,6 +158,11 @@ pub(crate) fn overlay(
         .as_ref()
         .is_some_and(Result::is_ok)
         .then(|| typed_path.clone());
+    // The prototype's own numbers: min(620px, 92vw) wide, at most 80vh tall,
+    // so a small window shrinks the dialog instead of clipping it.
+    let viewport = window.viewport_size();
+    let width = px(620.).min(viewport.width * 0.92);
+    let max_height = viewport.height * 0.8;
     let input = if typed_path.is_empty() {
         div()
             .text_sm()
@@ -170,8 +176,9 @@ pub(crate) fn overlay(
     };
     let mut boxed = v_flex()
         .id("plugin-trust")
-        .w(px(620.))
-        .max_h(px(800.))
+        .w(width)
+        .max_w_full()
+        .max_h(max_height)
         .overflow_hidden()
         .rounded(px(8.))
         .bg(theme.background)

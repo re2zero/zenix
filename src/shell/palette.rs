@@ -401,12 +401,21 @@ pub(crate) fn overlay(
     keymap: &Keymap,
     dispatch: &Dispatch,
     actions: PaletteActions,
+    window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let theme = cx.theme().clone();
     let matches = palette.matches(entries, cx);
     let rows = plan(&matches);
     let close = dispatch.clone();
+
+    // The prototype's own numbers: the palette hangs at 11vh and is
+    // min(680px, 92vw) wide with a 68vh cap, so a short window shrinks it
+    // instead of clipping the rows.
+    let viewport = window.viewport_size();
+    let top = viewport.height * 0.11;
+    let width = px(680.).min(viewport.width * 0.92);
+    let max_height = viewport.height * 0.68;
 
     let input = palette.input().expect("an open palette has its input");
     let focus = input.read(cx).focus_handle(cx).clone();
@@ -471,9 +480,9 @@ pub(crate) fn overlay(
 
     let boxed = v_flex()
         .id("palette")
-        .w(px(680.))
+        .w(width)
         .max_w_full()
-        .max_h(px(680.))
+        .max_h(max_height)
         .overflow_hidden()
         .rounded(px(8.))
         .bg(theme.background)
@@ -565,9 +574,7 @@ pub(crate) fn overlay(
         .occlude()
         .justify_center()
         .items_start()
-        // The prototype hangs the palette at 11vh; 110px is that line at the
-        // design's 1000px height.
-        .pt(px(110.))
+        .pt(top)
         // The dark around the dialog dismisses, on the press itself rather
         // than the click: a press inside the dialog never reaches this
         // listener, because the dialog stops it first.

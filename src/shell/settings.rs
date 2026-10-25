@@ -901,6 +901,7 @@ pub(crate) fn overlay(
     focus: &FocusHandle,
     dispatch: &Dispatch,
     reset_armed: bool,
+    window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
     let theme = cx.theme().clone();
@@ -925,11 +926,16 @@ pub(crate) fn overlay(
     } else {
         black().opacity(0.22)
     };
+    // The prototype's own numbers: min(1000px, 94vw) wide, min(660px, 88vh)
+    // tall, so a small window shrinks the dialog instead of clipping it.
+    let viewport = window.viewport_size();
+    let width = px(1000.).min(viewport.width * 0.94);
+    let height = px(660.).min(viewport.height * 0.88);
     let dialog = v_flex()
-        .w_full()
-        .max_w(px(1000.))
-        .h_full()
-        .max_h(px(660.))
+        .w(width)
+        .max_w_full()
+        .h(height)
+        .max_h_full()
         .rounded(px(8.))
         .border_1()
         .border_color(theme.border)
