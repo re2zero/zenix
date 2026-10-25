@@ -17,6 +17,12 @@
 //!   there are pointed at from the settings panel's Config page rather than
 //!   duplicated here.
 //!
+//! Diagnostic messages (the [`Diagnostic`] list) are deliberately terse
+//! English, not locale-resolved: they quote JSON paths, type names and ranges
+//! that are identifiers anyway, and the surrounding page labels carry the
+//! locale. Keeping the detail machine-shaped keeps it greppable against the
+//! file the user is editing.
+//!
 //! ## Schema
 //!
 //! The appearance, terminal and layout sections each are a group in the

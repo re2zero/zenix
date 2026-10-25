@@ -418,6 +418,110 @@ ai:
   config_empty_hint:
     en: "Add one to ~/.config/zenix/api-providers.json."
     zh-CN: "请在 ~/.config/zenix/api-providers.json 中添加一个。"
+  error:
+    config_provider:
+      en: "Configure an API Provider first: add one to ~/.config/zenix/api-providers.json."
+      zh-CN: "请先配置一个 API 提供商：在 ~/.config/zenix/api-providers.json 中添加一个。"
+    config_model:
+      en: "Pick or enter a model name for the API Provider."
+      zh-CN: "请在 API 提供商中选择或输入一个模型名称。"
+    config_generic:
+      en: "AI configuration is incomplete: %{msg}"
+      zh-CN: "AI 配置不完整：%{msg}"
+    api_unavailable:
+      en: "Cannot reach the AI service. Check the API configuration and the network: %{msg}"
+      zh-CN: "无法连接 AI 服务。请检查 API 配置和网络连接：%{msg}"
+    api_401:
+      en: "The API key is invalid or expired. Check the provider entry in ~/.config/zenix/api-providers.json."
+      zh-CN: "API Key 无效或已过期，请检查 ~/.config/zenix/api-providers.json 中的提供商配置。"
+    api_403:
+      en: "The API key lacks permission for this model. Check the provider entry in ~/.config/zenix/api-providers.json."
+      zh-CN: "API 权限不足，请检查 ~/.config/zenix/api-providers.json 中的提供商配置。"
+    api_429:
+      en: "Too many requests. Wait a moment and try again."
+      zh-CN: "请求过于频繁，请稍后重试。"
+    api_400:
+      en: "The model request was malformed. Check the model name and the provider configuration."
+      zh-CN: "模型请求格式有误，请检查模型名称和提供商配置。"
+    api_error:
+      en: "The AI service returned an error: %{msg}"
+      zh-CN: "AI 服务返回错误：%{msg}"
+    agent_cli_missing:
+      en: "Agent CLI \"%{agent}\" is not installed. Install it and make sure it is on PATH."
+      zh-CN: "Agent CLI「%{agent}」未安装。请安装并确保其在 PATH 中。"
+    ipc:
+      en: "herdr communication failed: %{msg}"
+      zh-CN: "herdr 通信失败：%{msg}"
+    serialization:
+      en: "Data serialization failed: %{msg}"
+      zh-CN: "数据序列化失败：%{msg}"
+    timeout:
+      en: "The operation timed out: %{msg}"
+      zh-CN: "操作超时：%{msg}"
+  tool:
+    unknown:
+      en: "Unknown tool: %{name}"
+      zh-CN: "未知工具：%{name}"
+    param_required:
+      en: "Argument %{param} is required and must be a non-empty string."
+      zh-CN: "参数 %{param} 是必需的非空字符串"
+    param_string:
+      en: "Argument %{param} is required."
+      zh-CN: "参数 %{param} 是必需的字符串"
+    spawn:
+      split_failed:
+        en: "failed to create the worker pane"
+        zh-CN: "创建 worker pane 失败"
+      agent_start_failed:
+        en: "failed to start agent '%{agent}'"
+        zh-CN: "启动 Agent '%{agent}' 失败"
+      not_ready:
+        en: "The pane for worker '%{agent}' was created (pane_id=%{pane_id}), but the agent is not ready: %{error}"
+        zh-CN: "Worker '%{agent}' 的 pane 已创建（pane_id=%{pane_id}），但 Agent 未就绪: %{error}"
+      prompt_failed:
+        en: "Worker '%{agent}' started (pane_id=%{pane_id}, name=%{name}), but sending the instruction failed: %{error}"
+        zh-CN: "Worker '%{agent}' 已启动（pane_id=%{pane_id}, name=%{name}），但发送指令失败: %{error}"
+      position:
+        en: ", at (%{row},%{col})"
+        zh-CN: ", 位置=(%{row},%{col})"
+      ok:
+        en: "Worker '%{agent}' started: pane_id=%{pane_id}, terminal_id=%{terminal_id}%{position}"
+        zh-CN: "Worker '%{agent}' 已启动: pane_id=%{pane_id}, terminal_id=%{terminal_id}%{position}"
+    send:
+      ok:
+        en: "Text sent to pane %{pane_id}"
+        zh-CN: "文本已发送到 pane %{pane_id}"
+      failed:
+        en: "failed to send the text"
+        zh-CN: "发送文本失败"
+    read:
+      failed:
+        en: "failed to read pane %{pane_id}"
+        zh-CN: "读取 pane %{pane_id} 失败"
+      truncated:
+        en: "...[truncated, %{count} characters in total]"
+        zh-CN: "...[已截断，共 %{count} 字符]"
+    wait:
+      failed:
+        en: "the wait timed out or failed"
+        zh-CN: "等待超时或失败"
+    list:
+      failed:
+        en: "listing workers failed"
+        zh-CN: "获取 worker 列表失败"
+      empty:
+        en: "No workers are running."
+        zh-CN: "当前没有运行中的 worker。"
+      ok:
+        en: "Found %{count} workers:\n%{list}"
+        zh-CN: "找到 %{count} 个 worker:\n%{list}"
+    close:
+      ok:
+        en: "Worker pane %{pane_id} closed"
+        zh-CN: "Worker pane %{pane_id} 已关闭"
+      failed:
+        en: "failed to close the pane"
+        zh-CN: "关闭 pane 失败"
   placeholder:
     en: "Type a message... (@ to mention, / for commands)"
     zh-CN: "输入消息... (@ 提及，/ 命令)"

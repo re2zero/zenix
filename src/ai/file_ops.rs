@@ -3,6 +3,10 @@
 //! These functions provide file read, directory listing, and glob-based
 //! file search capabilities. They are NOT registered as orchestrator tools
 //! but are available for internal use (e.g., context collection).
+//!
+//! Their output and error strings are read by the model, not rendered, so
+//! they stay verbatim instead of resolving through the locale table — the
+//! same convention as the tool descriptions in `crate::ai::tools`.
 
 /// Maximum file read size (50 KB).
 #[allow(dead_code)]

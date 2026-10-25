@@ -236,8 +236,32 @@ pub struct SessionManager {
     conn: Mutex<Connection>,
 }
 
+/// The one connection the process shares. Chat history is read and written
+/// from the UI thread on every user action, and a fresh open ran the DDL
+/// script against the file each time; sharing one connection turns that into
+/// a mutex hand-off. The MCP bridge keeps its own (opened once at startup),
+/// which is the same two-writer situation the per-call opens had, minus the
+/// chatter between them.
+static SHARED: std::sync::OnceLock<SessionManager> = std::sync::OnceLock::new();
+
 #[allow(dead_code)]
 impl SessionManager {
+    /// The process-wide manager, opened on first use. A failed open is not
+    /// remembered: the next caller retries, so a temporarily full disk does
+    /// not turn into a permanently dead store.
+    pub fn shared() -> Result<&'static Self> {
+        if let Some(manager) = SHARED.get() {
+            return Ok(manager);
+        }
+        let manager = Self::open()?;
+        let _ = SHARED.set(manager);
+        // A loser of a race reads the winner's manager; either way one is
+        // there by now.
+        Ok(SHARED
+            .get()
+            .expect("a manager is set on every success path"))
+    }
+
     pub fn open() -> Result<Self> {
         let db_path = platform::zenix_config_dir().join("ai").join("zenix-ai.db");
         if let Some(parent) = db_path.parent() {

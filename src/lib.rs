@@ -4,6 +4,17 @@
 //! `src/main.rs` is a thin binary that only calls [`run`], so the tree is
 //! compiled once instead of once per target. The library exposes the public API
 //! for plugins and sub-applications to integrate with zenix.
+//!
+//! ## Threads
+//!
+//! The client's resident threads — the daemon reader (`herdr::connection`), the
+//! event stream (`events`), the fleet stream (`fleet`), the plugin host and its
+//! UI-data reader (`plugins::{host,ui_data}`) and the worktree worker
+//! (`worktrees`) — are detached and live for the process. The quit mode is
+//! `LastWindowClosed`: closing the last window is process exit, which takes
+//! every thread with it, so there is nothing for a stop flag to stop. A
+//! per-window shutdown story arrives with multi-window (PLAN §3 B tier); until
+//! then a thread's lifetime is the process's.
 
 rust_i18n::i18n!("locales");
 

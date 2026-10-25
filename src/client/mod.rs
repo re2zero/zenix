@@ -41,7 +41,9 @@ pub fn ensure_herdr() -> Option<PathBuf> {
     // 4. Seed binary from package install — copy to user-local path
     let seed = platform::seed_herdr();
     if seed.is_file() {
-        let _ = std::fs::create_dir_all(user.parent().unwrap());
+        if let Some(parent) = user.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
         if std::fs::copy(&seed, &user).is_ok() {
             // Make it executable (copy preserves mode from seed)
             tracing::info!("installed herdr to {}", user.display());

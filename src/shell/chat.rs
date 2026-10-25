@@ -533,7 +533,7 @@ impl ChatPanel {
                 // moves this session to the top of the history the next time
                 // it opens.
                 if let Some(session_id) = self.session_id.clone()
-                    && let Err(error) = SessionManager::open().and_then(|manager| {
+                    && let Err(error) = SessionManager::shared().and_then(|manager| {
                         manager.touch_session(&session_id, &crate::util::timestamp_now())
                     })
                 {
@@ -594,7 +594,7 @@ impl ChatPanel {
         if let Some(id) = &self.session_id {
             return id.clone();
         }
-        let Ok(manager) = SessionManager::open() else {
+        let Ok(manager) = SessionManager::shared() else {
             return String::new();
         };
         let now = crate::util::timestamp_now();
@@ -625,7 +625,7 @@ impl ChatPanel {
             cx.notify();
             return;
         }
-        let sessions = SessionManager::open()
+        let sessions = SessionManager::shared()
             .and_then(|manager| manager.list_sessions())
             .unwrap_or_default();
         self.history = Some(History {
@@ -642,7 +642,7 @@ impl ChatPanel {
         let Some(history) = self.history.as_mut() else {
             return;
         };
-        history.sessions = SessionManager::open()
+        history.sessions = SessionManager::shared()
             .and_then(|manager| manager.list_sessions())
             .unwrap_or_default();
         cx.notify();
@@ -654,7 +654,7 @@ impl ChatPanel {
         if self.is_streaming() {
             self.stop(cx);
         }
-        let manager = match SessionManager::open() {
+        let manager = match SessionManager::shared() {
             Ok(manager) => manager,
             Err(error) => {
                 self.error = Some(error.to_string());
@@ -714,21 +714,23 @@ impl ChatPanel {
 
     /// Put a row into its rename editor, prefilled with the title it has.
     fn start_rename(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(history) = self.history.as_ref() else {
-            return;
-        };
-        let Some(session) = history.sessions.iter().find(|session| session.id == id) else {
+        let Some(session) = self
+            .history
+            .as_ref()
+            .and_then(|history| history.sessions.iter().find(|session| session.id == id))
+        else {
             return;
         };
         let title = session.title.clone();
         let input = cx.new(|cx| InputState::new(window, cx));
         input.update(cx, |input, cx| input.set_value(title, window, cx));
         let focus = input.read(cx).focus_handle(cx).clone();
-        let history = self.history.as_mut().expect("history checked above");
-        history.rename = Some((id.to_owned(), input));
-        history.confirm = None;
-        window.focus(&focus, cx);
-        cx.notify();
+        if let Some(history) = self.history.as_mut() {
+            history.rename = Some((id.to_owned(), input));
+            history.confirm = None;
+            window.focus(&focus, cx);
+            cx.notify();
+        }
     }
 
     /// Put the row's editor's text into the store. An empty editor cancels
@@ -750,7 +752,7 @@ impl ChatPanel {
             cx.notify();
             return;
         }
-        if let Err(error) = SessionManager::open().and_then(|manager| {
+        if let Err(error) = SessionManager::shared().and_then(|manager| {
             manager
                 .get_session(&id)?
                 .ok_or_else(|| anyhow::anyhow!("no such session"))
@@ -798,7 +800,8 @@ impl ChatPanel {
             self.open.clear();
             self.session_id = None;
         }
-        if let Err(error) = SessionManager::open().and_then(|manager| manager.delete_session(id)) {
+        if let Err(error) = SessionManager::shared().and_then(|manager| manager.delete_session(id))
+        {
             tracing::warn!(target: "zenix-chat", %error, "the session was not deleted");
         }
         self.refresh_history(cx);
@@ -1860,7 +1863,7 @@ fn persist(message: &ChatMessage) {
     if message.session_id.is_empty() {
         return;
     }
-    match SessionManager::open() {
+    match SessionManager::shared() {
         Ok(manager) => {
             if let Err(error) = manager.add_message(message) {
                 tracing::warn!(target: "zenix-chat", %error, "the message was not saved");
