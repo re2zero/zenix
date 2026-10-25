@@ -35,8 +35,37 @@ use herdr_client::protocol::{
 pub const BACKGROUND: u32 = 0x101419;
 #[cfg(test)]
 pub const FOREGROUND: u32 = 0xd8dee9;
+/// The font size and cell height the grid draws at until the config says
+/// otherwise (`crate::config::TerminalConfig`). Both stay: the painter's own
+/// default, and the pair every terminal test measures against.
 pub const FONT_SIZE: f32 = 14.;
 pub const CELL_HEIGHT: f32 = 20.;
+
+/// The cell height the config's pair produces: the font size times its line
+/// height, rounded to whole pixels so the grid never draws a fractional row.
+pub fn cell_height(font_size: f32, line_height: f32) -> f32 {
+    (font_size * line_height).round().max(1.)
+}
+
+/// The shape the client draws the daemon's cursor as. The daemon reports a
+/// shape per frame; the config's choice is the painter's own override.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum CursorShape {
+    #[default]
+    Block,
+    Bar,
+    Underline,
+}
+
+impl CursorShape {
+    pub(crate) fn from_name(name: &str) -> Self {
+        match name {
+            "bar" => Self::Bar,
+            "underline" => Self::Underline,
+            _ => Self::Block,
+        }
+    }
+}
 
 pub(crate) const BOLD: u16 = 1;
 pub(crate) const DIM: u16 = 1 << 1;

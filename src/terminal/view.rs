@@ -44,7 +44,7 @@ use crate::terminal::split_drag::SplitDrag;
 use crate::terminal::splits;
 use crate::terminal::theme::Theme;
 use crate::terminal::{
-    CELL_HEIGHT, FONT_SIZE, InputTarget, Scrollbar, WheelAccumulator, WheelTarget, input_area,
+    CursorShape, InputTarget, Scrollbar, WheelAccumulator, WheelTarget, cell_height, input_area,
     input_cursor_bounds, key_input, pane_at, popup_origin, viewport, wheel_target,
 };
 
@@ -120,6 +120,12 @@ pub(crate) struct TerminalView {
     connection: Connection,
     painter: Rc<RefCell<TerminalPainter>>,
     font: Font,
+    /// The font's size and the cell's height the grid draws at, from the
+    /// config (`crate::config::TerminalConfig`). Hit tests, the region views
+    /// and the resize all measure with these, so a settings change re-sends
+    /// the surface size by itself.
+    font_size: f32,
+    cell_height: f32,
     theme: Theme,
     /// The state the last event brought in; painted as-is.
     live: LiveState,
@@ -173,6 +179,10 @@ pub(crate) struct TerminalView {
 
 impl TerminalView {
     pub(crate) fn new(cx: &mut Context<Self>) -> Self {
+        let (font_size, line_height) = {
+            let config = &crate::config::get(cx).terminal;
+            (config.font_size, config.line_height)
+        };
         let (pulse, pulses) = crossbeam_channel::unbounded::<()>();
         let connection = Connection::start(ConnectTarget::Local, move || {
             // A closed inbox means the view that owns this connection is gone;
@@ -203,11 +213,13 @@ impl TerminalView {
             connection,
             painter: Rc::new(RefCell::new(TerminalPainter::default())),
             font: font("Lilex"),
+            font_size,
+            cell_height: cell_height(font_size, line_height),
             theme: Theme::default(),
             live: LiveState::default(),
             drawn_revision: 0,
             bounds: Rc::new(Cell::new(Bounds::default())),
-            cell_width: Rc::new(Cell::new(FONT_SIZE / 2.)),
+            cell_width: Rc::new(Cell::new(font_size / 2.)),
             sent_options: Rc::new(Cell::new(None)),
             marked: String::new(),
             wheel: WheelAccumulator::default(),
@@ -257,6 +269,26 @@ impl TerminalView {
             self.theme = theme;
             cx.notify();
         }
+    }
+
+    /// Draw at the config's metrics and cursor. A changed size or line height
+    /// moves every cell, so the painter reshapes its glyphs and the next paint
+    /// asks the daemon for a different grid; the cursor shape only changes
+    /// what the cursor quad looks like.
+    pub(crate) fn set_metrics(
+        &mut self,
+        font_size: f32,
+        line_height: f32,
+        cursor: CursorShape,
+        cx: &mut Context<Self>,
+    ) {
+        let height = cell_height(font_size, line_height);
+        if self.font_size != font_size || self.cell_height != height {
+            self.font_size = font_size;
+            self.cell_height = height;
+        }
+        self.painter.borrow_mut().set_cursor(cursor);
+        cx.notify();
     }
 
     /// Take whatever the connection has applied since the last paint.
@@ -864,7 +896,7 @@ impl TerminalView {
             .panes
             .iter()
             .find(|candidate| candidate.pane_id == pane)?;
-        Scrollbar::new(pane, self.cell_width.get(), CELL_HEIGHT)
+        Scrollbar::new(pane, self.cell_width.get(), self.cell_height)
     }
 
     /// Grab the thumb where pressed, or jump it under the pointer when the
@@ -879,7 +911,7 @@ impl TerminalView {
         };
         let local = position - self.bounds.get().origin;
         let (pane, bar) = match surface.panes.iter().find_map(|pane| {
-            Scrollbar::new(pane, self.cell_width.get(), CELL_HEIGHT)
+            Scrollbar::new(pane, self.cell_width.get(), self.cell_height)
                 .filter(|bar| bar.track.contains(&local))
                 .map(|bar| (pane.pane_id.clone(), bar))
         }) {
@@ -1092,11 +1124,13 @@ impl TerminalView {
         let x = (event.position.x - origin.x).to_f64() as f32;
         let y = (event.position.y - origin.y).to_f64() as f32;
         let cell_width = self.cell_width.get();
-        let Some(target) = wheel_target(&surface, x, y, cell_width, CELL_HEIGHT) else {
+        let Some(target) = wheel_target(&surface, x, y, cell_width, self.cell_height) else {
             self.wheel = WheelAccumulator::default();
             return;
         };
-        let steps = self.wheel.steps(&target, event, cell_width, CELL_HEIGHT);
+        let steps = self
+            .wheel
+            .steps(&target, event, cell_width, self.cell_height);
         cx.stop_propagation();
         for input in target.wheel_events(steps, event.modifiers) {
             self.send_to(&target.target, vec![input]);
@@ -1169,7 +1203,7 @@ impl TerminalView {
             self.bounds.get(),
             event.position,
             self.cell_width.get(),
-            CELL_HEIGHT,
+            self.cell_height,
         ) else {
             return;
         };
@@ -1198,7 +1232,7 @@ impl TerminalView {
             f32::from(local.x),
             f32::from(local.y),
             self.cell_width.get(),
-            CELL_HEIGHT,
+            self.cell_height,
             clicks,
         );
         let begun = selection.is_some();
@@ -1219,7 +1253,7 @@ impl TerminalView {
             f32::from(local.x),
             f32::from(local.y),
             self.cell_width.get(),
-            CELL_HEIGHT,
+            self.cell_height,
         )
     }
 
@@ -1331,7 +1365,7 @@ impl TerminalView {
                         f32::from(local.x),
                         f32::from(local.y),
                         cell_width,
-                        CELL_HEIGHT,
+                        self.cell_height,
                     )
                 });
                 if changed {
@@ -1440,7 +1474,7 @@ impl TerminalView {
         let origin = self.bounds.get().origin;
         let x = (position.x - origin.x).to_f64() as f32;
         let y = (position.y - origin.y).to_f64() as f32;
-        wheel_target(surface, x, y, self.cell_width.get(), CELL_HEIGHT)
+        wheel_target(surface, x, y, self.cell_width.get(), self.cell_height)
     }
 
     /// Re-resolve a drag against the target it was pressed on: the pointer is
@@ -1461,7 +1495,7 @@ impl TerminalView {
             f32::from(bounds.top()),
             f32::from(bounds.bottom()).next_down(),
         );
-        let hit = wheel_target(surface, x, y, self.cell_width.get(), CELL_HEIGHT)?;
+        let hit = wheel_target(surface, x, y, self.cell_width.get(), self.cell_height)?;
         (hit.target == gesture.hit.target && hit.bounds == bounds && hit.mouse_reporting)
             .then_some(hit)
     }
@@ -1526,7 +1560,7 @@ impl TerminalView {
             f32::from(local.x),
             f32::from(local.y),
             self.cell_width.get(),
-            CELL_HEIGHT,
+            self.cell_height,
         ) else {
             return false;
         };
@@ -1553,7 +1587,7 @@ impl TerminalView {
             return false;
         }
         let local = event.position - self.bounds.get().origin;
-        let (cell_width, cell_height) = (self.cell_width.get(), CELL_HEIGHT);
+        let (cell_width, cell_height) = (self.cell_width.get(), self.cell_height);
         if let Some(drag) = self.split_drag.as_mut() {
             drag.drag(
                 f32::from(local.x),
@@ -1607,7 +1641,7 @@ impl TerminalView {
             f32::from(local.x),
             f32::from(local.y),
             self.cell_width.get(),
-            CELL_HEIGHT,
+            self.cell_height,
         )
         .map(|split| splits::cursor(split.direction))
     }
@@ -1805,11 +1839,13 @@ impl Render for TerminalView {
         // this call the one deliberate exception to the project's "no state
         // changes in render" rule; see src/AGENTS.md.
         let regions_painter = self.painter.clone();
+        let font_size = self.font_size;
+        let cell_height = self.cell_height;
         let look = Look {
             font: self.font.clone(),
-            font_size: FONT_SIZE,
+            font_size,
             cell_width,
-            cell_height: CELL_HEIGHT,
+            cell_height,
             theme: theme.clone(),
         };
         let regions = self
@@ -1964,11 +2000,11 @@ impl Render for TerminalView {
                                                         bounds.size.width.to_f64() as f32,
                                                         bounds.size.height.to_f64() as f32,
                                                         cell_width,
-                                                        CELL_HEIGHT,
+                                                        cell_height,
                                                     ),
                                                     cell_width_px: cell_width.round().max(1.)
                                                         as u32,
-                                                    cell_height_px: CELL_HEIGHT.round() as u32,
+                                                    cell_height_px: cell_height.round() as u32,
                                                 };
                                                 if sent_options.get() != Some(options)
                                                     && connection.resize(options)
@@ -1988,8 +2024,8 @@ impl Render for TerminalView {
                                                 };
                                                 let mut painter = paint_painter.borrow_mut();
                                                 painter.set_appearance(
-                                                    FONT_SIZE,
-                                                    CELL_HEIGHT,
+                                                    font_size,
+                                                    cell_height,
                                                     theme.clone(),
                                                 );
                                                 if whole {
@@ -2014,6 +2050,7 @@ impl Render for TerminalView {
                                                     &surface,
                                                     bounds.origin,
                                                     cell_width,
+                                                    cell_height,
                                                     &theme,
                                                     cx,
                                                     window,
@@ -2038,7 +2075,7 @@ impl Render for TerminalView {
                                                         Some(&surface),
                                                         bounds,
                                                         cell_width,
-                                                        CELL_HEIGHT,
+                                                        cell_height,
                                                     );
                                                     // In paint order: an opaque backdrop, so no
                                                     // pane cell reads through; the popup's own
@@ -2080,7 +2117,7 @@ impl Render for TerminalView {
                                                                 &surface.frame,
                                                                 &popup.frame,
                                                                 cell_width,
-                                                                CELL_HEIGHT,
+                                                                cell_height,
                                                             )
                                                     });
                                                 let chrome_origin = |popup: bool| {
@@ -2101,13 +2138,13 @@ impl Render for TerminalView {
                                                                 px(f32::from(columns.start)
                                                                     * cell_width),
                                                                 px(f32::from(highlight.row)
-                                                                    * CELL_HEIGHT),
+                                                                    * cell_height),
                                                             ),
                                                         size(
                                                             px(f32::from(
                                                                 columns.end - columns.start,
                                                             ) * cell_width),
-                                                            px(CELL_HEIGHT),
+                                                            px(cell_height),
                                                         ),
                                                     );
                                                     window.paint_quad(fill(
@@ -2130,13 +2167,13 @@ impl Render for TerminalView {
                                                                 px(f32::from(columns.start)
                                                                     * cell_width),
                                                                 px(f32::from(hit.row)
-                                                                    * CELL_HEIGHT),
+                                                                    * cell_height),
                                                             ),
                                                         size(
                                                             px(f32::from(
                                                                 columns.end - columns.start,
                                                             ) * cell_width),
-                                                            px(CELL_HEIGHT),
+                                                            px(cell_height),
                                                         ),
                                                     );
                                                     let tint = if hit.current {
@@ -2160,13 +2197,13 @@ impl Render for TerminalView {
                                                                 px(f32::from(columns.start)
                                                                     * cell_width),
                                                                 px(f32::from(hit.row)
-                                                                    * CELL_HEIGHT),
+                                                                    * cell_height),
                                                             ),
                                                         size(
                                                             px(f32::from(
                                                                 columns.end - columns.start,
                                                             ) * cell_width),
-                                                            px(CELL_HEIGHT),
+                                                            px(cell_height),
                                                         ),
                                                     );
                                                     let tint = if hit.cursor {
@@ -2184,8 +2221,8 @@ impl Render for TerminalView {
                                                         let width =
                                                             f32::from(columns.end - columns.start)
                                                                 * cell_width;
-                                                        let top = f32::from(link.row) * CELL_HEIGHT
-                                                            + CELL_HEIGHT
+                                                        let top = f32::from(link.row) * cell_height
+                                                            + cell_height
                                                             - 2.;
                                                         window.paint_quad(fill(
                                                             Bounds::new(
@@ -2206,14 +2243,14 @@ impl Render for TerminalView {
                                                             Some(&surface),
                                                             bounds.origin,
                                                             cell_width,
-                                                            CELL_HEIGHT,
+                                                            cell_height,
                                                         )
                                                         .origin,
                                                         input_area(
                                                             Some(&surface),
                                                             bounds,
                                                             cell_width,
-                                                            CELL_HEIGHT,
+                                                            cell_height,
                                                         ),
                                                         &paint_font,
                                                         window,
@@ -2309,6 +2346,7 @@ fn paint_cards(
     surface: &PaneSurfaceFrame,
     origin: Point<Pixels>,
     cell_width: f32,
+    cell_height: f32,
     theme: &Theme,
     cx: &App,
     window: &mut Window,
@@ -2318,11 +2356,11 @@ fn paint_cards(
             origin
                 + point(
                     px(f32::from(rect.x) * cell_width),
-                    px(f32::from(rect.y) * CELL_HEIGHT),
+                    px(f32::from(rect.y) * cell_height),
                 ),
             size(
                 px(f32::from(rect.width) * cell_width),
-                px(f32::from(rect.height) * CELL_HEIGHT),
+                px(f32::from(rect.height) * cell_height),
             ),
         )
     };
@@ -2515,8 +2553,8 @@ impl EntityInputHandler for TerminalView {
         let surface = self.live.surface.as_deref();
         let cell_width = self.cell_width.get();
         let bounds = self.bounds.get();
-        let cursor = input_cursor_bounds(surface, bounds.origin, cell_width, CELL_HEIGHT);
-        let grid = input_area(surface, bounds, cell_width, CELL_HEIGHT);
+        let cursor = input_cursor_bounds(surface, bounds.origin, cell_width, self.cell_height);
+        let grid = input_area(surface, bounds, cell_width, self.cell_height);
         Some(self.painter.borrow().composition_bounds(
             &self.marked,
             range,

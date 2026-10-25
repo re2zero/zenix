@@ -31,8 +31,9 @@ use super::commands::{self, Command};
 use super::keymap::Keymap;
 use super::registry::{Dispatch, SettingsSection, ShellRequest};
 use crate::config::{
-    self, ASIDE_WIDTH_MAX, ASIDE_WIDTH_MIN, Appearance, Layout, SIDEBAR_WIDTH_MAX,
-    SIDEBAR_WIDTH_MIN, TerminalConfig,
+    self, ASIDE_WIDTH_MAX, ASIDE_WIDTH_MIN, Appearance, CURSOR_SHAPES, FONT_SIZE_MAX,
+    FONT_SIZE_MIN, LINE_HEIGHT_MAX, LINE_HEIGHT_MIN, Layout, SIDEBAR_WIDTH_MAX, SIDEBAR_WIDTH_MIN,
+    TerminalConfig,
 };
 use crate::i18n::t;
 use crate::platform;
@@ -246,13 +247,25 @@ fn appearance_page(cx: &App) -> Page {
     )
 }
 
-/// The palettes named cell colors resolve against, one per mode, so switching
-/// the chrome's mode keeps the terminal readable.
+/// Everything the client draws the terminal with: the palettes named cell
+/// colors resolve against (one per mode, so switching the chrome's mode keeps
+/// the terminal readable), the metrics cells are drawn at, and the cursor's
+/// shape. Scrollback is a fact here, not a control: the daemon holds it.
 fn terminal_page(cx: &App) -> Page {
     let choices: Vec<(SharedString, SharedString)> = TerminalTheme::BUILTIN_NAMES
         .iter()
         .map(|name| (SharedString::from(*name), SharedString::from(*name)))
         .collect();
+    let cursors: Vec<(SharedString, SharedString)> = CURSOR_SHAPES
+        .iter()
+        .map(|shape| {
+            (
+                SharedString::from(*shape),
+                t(&format!("settings.terminal.cursor_{shape}")).into(),
+            )
+        })
+        .collect();
+    let terminal = &config::get(cx).terminal;
     page(
         t("settings.terminal.title"),
         t("settings.terminal.description"),
@@ -263,12 +276,53 @@ fn terminal_page(cx: &App) -> Page {
     .section(
         Section::new()
             .field(
+                t("settings.terminal.font"),
+                Some(t("settings.terminal.font_description").into()),
+                mono_text(t("settings.terminal.font_value"), cx.theme()),
+            )
+            .field(
+                t("settings.terminal.font_size"),
+                Some(t("settings.terminal.font_size_description").into()),
+                stepper(
+                    "terminal-font-size",
+                    terminal.font_size,
+                    Stepping {
+                        min: FONT_SIZE_MIN,
+                        max: FONT_SIZE_MAX,
+                        step: 1.0,
+                    },
+                    "px",
+                    cx,
+                    |value, cx| {
+                        config::update(cx, |config| config.terminal.set_font_size(value));
+                    },
+                ),
+            )
+            .field(
+                t("settings.terminal.line_height"),
+                Some(t("settings.terminal.line_height_description").into()),
+                stepper(
+                    "terminal-line-height",
+                    terminal.line_height,
+                    Stepping {
+                        min: LINE_HEIGHT_MIN,
+                        max: LINE_HEIGHT_MAX,
+                        step: 0.05,
+                    },
+                    "×",
+                    cx,
+                    |value, cx| {
+                        config::update(cx, |config| config.terminal.set_line_height(value));
+                    },
+                ),
+            )
+            .field(
                 t("settings.terminal.palette_dark"),
                 Some(t("settings.terminal.palette_dark_description").into()),
                 dropdown(
                     "terminal-palette-dark",
                     choices.clone(),
-                    config::get(cx).terminal.palette_dark.clone(),
+                    terminal.palette_dark.clone(),
                     |value, cx| {
                         config::update(cx, |config| {
                             config.terminal.palette_dark = value.to_string()
@@ -282,12 +336,32 @@ fn terminal_page(cx: &App) -> Page {
                 dropdown(
                     "terminal-palette-light",
                     choices,
-                    config::get(cx).terminal.palette_light.clone(),
+                    terminal.palette_light.clone(),
                     |value, cx| {
                         config::update(cx, |config| {
                             config.terminal.palette_light = value.to_string()
                         });
                     },
+                ),
+            )
+            .field(
+                t("settings.terminal.cursor"),
+                Some(t("settings.terminal.cursor_description").into()),
+                dropdown(
+                    "terminal-cursor",
+                    cursors,
+                    terminal.cursor.clone(),
+                    |value, cx| {
+                        config::update(cx, |config| config.terminal.cursor = value.to_string());
+                    },
+                ),
+            )
+            .field(
+                t("settings.terminal.scrollback"),
+                Some(t("settings.terminal.scrollback_description").into()),
+                mono_text(
+                    platform::herdr_config_path().display().to_string(),
+                    cx.theme(),
                 ),
             ),
     )
@@ -320,9 +394,12 @@ fn layout_page(cx: &App) -> Page {
                     stepper(
                         "layout-sidebar-width",
                         layout.sidebar_width,
-                        SIDEBAR_WIDTH_MIN,
-                        SIDEBAR_WIDTH_MAX,
-                        8.0,
+                        Stepping {
+                            min: SIDEBAR_WIDTH_MIN,
+                            max: SIDEBAR_WIDTH_MAX,
+                            step: 8.0,
+                        },
+                        "px",
                         cx,
                         |value, cx| {
                             config::update(cx, |config| config.layout.set_sidebar_width(value));
@@ -342,9 +419,12 @@ fn layout_page(cx: &App) -> Page {
                     stepper(
                         "layout-aside-width",
                         layout.aside_width,
-                        ASIDE_WIDTH_MIN,
-                        ASIDE_WIDTH_MAX,
-                        8.0,
+                        Stepping {
+                            min: ASIDE_WIDTH_MIN,
+                            max: ASIDE_WIDTH_MAX,
+                            step: 8.0,
+                        },
+                        "px",
                         cx,
                         |value, cx| {
                             config::update(cx, |config| config.layout.set_aside_width(value));
@@ -534,14 +614,20 @@ fn switch(id: &'static str, checked: bool, set: impl Fn(bool, &mut App) + 'stati
         .into_any_element()
 }
 
-/// A whole-pixel number with − and +, for the two widths. The config accepts
-/// fractions; a stepper does not produce one.
-fn stepper(
-    id: &'static str,
-    value: f32,
+/// The range a stepper walks and how far each press goes.
+struct Stepping {
     min: f32,
     max: f32,
     step: f32,
+}
+
+/// A number with − and +, for the two widths and the terminal's metrics. The
+/// config accepts fractions; a stepper does not produce one.
+fn stepper(
+    id: &'static str,
+    value: f32,
+    limits: Stepping,
+    unit: &'static str,
     cx: &App,
     set: impl Fn(f32, &mut App) + 'static,
 ) -> AnyElement {
@@ -549,7 +635,7 @@ fn stepper(
     let set: SetNumber = Rc::new(set);
     let nudge = |delta: f32| {
         let set = set.clone();
-        let next = (value + delta).clamp(min, max).round();
+        let next = (value + delta).clamp(limits.min, limits.max).round();
         move |window: &mut Window, cx: &mut App| {
             set(next, cx);
             window.refresh();
@@ -561,23 +647,23 @@ fn stepper(
         .child(step_button(
             format!("{id}-minus"),
             MINUS,
-            value > min,
+            value > limits.min,
             theme,
-            nudge(-step),
+            nudge(-limits.step),
         ))
         .child(
             div()
                 .min_w(px(52.))
                 .text_size(px(12.))
                 .text_color(theme.foreground)
-                .child(format!("{value} px")),
+                .child(format!("{value} {unit}")),
         )
         .child(step_button(
             format!("{id}-plus"),
             PLUS,
-            value < max,
+            value < limits.max,
             theme,
-            nudge(step),
+            nudge(limits.step),
         ))
         .into_any_element()
 }

@@ -51,8 +51,8 @@ use crate::plugins::model::Availability;
 use crate::plugins::trust_view::{self, TrustReview};
 use crate::plugins::ui_data::{self, UiData, UiDataHost};
 use crate::plugins::ui_manifest::UiContributions;
-use crate::terminal::Theme as TerminalTheme;
 use crate::terminal::view::TerminalView;
+use crate::terminal::{CursorShape, Theme as TerminalTheme};
 use commands::{COMMANDS, Command};
 use keymap::{Chord, Keymap, RunCommand};
 use palette::{Entry, Key as PaletteKey, Palette};
@@ -281,6 +281,7 @@ impl ShellView {
             _orchestrator: orchestrator,
         };
         shell.sync_terminal_theme(cx);
+        shell.sync_terminal_metrics(cx);
         shell
     }
 
@@ -296,6 +297,7 @@ impl ShellView {
                 shell.aside.restore(config::get(cx).layout.aside_width);
             }
             shell.sync_terminal_theme(cx);
+            shell.sync_terminal_metrics(cx);
             cx.notify();
         })
     }
@@ -1207,6 +1209,19 @@ impl ShellView {
         let theme = TerminalTheme::builtin(name).unwrap_or_default();
         self.terminal
             .update(cx, |view, cx| view.set_theme(theme, cx));
+    }
+
+    /// Draw the terminal at the config's metrics and cursor shape, the same
+    /// way the palette follows the mode: a settings change reaches the next
+    /// frame, and the next frame re-sends the surface size the new cell asks
+    /// for.
+    fn sync_terminal_metrics(&mut self, cx: &mut Context<Self>) {
+        let terminal = &config::get(cx).terminal;
+        let (font_size, line_height) = (terminal.font_size, terminal.line_height);
+        let cursor = CursorShape::from_name(&terminal.cursor);
+        self.terminal.update(cx, |view, cx| {
+            view.set_metrics(font_size, line_height, cursor, cx)
+        });
     }
 
     /// Follow the pointer with the sidebar's edge, resolved against the

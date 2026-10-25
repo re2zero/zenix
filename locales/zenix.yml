@@ -285,8 +285,8 @@ settings:
       en: "Terminal"
       zh-CN: "终端"
     description:
-      en: "The palettes named cell colors resolve against, one per mode."
-      zh-CN: "终端命名颜色所使用的调色板，明暗各一套。"
+      en: "Palettes, the metrics cells are drawn at, and the cursor shape — the client paints all three. Scrollback is the daemon's."
+      zh-CN: "调色板、单元格的绘制尺寸与光标形状——三者都由客户端绘制。回滚由 daemon 持有。"
     palette_dark:
       en: "Palette (dark)"
       zh-CN: "调色板（深色）"
@@ -299,6 +299,48 @@ settings:
     palette_light_description:
       en: "The same table for light mode, so a mode switch keeps contrast."
       zh-CN: "浅色模式下的命名单元格色。"
+    font:
+      en: "Font"
+      zh-CN: "字体"
+    font_description:
+      en: "The family ships with the app; it is the face the grid's metrics are measured in."
+      zh-CN: "字体族随应用分发；单元格的度量以它为准。"
+    font_value:
+      en: "Lilex"
+      zh-CN: "Lilex"
+    font_size:
+      en: "Font size"
+      zh-CN: "字号"
+    font_size_description:
+      en: "The font's size in pixels; cells re-measure as it changes."
+      zh-CN: "字体的大小（像素）；改变时单元格随之重新度量。"
+    line_height:
+      en: "Line height"
+      zh-CN: "行高"
+    line_height_description:
+      en: "The multiplier from font size to cell height."
+      zh-CN: "字号到单元格高度的倍数。"
+    cursor:
+      en: "Cursor"
+      zh-CN: "光标"
+    cursor_description:
+      en: "The shape the cursor is drawn as, over what an application asks for."
+      zh-CN: "光标绘制的形状，覆盖应用所请求的形状。"
+    cursor_block:
+      en: "Block"
+      zh-CN: "方块"
+    cursor_bar:
+      en: "Bar"
+      zh-CN: "竖线"
+    cursor_underline:
+      en: "Underline"
+      zh-CN: "下划线"
+    scrollback:
+      en: "Scrollback"
+      zh-CN: "回滚"
+    scrollback_description:
+      en: "Held by the daemon, read-only here; the file it lives in is named below."
+      zh-CN: "由 daemon 持有，客户端只读；所在文件见下方路径。"
 
 general:
   refresh:

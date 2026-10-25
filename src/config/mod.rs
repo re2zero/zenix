@@ -25,7 +25,13 @@
 //! ```jsonc
 //! {
 //!   "appearance": { "theme": "gruvbox", "theme_mode": "light", "locale": "en" },
-//!   "terminal": { "palette_dark": "Default", "palette_light": "Catppuccin Latte" },
+//!   "terminal": {
+//!     "palette_dark": "Default",
+//!     "palette_light": "Catppuccin Latte",
+//!     "font_size": 14.0,
+//!     "line_height": 1.43,
+//!     "cursor": "block"
+//!   },
 //!   "layout": {
 //!     "sidebar_visible": true,
 //!     "sidebar_width": 232.0,
@@ -93,8 +99,30 @@ pub const WINDOW_SIZE_MIN: (f32, f32) = (640., 400.);
 /// The widest a stored window may be.
 pub const WINDOW_SIZE_MAX: f32 = 16384.;
 
+/// The terminal's font size before anyone changes it, in pixels: the size the
+/// grid has always drawn at.
+pub const FONT_SIZE_DEFAULT: f32 = 14.;
+/// The smallest a stored terminal font size may be (the prototype's slider).
+pub const FONT_SIZE_MIN: f32 = 10.;
+/// The largest a stored terminal font size may be.
+pub const FONT_SIZE_MAX: f32 = 18.;
+
+/// The terminal's line height before anyone changes it: the multiplier that
+/// turns the font size into the cell's height, chosen so the default pair
+/// produces the cell the grid has always drawn (`14 × 1.43 → 20`).
+pub const LINE_HEIGHT_DEFAULT: f32 = 1.43;
+/// The smallest a stored line height may be: cells as tall as the glyphs.
+pub const LINE_HEIGHT_MIN: f32 = 1.0;
+/// The largest a stored line height may be (the prototype's slider).
+pub const LINE_HEIGHT_MAX: f32 = 1.8;
+
 /// The locales this client ships strings for.
 const LOCALES: &[&str] = &["en", "zh-CN"];
+
+/// The cursor shapes the client can draw the daemon's cursor as. The daemon
+/// reports a shape per frame; this is the client's own override (the one part
+/// of the cursor a painter may decide).
+pub const CURSOR_SHAPES: &[&str] = &["block", "bar", "underline"];
 
 // ── The schema ───────────────────────────────────────────────────────
 
@@ -131,12 +159,21 @@ impl Default for Appearance {
 }
 
 /// The palettes the client resolves the daemon's named cell colors against
-/// (`terminal::color`). One per mode, so switching modes keeps contrast.
+/// (`terminal::color`), one per mode; the metrics the grid draws cells at; and
+/// the shape the cursor is drawn as. Shaping and painting are the client's,
+/// so these are the client's to hold.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TerminalConfig {
     pub palette_dark: String,
     pub palette_light: String,
+    /// The font's size in whole pixels. The cell's width is measured from the
+    /// shaped glyphs every frame; this sets what is shaped.
+    pub font_size: f32,
+    /// The multiplier from font size to cell height, to two decimals.
+    pub line_height: f32,
+    /// The cursor shape the client draws: `"block"`, `"bar"` or `"underline"`.
+    pub cursor: String,
 }
 
 impl Default for TerminalConfig {
@@ -144,7 +181,24 @@ impl Default for TerminalConfig {
         Self {
             palette_dark: "Default".into(),
             palette_light: "Catppuccin Latte".into(),
+            font_size: FONT_SIZE_DEFAULT,
+            line_height: LINE_HEIGHT_DEFAULT,
+            cursor: "block".into(),
         }
+    }
+}
+
+impl TerminalConfig {
+    /// Set the font size as the schema allows it: whole pixels, however the
+    /// stepper or a hand-edited file arrived.
+    pub fn set_font_size(&mut self, size: f32) {
+        self.font_size = size.clamp(FONT_SIZE_MIN, FONT_SIZE_MAX).round();
+    }
+
+    /// Set the line height as the schema allows it: two decimals, so a
+    /// stepper's `+0.05` cannot leave float drift in the file.
+    pub fn set_line_height(&mut self, height: f32) {
+        self.line_height = ((height.clamp(LINE_HEIGHT_MIN, LINE_HEIGHT_MAX) * 100.).round()) / 100.;
     }
 }
 
@@ -255,6 +309,21 @@ const SECTIONS: &[Section] = &[
         fields: &[
             ("palette_dark", Field::Choice(TerminalTheme::BUILTIN_NAMES)),
             ("palette_light", Field::Choice(TerminalTheme::BUILTIN_NAMES)),
+            (
+                "font_size",
+                Field::Size {
+                    min: FONT_SIZE_MIN,
+                    max: FONT_SIZE_MAX,
+                },
+            ),
+            (
+                "line_height",
+                Field::Size {
+                    min: LINE_HEIGHT_MIN,
+                    max: LINE_HEIGHT_MAX,
+                },
+            ),
+            ("cursor", Field::Choice(CURSOR_SHAPES)),
         ],
     },
     Section {
@@ -804,6 +873,72 @@ mod tests {
             diagnostics[0].message.contains("light, dark"),
             "{}",
             diagnostics[0].message
+        );
+    }
+
+    /// The terminal's metrics and cursor load as written, and the cursor must
+    /// be one of the shapes the painter knows how to draw.
+    #[test]
+    fn the_terminal_metrics_and_cursor_load_as_written() {
+        let (config, diagnostics) = parse(
+            r#"{
+              "terminal": { "font_size": 16.0, "line_height": 1.55, "cursor": "bar" }
+            }"#,
+        );
+        assert_eq!(diagnostics, Vec::new());
+        assert_eq!(config.terminal.font_size, 16.0);
+        assert_eq!(config.terminal.line_height, 1.55);
+        assert_eq!(config.terminal.cursor, "bar");
+
+        let (config, diagnostics) = parse(r#"{"terminal": { "cursor": "wiggly" }}"#);
+        assert_eq!(
+            config.terminal.cursor, "block",
+            "an unknown shape falls back"
+        );
+        assert_eq!(
+            kinds(&diagnostics),
+            vec![("terminal.cursor".to_owned(), DiagnosticKind::WrongType)]
+        );
+    }
+
+    #[test]
+    fn a_terminal_metric_outside_its_range_is_clamped_and_reported() {
+        let (config, diagnostics) =
+            parse(r#"{"terminal": { "font_size": 40.0, "line_height": 0.5 }}"#);
+        assert_eq!(config.terminal.font_size, FONT_SIZE_MAX);
+        assert_eq!(config.terminal.line_height, LINE_HEIGHT_MIN);
+        assert_eq!(
+            kinds(&diagnostics),
+            vec![
+                ("terminal.font_size".to_owned(), DiagnosticKind::OutOfRange),
+                (
+                    "terminal.line_height".to_owned(),
+                    DiagnosticKind::OutOfRange
+                ),
+            ]
+        );
+    }
+
+    /// The writers leave whole pixels and two decimals in the file, whatever
+    /// the arithmetic that produced the value.
+    #[test]
+    fn a_written_terminal_metric_is_clamped_and_tidy() {
+        let mut config = TerminalConfig::default();
+        config.set_font_size(13.4);
+        assert_eq!(config.font_size, 13.);
+        config.set_font_size(40.);
+        assert_eq!(config.font_size, FONT_SIZE_MAX);
+        config.set_line_height(1.4 + 0.05);
+        assert_eq!(config.line_height, 1.45);
+        config.set_line_height(0.2);
+        assert_eq!(config.line_height, LINE_HEIGHT_MIN);
+
+        // The default pair produces the cell the grid has always drawn.
+        let defaults = TerminalConfig::default();
+        assert_eq!(
+            (defaults.font_size * defaults.line_height).round(),
+            20.,
+            "the default metrics must not change the cell"
         );
     }
 

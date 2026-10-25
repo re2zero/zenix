@@ -89,6 +89,8 @@ pub(crate) struct TerminalPainter {
     cell_height: f32,
     theme: Theme,
     config: Option<Font>,
+    /// The shape the cursor quad is drawn as, from the config.
+    cursor: CursorShape,
     // Resolved foreground includes reverse, dim and hidden; only bold/italic
     // affect shaping. Decorations remain at exact cell-grid coordinates.
     glyphs: GlyphCache,
@@ -114,6 +116,7 @@ impl Default for TerminalPainter {
             cell_height: CELL_HEIGHT,
             theme: Theme::default(),
             config: None,
+            cursor: CursorShape::default(),
             glyphs: GlyphCache::default(),
             cell_width: None,
             diagnostics: PaintDiagnostics::new(Instant::now()),
@@ -234,6 +237,11 @@ fn byte_index(text: &str, utf16: usize) -> usize {
 }
 
 impl TerminalPainter {
+    /// The shape the cursor quad is drawn as, from the config.
+    pub fn set_cursor(&mut self, cursor: CursorShape) {
+        self.cursor = cursor;
+    }
+
     pub fn set_appearance(&mut self, font_size: f32, cell_height: f32, theme: Theme) {
         if self.font_size != font_size || self.cell_height != cell_height || self.theme != theme {
             self.font_size = font_size;
@@ -488,13 +496,18 @@ impl TerminalPainter {
                     c.visible && c.x < frame.width && c.y < frame.height && covers(area, c.x, c.y)
                 }) {
                     let position = origin + cursor_offset(cursor, cell_width, self.cell_height);
-                    let (offset, dimensions) = match cursor.shape {
-                        3 | 4 => (
+                    // The shape is the client's setting, not the daemon's: an
+                    // application's DECSCUSR still shows, but as the shape the
+                    // user chose to draw it with.
+                    let (offset, dimensions) = match self.cursor {
+                        CursorShape::Underline => (
                             point(px(0.), px(self.cell_height - 2.)),
                             size(px(cell_width), px(2.)),
                         ),
-                        5 | 6 => (point(px(0.), px(0.)), size(px(2.), px(self.cell_height))),
-                        _ => (
+                        CursorShape::Bar => {
+                            (point(px(0.), px(0.)), size(px(2.), px(self.cell_height)))
+                        }
+                        CursorShape::Block => (
                             point(px(0.), px(0.)),
                             size(px(cell_width), px(self.cell_height)),
                         ),
