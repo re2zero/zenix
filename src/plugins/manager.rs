@@ -99,6 +99,9 @@ pub(crate) fn overlay(
             BoxShadow::new(px(0.), px(18.), black().opacity(0.45)).blur_radius(px(48.)),
             BoxShadow::new(px(0.), px(2.), black().opacity(0.3)).blur_radius(px(8.)),
         ])
+        // A press inside the dialog belongs to the dialog: stopping it keeps
+        // the scrim's listener from reading a control's click as a dismiss.
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .track_focus(focus)
         .on_key_down(key)
         .child(
@@ -178,6 +181,11 @@ pub(crate) fn overlay(
             black().opacity(0.45)
         } else {
             black().opacity(0.22)
+        })
+        // The dark around the dialog dismisses, as Escape does; the dialog
+        // stops its own presses before they get here.
+        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            close(ShellRequest::ClosePluginManager, window, cx);
         })
         .child(boxed)
         .into_any_element()

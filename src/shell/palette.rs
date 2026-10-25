@@ -315,6 +315,9 @@ pub(crate) fn overlay(
             BoxShadow::new(px(0.), px(18.), black().opacity(0.45)).blur_radius(px(48.)),
             BoxShadow::new(px(0.), px(2.), black().opacity(0.3)).blur_radius(px(8.)),
         ])
+        // A press inside the dialog belongs to the dialog: stopping it keeps
+        // the scrim's listener from reading a row's click as a dismiss.
+        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
         .track_focus(focus)
         // Every key belongs to the palette while it is open, including the ones
         // nothing is bound to: the shell's own handler decides what a keystroke
@@ -390,7 +393,10 @@ pub(crate) fn overlay(
         // The prototype hangs the palette at 11vh; 110px is that line at the
         // design's 1000px height.
         .pt(px(110.))
-        .on_click(move |_, window, cx| {
+        // The dark around the dialog dismisses, on the press itself rather
+        // than the click: a press inside the dialog never reaches this
+        // listener, because the dialog stops it first.
+        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
             close(ShellRequest::Command(Command::TogglePalette), window, cx);
         })
         .child(boxed)
