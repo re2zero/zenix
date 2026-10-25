@@ -411,6 +411,15 @@ pub(crate) enum ShellRequest {
     /// Re-read the plugin registry, which nothing pushes, and re-read the data
     /// its declarations print.
     RefreshPlugins,
+    /// Open one of the focused repo's worktrees as a workspace, focused: the
+    /// sidebar's worktree row asks this for a worktree that is not open yet.
+    OpenWorktree {
+        branch: Option<String>,
+        path: Option<String>,
+    },
+    /// Create a worktree from the focused workspace's repo, with the daemon's
+    /// own naming, and focus it on arrival.
+    NewWorktree,
     /// Show the plugin manager, on one plugin's page when the click named one.
     OpenPluginManager(Option<String>),
     /// Close the plugin manager.
@@ -493,6 +502,10 @@ pub(crate) struct Invocation<'a> {
     /// The plugin registry as of the last refresh. Nothing pushes a plugin
     /// change, so unlike the snapshot this is read, not painted from a stream.
     pub(crate) plugins: &'a PluginState,
+    /// The focused repo's worktrees, as of the last read. The daemon announces
+    /// every change on the event stream, so like the plugin registry this is
+    /// read, not painted from a stream.
+    pub(crate) worktrees: &'a crate::worktrees::WorktreeState,
     /// What the declarations' commands last printed, by contribution id.
     pub(crate) ui_data: &'a UiData,
     /// The project the focused pane's cwd belongs to, and the template found in it.

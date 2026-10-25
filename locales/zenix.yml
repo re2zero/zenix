@@ -561,6 +561,17 @@ shell:
   workspaces:
     en: "Workspaces"
     zh-CN: "工作区"
+  # The worktrees of the repo the focused workspace belongs to: the sidebar
+  # section's title, its new-worktree affordance, and its empty line.
+  worktrees:
+    en: "Worktrees"
+    zh-CN: "工作树"
+    new:
+      en: "New worktree"
+      zh-CN: "新建工作树"
+    empty:
+      en: "No worktrees in this repository"
+      zh-CN: "此仓库没有其他工作树"
   palette:
     prompt:
       en: "type a command"
@@ -936,6 +947,10 @@ fleet:
 # is a row that shows its key. `view.settings` repeats `settings.title` because
 # the palette names the command, not the page it opens.
 command:
+  worktree:
+    new:
+      en: "New Worktree"
+      zh-CN: "新建工作树"
   workspace:
     new:
       en: "New Workspace"

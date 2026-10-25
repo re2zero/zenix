@@ -41,6 +41,7 @@ pub mod single_instance;
 pub mod sys;
 pub mod terminal;
 pub mod util;
+pub mod worktrees;
 
 // Re-export core types for plugin/sub-app convenience
 pub use client::{find_herdr_binary, herdr_socket_path, is_socket_ready, start_herdr_server};

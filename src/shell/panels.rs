@@ -152,6 +152,10 @@ fn render_workspaces(invocation: &Invocation, _: &mut Window, _: &mut App) -> An
                 |(index, workspace)| workspace_rows(index, workspace, snapshot, invocation),
             ));
     }
+    // The worktrees of the repo the focused workspace belongs to, under the
+    // workspaces they open as — the prototype keeps the two sections in one
+    // view, and so does this client.
+    column = column.child(worktrees_section(invocation, invocation.snapshot));
     // The column is the gap after the last row: a drop no row claimed lands
     // here and appends, which is how a workspace reaches the end.
     let dispatch = invocation.dispatch.clone();
@@ -169,6 +173,156 @@ fn render_workspaces(invocation: &Invocation, _: &mut Window, _: &mut App) -> An
             }
         })
         .into_any_element()
+}
+
+/// The focused repo's worktrees, one row each: its branch, its path, and
+/// whether a workspace already has it open. A click focuses the open workspace
+/// or opens the worktree as one — the daemon does the deciding, and its
+/// `worktree.*` announcements re-read the list while the block is on screen.
+fn worktrees_section(
+    invocation: &Invocation,
+    snapshot: Option<&ClientShellSnapshot>,
+) -> AnyElement {
+    let theme = invocation.theme;
+    let state = invocation.worktrees;
+    let dispatch = invocation.dispatch.clone();
+    let hover = theme.sidebar_accent;
+    let mut column = v_flex().w_full().pt(px(8.)).gap_0p5().child(
+        h_flex()
+            .w_full()
+            .h(px(24.))
+            .px(px(6.))
+            .gap(px(6.))
+            .items_center()
+            .child(
+                div()
+                    .text_size(px(10.5))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(theme.muted_foreground)
+                    .child(t("shell.worktrees").to_uppercase()),
+            )
+            .children(state.source.as_ref().map(|source| {
+                div()
+                    .min_w_0()
+                    .flex_1()
+                    .truncate()
+                    .font_family(theme.mono_font_family.clone())
+                    .text_size(px(10.))
+                    .text_color(theme.muted_foreground)
+                    .child(source.repo_name.clone())
+            }))
+            .child(div().flex_1())
+            .child(
+                div()
+                    .id("worktrees-new")
+                    .role(Role::Button)
+                    .aria_label(t("shell.worktrees.new"))
+                    .w(px(20.))
+                    .h(px(20.))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .rounded(px(4.))
+                    .cursor_pointer()
+                    .text_color(theme.muted_foreground)
+                    .hover(move |style| style.bg(hover))
+                    .on_click({
+                        let dispatch = dispatch.clone();
+                        move |_, window, cx| {
+                            dispatch(ShellRequest::NewWorktree, window, cx);
+                        }
+                    })
+                    .child(Icon::default().data(PLUS).w(px(12.)).h(px(12.))),
+            ),
+    );
+    // A list for the repo the focus just left says nothing about the repo on
+    // screen: the fresh one is on its way, so the section keeps its title and
+    // nothing else.
+    let focused = snapshot.and_then(|snapshot| snapshot.focused_workspace_id.clone());
+    if state.scope.is_some() && state.scope != focused && state.error.is_none() {
+        return column.into_any_element();
+    }
+    if let Some(error) = &state.error {
+        // `not_git_worktree`, an untrusted repository, a daemon that is gone:
+        // each is one sentence the block says rather than hides.
+        column = column.child(line(error, theme.muted_foreground));
+        return column.into_any_element();
+    }
+    if state.entries.is_empty() {
+        column = column.child(line(&t("shell.worktrees.empty"), theme.muted_foreground));
+        return column.into_any_element();
+    }
+    column = column.children(state.entries.iter().enumerate().map(|(index, entry)| {
+        let open = entry.open_workspace_id.clone();
+        let mut row = h_flex()
+            .id(("worktree", index))
+            .w_full()
+            .h(px(24.))
+            .px(px(6.))
+            .gap(px(6.))
+            .items_center()
+            .rounded(px(4.))
+            .child(
+                Icon::default()
+                    .data(BRANCH)
+                    .w(px(12.))
+                    .h(px(12.))
+                    .flex_none()
+                    .text_color(if open.is_some() {
+                        theme.success
+                    } else {
+                        theme.muted_foreground
+                    }),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .flex_1()
+                    .text_sm()
+                    .text_color(if entry.openable() {
+                        theme.sidebar_foreground
+                    } else {
+                        theme.muted_foreground
+                    })
+                    .child(entry.name().to_owned()),
+            )
+            .child(
+                div()
+                    .min_w_0()
+                    .flex_none()
+                    .max_w(px(140.))
+                    .truncate()
+                    .font_family(theme.mono_font_family.clone())
+                    .text_size(px(10.))
+                    .text_color(theme.muted_foreground)
+                    .child(entry.label.clone()),
+            );
+        if entry.openable() {
+            let dispatch = dispatch.clone();
+            let branch = entry.branch.clone();
+            let path = (entry.branch.is_none()).then(|| entry.path.clone());
+            row = row
+                .cursor_pointer()
+                .hover(move |style| style.bg(hover))
+                .on_click(move |_, window, cx| {
+                    dispatch(
+                        // An open worktree is a workspace already: focusing it
+                        // is the whole ask, and the daemon opens the rest.
+                        match open.clone() {
+                            Some(workspace_id) => ShellRequest::FocusWorkspace(workspace_id),
+                            None => ShellRequest::OpenWorktree {
+                                branch: branch.clone(),
+                                path: path.clone(),
+                            },
+                        },
+                        window,
+                        cx,
+                    );
+                });
+        }
+        row.into_any_element()
+    }));
+    column.into_any_element()
 }
 
 /// One workspace, then — when it is the focused one — its tabs as nested rows:
@@ -229,6 +383,7 @@ fn tab_pane_count(snapshot: &ClientShellSnapshot, tab_id: &str) -> usize {
 const FOLDER_ICON: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>"#;
 const TAB_ICON: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3M12 15h5"/></svg>"#;
 const PLUS: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>"#;
+const BRANCH: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v12"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/></svg>"#;
 
 /// The open/closed mark of a tree row, the prototype's twisty.
 fn twisty(open: bool, theme: &Theme) -> AnyElement {

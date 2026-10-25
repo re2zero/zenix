@@ -171,6 +171,12 @@ pub(crate) struct ShellView {
     /// pushes a plugin change, so this is read rather than painted from a
     /// stream, and refreshed on demand — see `crate::plugins::host`.
     plugins: PluginHost,
+    /// The focused repo's worktrees, read on demand and on the daemon's
+    /// `worktree.*` announcements — see `crate::worktrees`.
+    worktrees: crate::worktrees::WorktreeHost,
+    /// The scope the last worktree list was asked for, so a snapshot that
+    /// moved the focus asks for the new repo's list exactly once.
+    worktrees_scope: Option<String>,
     /// The reader behind the data a plugin's declared panels and status items
     /// show: one command per declaration, run off the UI thread.
     ui_data_host: UiDataHost,
@@ -212,6 +218,7 @@ pub(crate) struct ShellView {
     /// Wakes the shell when the plugin registry moved. Held (not read) so the
     /// drain lives exactly as long as the window.
     _plugin_pulses: Task<()>,
+    _worktree_pulses: Task<()>,
     /// The same, for the data a declaration's command printed.
     _ui_data_pulses: Task<()>,
     /// The same, for the daemon's event stream.
@@ -239,6 +246,20 @@ impl ShellView {
                 .and_then(layout_cwd)
                 .map(|cwd| cwd.to_owned());
             let drawn = revision != shell.drawn;
+            // The worktree list follows the focused workspace: a snapshot that
+            // moved the focus is the one moment the repo the list is scoped to
+            // can have changed. The requested scope makes this a no-op on the
+            // surface pushes that follow.
+            let focused = terminal
+                .read(cx)
+                .live()
+                .snapshot
+                .as_deref()
+                .and_then(|snapshot| snapshot.focused_workspace_id.clone());
+            if focused != shell.worktrees_scope {
+                shell.worktrees_scope = focused.clone();
+                shell.worktrees.refresh(focused);
+            }
             // The cockpit follows the fleet: the daemon pushes snapshots, so the
             // agent list a new agent appears in is the same push that says which
             // panes to listen to. A set that did not move costs nothing.
@@ -284,6 +305,10 @@ impl ShellView {
         // daemon pushes nothing when a plugin is linked, enabled or run.
         let (plugins, plugin_pulses) = PluginHost::start();
         let plugin_pulses = Self::follow_plugins(cx, plugin_pulses);
+        // The focused repo's worktrees, read when the focus moves and when the
+        // daemon announces a change — never on a timer.
+        let (worktrees, worktree_pulses) = crate::worktrees::WorktreeHost::start();
+        let worktree_pulses = Self::follow_worktrees(cx, worktree_pulses);
         let (ui_data_host, ui_data_pulses) = UiDataHost::start();
         let ui_data_pulses = Self::follow_ui_data(cx, ui_data_pulses);
         // The daemon's events arrive on their own, so this is the one stream the
@@ -323,6 +348,8 @@ impl ShellView {
             manager_focus: cx.focus_handle(),
             drawer_focus: cx.focus_handle(),
             plugins,
+            worktrees,
+            worktrees_scope: None,
             ui_data_host,
             ui_data: UiData::default(),
             layout: LayoutState::default(),
@@ -340,6 +367,7 @@ impl ShellView {
             _prefix: prefix,
             _config: config,
             _plugin_pulses: plugin_pulses,
+            _worktree_pulses: worktree_pulses,
             _ui_data_pulses: ui_data_pulses,
             _event_pulses: event_pulses,
             _fleet_pulses: fleet_pulses,
@@ -386,6 +414,29 @@ impl ShellView {
                     .update(cx, |shell, cx| shell.read_plugins(cx))
                     .is_err()
                 {
+                    break;
+                }
+            }
+        })
+    }
+
+    /// Repaint when the worktree cache moved. The rows read the cache; there
+    /// is nothing to remount, so this is only a wake-up.
+    fn follow_worktrees(
+        cx: &mut Context<Self>,
+        pulses: crossbeam_channel::Receiver<()>,
+    ) -> Task<()> {
+        cx.spawn(async move |shell, cx| {
+            loop {
+                let pulses = pulses.clone();
+                let alive = cx
+                    .background_executor()
+                    .spawn(async move { pulses.recv().is_ok() })
+                    .await;
+                if !alive {
+                    break;
+                }
+                if shell.update(cx, |_, cx| cx.notify()).is_err() {
                     break;
                 }
             }
@@ -471,6 +522,15 @@ impl ShellView {
             && self.plugins.hooks_on(&event.kind)
         {
             self.plugins.refresh_logs();
+        }
+        // A worktree was created, opened or removed: the daemon said so on the
+        // stream it cannot be missed on, and the list is re-read now rather
+        // than waiting for the next focus change.
+        if let Some(event) = self.events.events.front()
+            && event.kind.starts_with("worktree.")
+        {
+            let scope = self.worktrees_scope.clone();
+            self.worktrees.refresh(scope);
         }
         cx.notify();
     }
@@ -773,6 +833,14 @@ impl ShellView {
             // timeline read so far.
             Command::CompareFleet => self.compare_fleet(cx),
             Command::ClearFleet => self.clear_fleet(cx),
+            Command::NewWorktree => {
+                let scope = self.worktrees_scope.clone();
+                match scope {
+                    Some(scope) => self.worktrees.create(scope),
+                    None => tracing::info!(target: "zenix-shell",
+                        "no workspace to create a worktree from"),
+                }
+            }
             // Every other command is the daemon's. A command marked local with
             // no arm above would silently do nothing, so say so in tests.
             command => {
@@ -1257,6 +1325,27 @@ impl ShellView {
                 window.focus(&focus, cx);
                 cx.notify();
             }
+            ShellRequest::OpenWorktree { branch, path } => {
+                // The scope a row was clicked under is the scope the daemon
+                // needs: the workspace whose repo the row belongs to.
+                if let Some(scope) = self.worktrees_scope.clone() {
+                    let target = if let Some(branch) = branch {
+                        crate::worktrees::WorktreeTarget::Branch(branch)
+                    } else if let Some(path) = path {
+                        crate::worktrees::WorktreeTarget::Path(path)
+                    } else {
+                        return;
+                    };
+                    self.worktrees.open(scope, target);
+                    cx.notify();
+                }
+            }
+            ShellRequest::NewWorktree => {
+                if let Some(scope) = self.worktrees_scope.clone() {
+                    self.worktrees.create(scope);
+                    cx.notify();
+                }
+            }
             ShellRequest::OpenPluginDrawer(plugin_id) => {
                 self.drawer.open(&plugin_id);
                 let focus = self.drawer_focus.clone();
@@ -1589,6 +1678,7 @@ impl Render for ShellView {
         let error = self.connection.footer();
         let theme = cx.theme().clone();
         let plugins = self.plugins.state();
+        let worktrees = self.worktrees.state();
         let viewport_width = viewport_width(window);
         // What the panels show is the user's setting within the viewport's
         // reach: the breakpoints hide, the config remembers.
@@ -1654,7 +1744,9 @@ impl Render for ShellView {
                 | ShellRequest::SetEventFilter(_)
                 | ShellRequest::CompareFleet
                 | ShellRequest::ReadTail(_)
-                | ShellRequest::ClearFleet) => {
+                | ShellRequest::ClearFleet
+                | ShellRequest::OpenWorktree { .. }
+                | ShellRequest::NewWorktree) => {
                     entity.update(cx, |shell, cx| {
                         shell.dispatch(request, window, cx);
                         cx.notify();
@@ -1675,6 +1767,7 @@ impl Render for ShellView {
             prefix: prefix.as_str(),
             prefix_armed: self.prefix_armed,
             plugins: &plugins,
+            worktrees: &worktrees,
             ui_data: &self.ui_data,
             layout: &self.layout,
             events: &self.events,

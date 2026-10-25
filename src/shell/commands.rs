@@ -73,6 +73,9 @@ pub(crate) enum Command {
     CompareFleet,
     /// Local: drop the fleet's transitions.
     ClearFleet,
+    /// Daemon: a worktree from the focused repo, with the daemon's own naming,
+    /// opened as a workspace and focused on arrival.
+    NewWorktree,
 }
 
 impl Command {
@@ -97,6 +100,7 @@ impl Command {
                 | Command::RestoreLayout
                 | Command::CompareFleet
                 | Command::ClearFleet
+                | Command::NewWorktree
         )
     }
 }
@@ -130,6 +134,14 @@ pub(crate) const COMMANDS: &[CommandInfo] = &[
         id: "workspace.new",
         direct: &["cmd-shift-n"],
         prefixed: &["shift-n"],
+    },
+    CommandInfo {
+        command: Command::NewWorktree,
+        id: "worktree.new",
+        // Palette-only for now: a branch name is the daemon's to generate
+        // until the client has a place to ask for one.
+        direct: &[],
+        prefixed: &[],
     },
     CommandInfo {
         command: Command::CloseWorkspace,
@@ -547,7 +559,10 @@ pub(crate) fn request(command: Command, snapshot: &ClientShellSnapshot) -> Optio
         | Command::SaveLayout
         | Command::RestoreLayout
         | Command::CompareFleet
-        | Command::ClearFleet => return None,
+        | Command::ClearFleet
+        // The shell runs the worktree request itself: the host owns the call
+        // and the scope it is made under.
+        | Command::NewWorktree => return None,
     })
 }
 
@@ -623,6 +638,7 @@ mod tests {
         assert_eq!(
             local,
             vec![
+                "worktree.new",
                 "view.toggle-sidebar",
                 "view.toggle-chat",
                 "view.toggle-theme",
