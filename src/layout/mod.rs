@@ -240,6 +240,12 @@ pub(crate) fn read(path: &Path) -> Result<Template, Error> {
     })
 }
 
+/// The file's text: the same bytes [`write`] puts on disk, for the block's
+/// preview of what the project carries.
+pub(crate) fn to_text(template: &Template) -> String {
+    toml::to_string(&template.stripped()).unwrap_or_default()
+}
+
 /// Write the template, creating the project's `.zenix` directory on the way. The
 /// ids are cleared here rather than by the caller, so a template read from a running
 /// daemon cannot carry its ids into the file.

@@ -91,6 +91,7 @@ pub(crate) fn overlay(
     let plugin_id = plugin.plugin_id.clone();
     let enabled = plugin.enabled;
     let root = plugin.plugin_root.clone();
+    let name = plugin.name.clone();
     let boxed = v_flex()
         .id("plugin-drawer")
         .absolute()
@@ -224,9 +225,18 @@ pub(crate) fn overlay(
                 )
                 .child(
                     button("plugin-drawer-unlink", &t("shell.manager.unlink"), &theme).on_click({
-                        let run = dispatch.clone();
+                        let ask = dispatch.clone();
+                        let plugin_id = plugin_id.clone();
+                        let name = name.clone();
                         move |_, window, cx| {
-                            run(ShellRequest::UnlinkPlugin(plugin_id.clone()), window, cx)
+                            ask(
+                                ShellRequest::ConfirmUnlinkPlugin {
+                                    plugin_id: plugin_id.clone(),
+                                    name: name.clone(),
+                                },
+                                window,
+                                cx,
+                            )
                         }
                     }),
                 ),

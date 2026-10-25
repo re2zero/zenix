@@ -716,9 +716,19 @@ fn footer(plugin: &InstalledPlugin, theme: &Theme, dispatch: &Dispatch) -> AnyEl
         )
         .child(
             button("plugin-manager-unlink", &t("shell.manager.unlink"), theme).on_click({
-                let run = dispatch.clone();
+                let ask = dispatch.clone();
                 let plugin_id = plugin_id.clone();
-                move |_, window, cx| run(ShellRequest::UnlinkPlugin(plugin_id.clone()), window, cx)
+                let name = plugin.name.clone();
+                move |_, window, cx| {
+                    ask(
+                        ShellRequest::ConfirmUnlinkPlugin {
+                            plugin_id: plugin_id.clone(),
+                            name: name.clone(),
+                        },
+                        window,
+                        cx,
+                    )
+                }
             }),
         )
         .into_any_element()

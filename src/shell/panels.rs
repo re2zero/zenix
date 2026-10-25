@@ -278,6 +278,9 @@ fn worktrees_section(
                 div()
                     .min_w_0()
                     .flex_1()
+                    // The row is one line tall; a daemon-generated name like
+                    // `worktree/green-meadow-d5eb` would wrap out of it.
+                    .truncate()
                     .text_sm()
                     .text_color(if entry.openable() {
                         theme.sidebar_foreground
@@ -297,6 +300,38 @@ fn worktrees_section(
                     .text_color(theme.muted_foreground)
                     .child(entry.label.clone()),
             );
+        // The removal affordance sits on the rows the daemon would accept it
+        // for — a linked worktree open as a workspace — and stops the press
+        // there, so the row underneath does not read it as a focus click.
+        if entry.removable() {
+            let dispatch = dispatch.clone();
+            let workspace_id = entry.open_workspace_id.clone().unwrap_or_default();
+            let name = entry.name().to_owned();
+            row = row.child(
+                div()
+                    .id(("worktree-remove", index))
+                    .role(Role::Button)
+                    .aria_label(rust_i18n::t!("shell.worktrees.remove", name = name).to_string())
+                    .flex_none()
+                    .px(px(3.))
+                    .text_xs()
+                    .text_color(theme.muted_foreground)
+                    .hover(move |style| style.text_color(theme.danger))
+                    .cursor_pointer()
+                    .on_click(move |_, window, cx| {
+                        cx.stop_propagation();
+                        dispatch(
+                            ShellRequest::ConfirmRemoveWorktree {
+                                workspace_id: workspace_id.clone(),
+                                name: name.clone(),
+                            },
+                            window,
+                            cx,
+                        );
+                    })
+                    .child("×"),
+            );
+        }
         if entry.openable() {
             let dispatch = dispatch.clone();
             let branch = entry.branch.clone();
@@ -322,6 +357,12 @@ fn worktrees_section(
         }
         row.into_any_element()
     }));
+    // What this client last asked the daemon to do to a worktree, and how it
+    // answered: a removal the daemon refused names its reason here, and one
+    // that succeeded says so even after the row it removed is gone.
+    if let Some(last) = state.last.as_deref() {
+        column = column.child(line(last, theme.muted_foreground));
+    }
     column.into_any_element()
 }
 
@@ -855,6 +896,12 @@ fn render_layout(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyEle
     });
     if let Some(template) = layout.template.as_ref() {
         column = column.child(line(&layout_detail(template), theme.muted_foreground));
+        // The file itself, as the project carries it: the same text `write`
+        // puts on disk, capped at what a glance reads. The whole file is one
+        // walk away — the preview answers "what shape is this", not "what is
+        // in it".
+        column = column.child(toml_preview(template, theme));
+        column = column.child(tree_diagram(&template.root, theme));
     } else {
         column = column.child(line(&t("layout.no_template"), theme.muted_foreground));
     }
@@ -874,6 +921,148 @@ fn layout_path(layout: &LayoutState, root: &Path) -> PathBuf {
         .path
         .clone()
         .unwrap_or_else(|| root.join(DIR).join(FILE_NAME))
+}
+
+/// How many lines of the template a glance reads. The file is on disk for the
+/// rest; the preview answers what shape the project carries, not every line of
+/// it.
+const TOML_PREVIEW_LINES: usize = 14;
+
+/// The template's own text, capped. A longer file keeps its first lines and
+/// says how many more it holds, so the preview never grows into the block it
+/// sits in.
+fn toml_preview(template: &Template, theme: &Theme) -> AnyElement {
+    let text = crate::layout::to_text(template);
+    let lines: Vec<&str> = text.lines().collect();
+    let (shown, hidden) = if lines.len() > TOML_PREVIEW_LINES {
+        (
+            &lines[..TOML_PREVIEW_LINES],
+            Some(lines.len() - TOML_PREVIEW_LINES),
+        )
+    } else {
+        (&lines[..], None)
+    };
+    v_flex()
+        .id("layout-toml-preview")
+        .w_full()
+        .gap_0()
+        .rounded(px(6.))
+        .bg(theme.muted)
+        .p(px(8.))
+        // The path the file lives at, as the code block's own comment: what
+        // the reader is looking at, before what is in it.
+        .child(
+            div()
+                .font_family(theme.mono_font_family.clone())
+                .text_size(px(10.))
+                .text_color(theme.muted_foreground)
+                .child(format!("# {DIR}/{FILE_NAME}")),
+        )
+        .children(shown.iter().map(|line| {
+            div()
+                .w_full()
+                .font_family(theme.mono_font_family.clone())
+                .text_size(px(10.))
+                .text_color(theme.sidebar_foreground)
+                // The file's indentation is its structure, so leading spaces
+                // travel as no-break ones: a text run's own shaping keeps
+                // them where a wrapped style would fold them away.
+                .child(line.replace(' ', "\u{a0}"))
+        }))
+        .children(hidden.map(|more| {
+            div()
+                .font_family(theme.mono_font_family.clone())
+                .text_size(px(10.))
+                .text_color(theme.muted_foreground)
+                .child(rust_i18n::t!("layout.preview_more", count = more).to_string())
+        }))
+        .into_any_element()
+}
+
+/// The template's tree, drawn as the restored tab would split: a right split
+/// is a row, a down split is a column, and the ratios are the grow shares.
+/// The prototype's pane boxes, at the block's own width.
+fn tree_diagram(root: &crate::layout::Node, theme: &Theme) -> AnyElement {
+    h_flex()
+        .id("layout-tree")
+        .w_full()
+        .h(px(72.))
+        .gap(px(3.))
+        .child(tree_node(root, theme))
+        .into_any_element()
+}
+
+fn tree_node(node: &crate::layout::Node, theme: &Theme) -> AnyElement {
+    match node {
+        crate::layout::Node::Pane { pane } => div()
+            .min_w_0()
+            .flex_1()
+            .rounded(px(3.))
+            .border_1()
+            .border_color(theme.border)
+            .flex()
+            .items_center()
+            .justify_center()
+            .overflow_hidden()
+            .child(
+                div()
+                    .max_w_full()
+                    .truncate()
+                    .px(px(2.))
+                    .font_family(theme.mono_font_family.clone())
+                    .text_size(px(10.))
+                    .text_color(theme.muted_foreground)
+                    .child(pane_tag(pane)),
+            )
+            .into_any_element(),
+        crate::layout::Node::Split {
+            direction,
+            ratio,
+            first,
+            second,
+        } => {
+            let split =
+                div().min_w_0().min_h_0().flex_1().gap(px(3.)).flex().map(
+                    |split| match direction {
+                        crate::layout::SplitDirection::Right => split.flex_row(),
+                        crate::layout::SplitDirection::Down => split.flex_col(),
+                    },
+                );
+            split
+                .child(
+                    div()
+                        .flex_grow(*ratio)
+                        .min_w_0()
+                        .min_h_0()
+                        .flex()
+                        .child(tree_node(first, theme)),
+                )
+                .child(
+                    div()
+                        .flex_grow(1.0 - ratio)
+                        .min_w_0()
+                        .min_h_0()
+                        .flex()
+                        .child(tree_node(second, theme)),
+                )
+                .into_any_element()
+        }
+    }
+}
+
+/// What a leaf of the diagram is called: the pane's own label when it has one,
+/// the command it would run when it has one of those, and "pane" when the
+/// template says nothing more specific.
+fn pane_tag(pane: &crate::layout::Pane) -> String {
+    if let Some(label) = pane.label.as_deref() {
+        return label.to_owned();
+    }
+    if let Some(command) = pane.command.as_ref()
+        && let Some(first) = command.first()
+    {
+        return first.clone();
+    }
+    "pane".to_owned()
 }
 
 /// How many panes the template would create, and the tab name it carries when it
@@ -1267,6 +1456,39 @@ mod tests {
             ..template.clone()
         };
         assert!(layout_detail(&named).contains("zenix"), "{named:?}");
+    }
+
+    /// A leaf of the tree diagram is called what the template itself says:
+    /// its label when there is one, the command it would run when there is
+    /// one of those, and nothing invented beyond that.
+    #[test]
+    fn a_tree_leaf_is_named_by_what_the_template_carries() {
+        let labelled = crate::layout::Pane {
+            label: Some("code".to_owned()),
+            ..crate::layout::Pane::default()
+        };
+        assert_eq!(pane_tag(&labelled), "code");
+        let commanded = crate::layout::Pane {
+            command: Some(vec!["cargo".to_owned(), "test".to_owned()]),
+            ..crate::layout::Pane::default()
+        };
+        assert_eq!(pane_tag(&commanded), "cargo");
+        assert_eq!(pane_tag(&crate::layout::Pane::default()), "pane");
+    }
+
+    /// The preview is the file's own text: what `write` puts on disk is what
+    /// the block shows, ids stripped the way the file holds them.
+    #[test]
+    fn the_preview_text_is_the_files_text() {
+        let template: Template =
+            toml::from_str("[root]\ntype = \"pane\"\npane_id = \"w1:p2\"\nlabel = \"code\"\n")
+                .expect("a template read from an export-shaped file");
+        let text = crate::layout::to_text(&template);
+        assert!(text.contains("label = \"code\""), "{text}");
+        assert!(
+            !text.contains("pane_id"),
+            "the file the preview shows carries no pane ids: {text}"
+        );
     }
 
     fn snapshot_with_agents() -> ClientShellSnapshot {

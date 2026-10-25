@@ -14,6 +14,7 @@
 pub(crate) mod chat;
 pub(crate) mod cockpit;
 pub(crate) mod commands;
+pub(crate) mod confirm;
 pub(crate) mod empty;
 pub(crate) mod keymap;
 pub(crate) mod palette;
@@ -167,6 +168,13 @@ pub(crate) struct ShellView {
     trust_focus: FocusHandle,
     manager_focus: FocusHandle,
     drawer_focus: FocusHandle,
+    /// The confirmation a destructive request asks for: a worktree removal or
+    /// a plugin unlink. None while nothing is being asked.
+    confirm: Option<confirm::Confirm>,
+    confirm_focus: FocusHandle,
+    /// The event stream's contract page, over the shell while it is open.
+    event_contract_open: bool,
+    event_contract_focus: FocusHandle,
     /// The installed plugins, and where an action's outcome appears. Nothing
     /// pushes a plugin change, so this is read rather than painted from a
     /// stream, and refreshed on demand — see `crate::plugins::host`.
@@ -347,6 +355,10 @@ impl ShellView {
             trust_focus: cx.focus_handle(),
             manager_focus: cx.focus_handle(),
             drawer_focus: cx.focus_handle(),
+            confirm: None,
+            confirm_focus: cx.focus_handle(),
+            event_contract_open: false,
+            event_contract_focus: cx.focus_handle(),
             plugins,
             worktrees,
             worktrees_scope: None,
@@ -525,11 +537,17 @@ impl ShellView {
         }
         // A worktree was created, opened or removed: the daemon said so on the
         // stream it cannot be missed on, and the list is re-read now rather
-        // than waiting for the next focus change.
+        // than waiting for the next focus change. A removal asks for the
+        // daemon's active workspace rather than the scope the list was read
+        // for: the removed one can be that scope's own workspace.
         if let Some(event) = self.events.events.front()
             && event.kind.starts_with("worktree.")
         {
-            let scope = self.worktrees_scope.clone();
+            let scope = if event.kind == "worktree.removed" {
+                None
+            } else {
+                self.worktrees_scope.clone()
+            };
             self.worktrees.refresh(scope);
         }
         cx.notify();
@@ -1370,6 +1388,56 @@ impl ShellView {
                 self.plugins.unlink(plugin_id);
                 cx.notify();
             }
+            // The confirmation's four requests. The two openers take the
+            // keyboard the way the other dialogs do; the confirm button's
+            // request is the one the dialog was holding back, and the removal
+            // itself leaves through the worktree host, whose outcome note is
+            // what the block shows.
+            ShellRequest::ConfirmRemoveWorktree { workspace_id, name } => {
+                self.confirm =
+                    Some(confirm::ConfirmKind::RemoveWorktree { workspace_id, name }.into());
+                let focus = self.confirm_focus.clone();
+                window.focus(&focus, cx);
+                cx.notify();
+            }
+            ShellRequest::ConfirmUnlinkPlugin { plugin_id, name } => {
+                self.confirm = Some(confirm::ConfirmKind::UnlinkPlugin { plugin_id, name }.into());
+                let focus = self.confirm_focus.clone();
+                window.focus(&focus, cx);
+                cx.notify();
+            }
+            ShellRequest::RemoveWorktree {
+                workspace_id,
+                name,
+                force,
+            } => {
+                self.confirm = None;
+                self.worktrees.remove(workspace_id, name, force);
+                cx.notify();
+            }
+            ShellRequest::DismissConfirm => {
+                self.confirm = None;
+                let focus = self.terminal.read(cx).focus_handle().clone();
+                window.focus(&focus, cx);
+                cx.notify();
+            }
+            ShellRequest::SetConfirmForce(force) => {
+                if let Some(confirm) = self.confirm.as_mut() {
+                    confirm.force = force;
+                }
+                cx.notify();
+            }
+            ShellRequest::ToggleEventContract => {
+                self.event_contract_open = !self.event_contract_open;
+                if self.event_contract_open {
+                    let focus = self.event_contract_focus.clone();
+                    window.focus(&focus, cx);
+                } else {
+                    let focus = self.terminal.read(cx).focus_handle().clone();
+                    window.focus(&focus, cx);
+                }
+                cx.notify();
+            }
             ShellRequest::OpenPluginTrust => {
                 self.trust.open();
                 let focus = self.trust_focus.clone();
@@ -1746,7 +1814,13 @@ impl Render for ShellView {
                 | ShellRequest::ReadTail(_)
                 | ShellRequest::ClearFleet
                 | ShellRequest::OpenWorktree { .. }
-                | ShellRequest::NewWorktree) => {
+                | ShellRequest::NewWorktree
+                | ShellRequest::ConfirmRemoveWorktree { .. }
+                | ShellRequest::ConfirmUnlinkPlugin { .. }
+                | ShellRequest::RemoveWorktree { .. }
+                | ShellRequest::DismissConfirm
+                | ShellRequest::SetConfirmForce(_)
+                | ShellRequest::ToggleEventContract) => {
                     entity.update(cx, |shell, cx| {
                         shell.dispatch(request, window, cx);
                         cx.notify();
@@ -2003,6 +2077,28 @@ impl Render for ShellView {
                 &self.trust_focus,
                 &dispatch,
                 cx.listener(Self::trust_key),
+                window,
+                cx,
+            ));
+        }
+        // Over the review: the contract page is opened from the events view
+        // beneath it, so it holds the keyboard while it reads.
+        if self.event_contract_open {
+            root = root.child(crate::plugins::panels::event_contract_overlay(
+                &dispatch,
+                &self.event_contract_focus,
+                window,
+                cx,
+            ));
+        }
+        // The very top: a confirmation blocks what it asks about, so nothing
+        // may sit over it — not the manager whose unlink button opened it, not
+        // the shell whose worktree row did.
+        if let Some(confirm) = self.confirm.as_ref() {
+            root = root.child(confirm::overlay(
+                confirm,
+                &dispatch,
+                &self.confirm_focus,
                 window,
                 cx,
             ));

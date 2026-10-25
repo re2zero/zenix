@@ -80,6 +80,15 @@ impl WorktreeEntry {
     pub(crate) fn openable(&self) -> bool {
         !self.is_bare && !self.is_prunable
     }
+
+    /// Whether the row can be removed. `worktree.remove` takes the id of a
+    /// workspace that is itself a linked worktree checkout, so the two facts
+    /// the daemon will require — linked, and open as a workspace — are the
+    /// row's own. The repo's main checkout never qualifies, which is why it
+    /// is never offered for removal.
+    pub(crate) fn removable(&self) -> bool {
+        self.is_linked_worktree && self.open_workspace_id.is_some() && self.openable()
+    }
 }
 
 /// The repository the list belongs to, as `worktree.list` reports it. One
@@ -160,6 +169,17 @@ impl WorktreeHost {
     pub(crate) fn create(&self, scope: String) {
         let _ = self.commands.send(Request::Create { scope });
     }
+
+    /// Remove a worktree's workspace, as the confirmation dialog's confirm
+    /// button asked. `name` is only for the outcome note; the daemon knows the
+    /// checkout by the workspace id.
+    pub(crate) fn remove(&self, workspace_id: String, name: String, force: bool) {
+        let _ = self.commands.send(Request::Remove {
+            workspace_id,
+            name,
+            force,
+        });
+    }
 }
 
 /// What a row's click asks for, resolved before the request leaves the UI
@@ -190,6 +210,11 @@ enum Request {
     },
     Create {
         scope: String,
+    },
+    Remove {
+        workspace_id: String,
+        name: String,
+        force: bool,
     },
 }
 
@@ -245,6 +270,28 @@ fn handle(client: &ApiClient, cache: &Mutex<WorktreeState>, request: Request) {
                     refresh(client, cache, Some(scope));
                 }
                 Err(error) => note(cache, format!("the worktree was not created: {error}")),
+            }
+        }
+        Request::Remove {
+            workspace_id,
+            name,
+            force,
+        } => {
+            let params = serde_json::json!({ "workspace_id": workspace_id, "force": force });
+            match client.call("worktree.remove", params) {
+                Ok(_) => {
+                    note(cache, format!("{name}: removed"));
+                    // The removed workspace may be the one the list was scoped
+                    // to — removing the focused worktree is exactly the case a
+                    // person removes — so the refresh asks for the daemon's
+                    // now-active workspace rather than an id it may just have
+                    // deleted.
+                    refresh(client, cache, None);
+                }
+                // A dirty checkout is the refusal a force row exists for, and
+                // a remove already in flight is the daemon's own guard; both
+                // arrive as words, and the block shows them as words.
+                Err(error) => note(cache, format!("{name} was not removed: {error}")),
             }
         }
     }
@@ -339,6 +386,30 @@ mod tests {
         .expect("decodes a prunable entry");
         assert!(!bare.openable());
         assert!(!prunable.openable());
+    }
+
+    /// Removal is offered only where the daemon would accept it: a linked
+    /// worktree that is open as a workspace. The repo's main checkout and a
+    /// worktree no workspace ever opened are both facts, not targets.
+    #[test]
+    fn only_an_open_linked_worktree_is_removable() {
+        let entry = |linked: bool, open: Option<&str>| {
+            serde_json::from_value::<WorktreeEntry>(serde_json::json!({
+                "path": "/tmp/wt", "branch": "wt", "label": "wt",
+                "is_linked_worktree": linked,
+                "open_workspace_id": open,
+            }))
+            .expect("decodes")
+        };
+        assert!(entry(true, Some("w3")).removable());
+        assert!(
+            !entry(false, Some("w1")).removable(),
+            "the main checkout is not a removal target"
+        );
+        assert!(
+            !entry(true, None).removable(),
+            "a worktree no workspace holds cannot be removed by workspace id"
+        );
     }
 
     /// The list the daemon answers with decodes whole: source and entries, in

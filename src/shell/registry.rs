@@ -435,6 +435,25 @@ pub(crate) enum ShellRequest {
     SetPluginEnabled { plugin_id: String, enabled: bool },
     /// Forget a linked plugin. Its directory is untouched.
     UnlinkPlugin(String),
+    /// Open the confirmation a worktree's remove affordance asks for. The
+    /// removal itself is [`ShellRequest::RemoveWorktree`], dispatched only by
+    /// the dialog's confirm button.
+    ConfirmRemoveWorktree { workspace_id: String, name: String },
+    /// Open the confirmation a plugin's unlink button asks for. The unlink
+    /// itself is [`ShellRequest::UnlinkPlugin`], dispatched only by the
+    /// dialog's confirm button.
+    ConfirmUnlinkPlugin { plugin_id: String, name: String },
+    /// Remove a worktree's workspace, as confirmed. The daemon refuses one
+    /// with uncommitted changes unless `force` is set.
+    RemoveWorktree {
+        workspace_id: String,
+        name: String,
+        force: bool,
+    },
+    /// Close the confirmation without doing what it asks.
+    DismissConfirm,
+    /// Set the confirmation's force row, which only a worktree removal has.
+    SetConfirmForce(bool),
     /// Open the pre-link review: a plugin directory is read, and what it would
     /// run is shown, before anything is linked.
     OpenPluginTrust,
@@ -465,6 +484,9 @@ pub(crate) enum ShellRequest {
     ReadTail(String),
     /// Drop the fleet's transitions. The subscriptions themselves keep running.
     ClearFleet,
+    /// Open or close the event stream's contract page: what is subscribed,
+    /// in which spellings, and what the stream cannot show.
+    ToggleEventContract,
 }
 
 /// What an inline rename is editing. The shell holds at most one editor at a

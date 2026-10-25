@@ -7,6 +7,7 @@
 //! nothing to say — no plugin linked, nothing run — which is the state of a
 //! client that has never touched a plugin.
 
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{Theme, h_flex, v_flex};
 use gpui_kit::*;
 
@@ -251,12 +252,18 @@ fn render_events(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyEle
     let state = invocation.events;
     if state.events.is_empty() && state.error.is_none() {
         // Nothing has happened yet and the stream is healthy: the view still
-        // says so, because the rail can put it in front of the user.
-        return crate::shell::panels::empty_view(
-            crate::i18n::t("shell.plugins.events"),
-            crate::i18n::t("shell.views.empty.events"),
-            theme,
-        );
+        // says so, because the rail can put it in front of the user — and the
+        // contract page is offered beside it, because a stream with nothing to
+        // show is exactly when what it *would* show is worth reading.
+        return v_flex()
+            .w_full()
+            .child(crate::shell::panels::empty_view(
+                crate::i18n::t("shell.plugins.events"),
+                crate::i18n::t("shell.views.empty.events"),
+                theme,
+            ))
+            .child(contract_footer(invocation))
+            .into_any_element();
     }
     let mut column = v_flex().w_full().px_1().py_1().gap_0p5().child(header(
         "plugin-events-header",
@@ -290,7 +297,224 @@ fn render_events(invocation: &Invocation, _: &mut Window, _: &mut App) -> AnyEle
             .enumerate()
             .map(|(index, event)| event_row(index, event, now, invocation)),
     );
-    column.into_any_element()
+    column.child(contract_footer(invocation)).into_any_element()
+}
+
+/// The view's last row: the contract page's way in, at the right edge the
+/// prototype puts it. It is a footer rather than a second header action
+/// because the head's one affordance is Clear — the contract is what the
+/// stream *is*, not something done to it.
+fn contract_footer(invocation: &Invocation) -> AnyElement {
+    let theme = invocation.theme;
+    let dispatch = invocation.dispatch.clone();
+    h_flex()
+        .w_full()
+        .px_1()
+        .py_0p5()
+        .child(div().flex_1())
+        .child(
+            div()
+                .id("events-contract-button")
+                .role(Role::Button)
+                .aria_label(crate::i18n::t("shell.plugins.events_contract.title"))
+                .flex_none()
+                .px_1p5()
+                .py_0p5()
+                .rounded_full()
+                .cursor_pointer()
+                .text_xs()
+                .text_color(theme.muted_foreground)
+                .hover(move |style| style.bg(theme.muted))
+                .on_click(move |_, window, cx| {
+                    dispatch(ShellRequest::ToggleEventContract, window, cx)
+                })
+                .child(crate::i18n::t("shell.plugins.events_contract.title")),
+        )
+        .into_any_element()
+}
+
+/// The event stream's contract, as the page over the shell: what is
+/// subscribed, in which spellings, and the facts a plugin author — or anyone
+/// wondering why a moment did not appear — needs. Every line of it is already
+/// documented on the stream itself ([`crate::events`]); the page says it where
+/// the stream is being read.
+pub(crate) fn event_contract_overlay(
+    dispatch: &crate::shell::registry::Dispatch,
+    focus: &FocusHandle,
+    _: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    use gpui_kit::component::ActiveTheme as _;
+    let theme = cx.theme();
+    let close = dispatch.clone();
+    let dialog = v_flex()
+        .id("event-contract-dialog")
+        .w(px(560.))
+        .max_w_full()
+        .max_h_full()
+        .flex_none()
+        .gap(px(12.))
+        .rounded(px(8.))
+        .border_1()
+        .border_color(theme.border)
+        .bg(theme.background)
+        .shadow(vec![
+            BoxShadow::new(px(0.), px(18.), black().opacity(0.45)).blur_radius(px(48.)),
+            BoxShadow::new(px(0.), px(2.), black().opacity(0.3)).blur_radius(px(8.)),
+        ])
+        .overflow_hidden()
+        .on_mouse_down_out({
+            let close = close.clone();
+            move |event, window, cx| {
+                if event.button == MouseButton::Left {
+                    close(ShellRequest::ToggleEventContract, window, cx);
+                }
+            }
+        })
+        .child(
+            h_flex()
+                .w_full()
+                .flex_none()
+                .h(px(40.))
+                .px(px(12.))
+                .items_center()
+                .border_b_1()
+                .border_color(theme.border)
+                .child(
+                    div()
+                        .text_size(px(13.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(crate::i18n::t("shell.plugins.events_contract.title")),
+                )
+                .child(div().flex_1())
+                .child(
+                    button(
+                        "event-contract-close",
+                        &crate::i18n::t("settings.close"),
+                        theme,
+                    )
+                    .on_click({
+                        let close = close.clone();
+                        move |_, window, cx| close(ShellRequest::ToggleEventContract, window, cx)
+                    }),
+                ),
+        )
+        .child(
+            // The dialog is auto-height, so a `flex_1` body would collapse to
+            // nothing — the palette's own lesson. A capped content height
+            // sizes the dialog from what it holds and scrolls past the cap.
+            v_flex()
+                .w_full()
+                .flex_none()
+                .max_h(px(520.))
+                .overflow_y_scrollbar()
+                .p(px(14.))
+                .gap(px(10.))
+                .child(
+                    div()
+                        .w_full()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(crate::i18n::t("shell.plugins.events_contract.intro")),
+                )
+                .child(contract_facts(theme))
+                .child(section(
+                    &crate::i18n::t("shell.plugins.events_contract.kinds"),
+                    theme,
+                ))
+                .children(
+                    events::SUBSCRIBED
+                        .iter()
+                        .enumerate()
+                        .map(|(index, kind)| contract_kind_row(index, kind, theme)),
+                )
+                .child(
+                    div()
+                        .w_full()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(crate::i18n::t("shell.plugins.events_contract.exception")),
+                ),
+        );
+    let close = dispatch.clone();
+    v_flex()
+        .id("event-contract-overlay")
+        .absolute()
+        .inset_0()
+        .occlude()
+        .size_full()
+        .bg(black().opacity(if theme.is_dark() { 0.45 } else { 0.22 }))
+        .flex()
+        .items_center()
+        .justify_center()
+        .p(px(24.))
+        .track_focus(focus)
+        .on_key_down(move |event: &KeyDownEvent, window, cx| {
+            if event.keystroke.key == "escape" {
+                close(ShellRequest::ToggleEventContract, window, cx);
+            }
+        })
+        .child(dialog)
+        .into_any_element()
+}
+
+/// The stream's own numbers, as the settings reference pages state their
+/// facts: nothing here can be acted on, so nothing is offered as a toggle.
+fn contract_facts(theme: &Theme) -> AnyElement {
+    v_flex()
+        .id("event-contract-facts")
+        .w_full()
+        .gap(px(4.))
+        .p(px(8.))
+        .rounded(px(6.))
+        .bg(theme.muted)
+        .child(line(
+            &crate::i18n::t("shell.plugins.events_contract.fact_lane"),
+            theme.muted_foreground,
+        ))
+        .child(line(
+            &crate::i18n::t("shell.plugins.events_contract.fact_time"),
+            theme.muted_foreground,
+        ))
+        .child(line(
+            &crate::i18n::t("shell.plugins.events_contract.fact_ring"),
+            theme.muted_foreground,
+        ))
+        .child(line(
+            &crate::i18n::t("shell.plugins.events_contract.fact_reconnect"),
+            theme.muted_foreground,
+        ))
+        .into_any_element()
+}
+
+/// One subscribed kind, in both spellings the world uses it: the dotted name a
+/// manifest's `[[events]] on` writes and the log ring records, and the
+/// underscored one the daemon stamps on the wire.
+fn contract_kind_row(index: usize, kind: &events::Kind, theme: &Theme) -> AnyElement {
+    h_flex()
+        .id(("event-contract-kind", index))
+        .w_full()
+        .gap(px(8.))
+        .items_baseline()
+        .child(
+            div()
+                .min_w_0()
+                .truncate()
+                .font_family(theme.mono_font_family.clone())
+                .text_size(px(10.5))
+                .text_color(theme.foreground)
+                .child(kind.dotted.to_owned()),
+        )
+        .child(div().flex_1())
+        .child(
+            div()
+                .flex_none()
+                .font_family(theme.mono_font_family.clone())
+                .text_size(px(10.))
+                .text_color(theme.muted_foreground)
+                .child(kind.wire.to_owned()),
+        )
+        .into_any_element()
 }
 
 /// The view's chips: one per slice of the stream, the active one picked out.

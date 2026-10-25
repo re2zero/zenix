@@ -380,6 +380,36 @@ general:
   clear:
     en: "Clear"
     zh-CN: "清空"
+  cancel:
+    en: "Cancel"
+    zh-CN: "取消"
+
+# The confirmation a destructive request asks for before it runs: a worktree
+# removal or a plugin unlink. Read by `src/shell/confirm.rs`.
+confirm:
+  remove:
+    en: "Remove"
+    zh-CN: "删除"
+  unlink:
+    en: "Unlink"
+    zh-CN: "解除链接"
+  remove_worktree:
+    title:
+      en: "Remove worktree"
+      zh-CN: "删除工作树"
+    body:
+      en: "Closes the workspace %{name} and deletes its worktree directory. The daemon refuses one with uncommitted changes."
+      zh-CN: "将关闭工作区 %{name} 并删除其工作树目录；有未提交更改时 daemon 会拒绝。"
+    force:
+      en: "Delete even with uncommitted changes (--force)"
+      zh-CN: "有未提交更改也删除（--force）"
+  unlink_plugin:
+    title:
+      en: "Unlink plugin"
+      zh-CN: "解除插件链接"
+    body:
+      en: "Forgets %{name}. Its directory is left untouched, and linking it again is one path away."
+      zh-CN: "忘记 %{name}。它的目录保持原样，重新链接只需再给一次路径。"
 
 ai:
   config_empty:
@@ -572,6 +602,10 @@ shell:
     empty:
       en: "No worktrees in this repository"
       zh-CN: "此仓库没有其他工作树"
+    # The removal affordance on a removable row, as its AccessKit name.
+    remove:
+      en: "Remove worktree %{name}"
+      zh-CN: "删除工作树 %{name}"
   palette:
     prompt:
       en: "type a command"
@@ -615,6 +649,33 @@ shell:
     commands:
       en: "commands"
       zh-CN: "命令"
+    # The event stream's contract page: what the stream is, stated as facts
+    # beside the stream it describes. Read by `src/plugins/panels.rs`.
+    events_contract:
+      title:
+        en: "Event contract"
+        zh-CN: "事件契约"
+      intro:
+        en: "The events view reads a subscription this client opens on the daemon's JSON API lane: every line the daemon announces lands in it, and only what a plugin manifest may hook is subscribed to."
+        zh-CN: "事件视图读的是本客户端在 daemon JSON API 通道上打开的一条订阅：daemon 宣布的每一行都会到达，且只订阅插件清单可挂钩的事件。"
+      fact_lane:
+        en: "The stream lives on the JSON API lane (events.subscribe), beside — never on — the endpoint lane the panes paint through."
+        zh-CN: "事件流走 JSON API 通道（events.subscribe），与窗格绘制的 endpoint 通道并行、绝不共用。"
+      fact_time:
+        en: "A streamed line carries no timestamp, so an event's time is when this client read it and the rows show ages, not clocks."
+        zh-CN: "流上的行不带时间戳：事件的时间是本客户端读到它的时刻，行显示的是时长而非钟点。"
+      fact_ring:
+        en: "The last 60 events are held; a burst stays readable after the fact without keeping a session's whole history."
+        zh-CN: "保留最近 60 条事件：事后仍可读一次突发，但不保留整个会话的历史。"
+      fact_reconnect:
+        en: "A stream that ends is reopened after two seconds, which covers a daemon that is restarting without costing anything while it is up."
+        zh-CN: "流断开后 2 秒重开：覆盖重启中的 daemon，而在其在线期间零开销。"
+      kinds:
+        en: "Subscribed kinds"
+        zh-CN: "订阅的事件种类"
+      exception:
+        en: "One hookable kind is absent: pane.agent_status_changed demands a pane id a session-wide stream has none of, so its hook runs but the event itself cannot be shown here."
+        zh-CN: "有一种可挂钩事件缺席：pane.agent_status_changed 要求 pane id，而会话级流没有——它的钩子照跑，事件本身无法在此显示。"
   # The plugin manager: one plugin's page, and the inventory the plugin view
   # counts. Every string here is read by `src/plugins/manager.rs` and the plugin
   # sidebar block beside it.
@@ -881,6 +942,11 @@ layout:
   no_template:
     en: "no template in this project"
     zh-CN: "此项目没有模板"
+  # The TOML preview's last line when the file is longer than the glance it
+  # is sized for.
+  preview_more:
+    en: "# … %{count} more lines in the file"
+    zh-CN: "# … 文件还有 %{count} 行"
   panes:
     en: "%{panes} panes"
     zh-CN: "%{panes} 个窗格"
