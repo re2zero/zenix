@@ -914,7 +914,12 @@ impl ShellView {
             return;
         };
         if !input.read(cx).value().trim().is_empty() {
+            // `set_value` emits no Change (it is a programmatic write, not
+            // typing), so the rows and the selection follow here.
             input.update(cx, |state, cx| state.set_value("", window, cx));
+            self.palette.reset_selection();
+            self.palette_sync(cx);
+            cx.notify();
             return;
         }
         self.toggle_palette(window, cx);
