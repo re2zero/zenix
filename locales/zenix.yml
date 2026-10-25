@@ -280,6 +280,18 @@ settings:
     locale_description:
       en: "The language of the interface; the terminal is untouched."
       zh-CN: "界面文案的语言，终端不受影响。"
+    density:
+      en: "Density"
+      zh-CN: "界面密度"
+    density_description:
+      en: "Compact draws the sidebar's list rows shorter, so a screen fits more of them."
+      zh-CN: "紧凑把侧栏列表行画矮一些，一屏多容纳两行。"
+    density_comfortable:
+      en: "Comfortable"
+      zh-CN: "舒适"
+    density_compact:
+      en: "Compact"
+      zh-CN: "紧凑"
   terminal:
     title:
       en: "Terminal"

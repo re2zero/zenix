@@ -124,6 +124,15 @@ const LOCALES: &[&str] = &["en", "zh-CN"];
 /// of the cursor a painter may decide).
 pub const CURSOR_SHAPES: &[&str] = &["block", "bar", "underline"];
 
+/// The densities the chrome's lists can be drawn at: comfortable is the
+/// prototype's 28-pixel row, compact its 24-pixel one — "紧凑把行高降到
+/// 24px，一屏多两行".
+pub const DENSITIES: &[&str] = &["comfortable", "compact"];
+/// The sidebar row's height at the comfortable density, in pixels.
+pub const ROW_HEIGHT_COMFORTABLE: f32 = 28.;
+/// The sidebar row's height at the compact density, in pixels.
+pub const ROW_HEIGHT_COMPACT: f32 = 24.;
+
 // ── The schema ───────────────────────────────────────────────────────
 
 /// Everything zenix remembers, as one document.
@@ -146,6 +155,9 @@ pub struct Appearance {
     pub theme: String,
     pub theme_mode: ThemeMode,
     pub locale: String,
+    /// How tall the chrome's list rows are drawn: `"comfortable"` or
+    /// `"compact"`. The grid's rows are the terminal's own metrics.
+    pub density: String,
 }
 
 impl Default for Appearance {
@@ -154,6 +166,18 @@ impl Default for Appearance {
             theme: "default".into(),
             theme_mode: ThemeMode::Light,
             locale: "en".into(),
+            density: "comfortable".into(),
+        }
+    }
+}
+
+impl Appearance {
+    /// The height a list row is drawn at, as the density names it.
+    pub fn row_height(&self) -> f32 {
+        if self.density == "compact" {
+            ROW_HEIGHT_COMPACT
+        } else {
+            ROW_HEIGHT_COMFORTABLE
         }
     }
 }
@@ -302,6 +326,7 @@ const SECTIONS: &[Section] = &[
             ("theme", Field::Choice(theme::NAMES)),
             ("theme_mode", Field::Choice(&["light", "dark"])),
             ("locale", Field::Choice(LOCALES)),
+            ("density", Field::Choice(DENSITIES)),
         ],
     },
     Section {
@@ -873,6 +898,26 @@ mod tests {
             diagnostics[0].message.contains("light, dark"),
             "{}",
             diagnostics[0].message
+        );
+    }
+
+    /// The density names a row height; an unknown one is the comfortable row.
+    #[test]
+    fn the_density_names_a_row_height() {
+        let (config, diagnostics) = parse(r#"{"appearance": { "density": "compact" }}"#);
+        assert_eq!(config.appearance.density, "compact");
+        assert_eq!(config.appearance.row_height(), ROW_HEIGHT_COMPACT);
+        assert!(diagnostics.is_empty());
+
+        let (config, diagnostics) = parse(r#"{"appearance": { "density": "cozy" }}"#);
+        assert_eq!(
+            config.appearance.density, "comfortable",
+            "unknown falls back"
+        );
+        assert_eq!(config.appearance.row_height(), ROW_HEIGHT_COMFORTABLE);
+        assert_eq!(
+            kinds(&diagnostics),
+            vec![("appearance.density".to_owned(), DiagnosticKind::WrongType)]
         );
     }
 

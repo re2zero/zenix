@@ -31,7 +31,7 @@ use super::commands::{self, Command};
 use super::keymap::Keymap;
 use super::registry::{Dispatch, SettingsSection, ShellRequest};
 use crate::config::{
-    self, ASIDE_WIDTH_MAX, ASIDE_WIDTH_MIN, Appearance, CURSOR_SHAPES, FONT_SIZE_MAX,
+    self, ASIDE_WIDTH_MAX, ASIDE_WIDTH_MIN, Appearance, CURSOR_SHAPES, DENSITIES, FONT_SIZE_MAX,
     FONT_SIZE_MIN, LINE_HEIGHT_MAX, LINE_HEIGHT_MIN, Layout, SIDEBAR_WIDTH_MAX, SIDEBAR_WIDTH_MIN,
     TerminalConfig,
 };
@@ -241,6 +241,26 @@ fn appearance_page(cx: &App) -> Page {
                     config::get(cx).appearance.locale.clone(),
                     |value, cx| {
                         config::update(cx, |config| config.appearance.locale = value.to_string());
+                    },
+                ),
+            )
+            .field(
+                t("settings.appearance.density"),
+                Some(t("settings.appearance.density_description").into()),
+                dropdown(
+                    "appearance-density",
+                    DENSITIES
+                        .iter()
+                        .map(|name| {
+                            (
+                                SharedString::from(*name),
+                                t(&format!("settings.appearance.density_{name}")).into(),
+                            )
+                        })
+                        .collect(),
+                    config::get(cx).appearance.density.clone(),
+                    |value, cx| {
+                        config::update(cx, |config| config.appearance.density = value.to_string());
                     },
                 ),
             ),

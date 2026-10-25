@@ -1385,6 +1385,7 @@ impl Render for ShellView {
             rename: self.rename.as_ref(),
             theme: &theme,
             dispatch: &dispatch,
+            row_height: config::get(cx).appearance.row_height(),
         };
 
         // Not `h_flex()`: that centres its children on the cross axis, which

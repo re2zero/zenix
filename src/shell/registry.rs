@@ -442,6 +442,9 @@ pub(crate) struct Invocation<'a> {
     pub(crate) rename: Option<&'a (RenameSubject, Entity<InputState>)>,
     pub(crate) theme: &'a Theme,
     pub(crate) dispatch: &'a Dispatch,
+    /// The height the sidebar's list rows are drawn at, from the config's
+    /// density: the tree rows, the agent rows and their tab sub-rows.
+    pub(crate) row_height: f32,
 }
 
 /// Where the shell mounts its contributions.
