@@ -945,10 +945,18 @@ pub(crate) fn overlay(
             BoxShadow::new(px(0.), px(18.), black().opacity(0.45)).blur_radius(px(48.)),
             BoxShadow::new(px(0.), px(2.), black().opacity(0.3)).blur_radius(px(8.)),
         ])
-        // A press inside the dialog is the dialog's: stopping it here keeps the
-        // scrim's own listener from hearing it, so a click on a control never
+        // A press anywhere outside the dialog dismisses, exactly as Escape
+        // does: the listener is the dialog's own, and fires only when the
+        // press landed outside its bounds, so a click on a control never
         // reads as a click on the dark around the dialog.
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        .on_mouse_down_out({
+            let scrim_close = scrim_close.clone();
+            move |event, window, cx| {
+                if event.button == MouseButton::Left {
+                    scrim_close(ShellRequest::Command(Command::ToggleSettings), window, cx);
+                }
+            }
+        })
         .child(dialog_head(&theme, &close, cx))
         .child(
             h_flex()
@@ -1005,12 +1013,6 @@ pub(crate) fn overlay(
         .justify_center()
         .p(px(24.))
         .track_focus(focus)
-        // The dark around the dialog is a dismiss button: pressing it closes,
-        // exactly as Escape does. Presses inside the dialog are stopped by the
-        // dialog itself before they reach this listener.
-        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-            scrim_close(ShellRequest::Command(Command::ToggleSettings), window, cx);
-        })
         .on_key_down(move |event: &KeyDownEvent, window, cx| {
             if event.keystroke.key == "escape" {
                 escape(ShellRequest::Command(Command::ToggleSettings), window, cx);

@@ -495,7 +495,15 @@ pub(crate) fn overlay(
             BoxShadow::new(px(0.), px(2.), black().opacity(0.3)).blur_radius(px(8.)),
         ])
         .key_context(CONTEXT)
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        // A press anywhere outside the dialog dismisses, exactly as Escape
+        // does: the listener is the dialog's own, and fires only when the
+        // press landed outside its bounds, so a click on a row never reads as
+        // a click on the dark around the dialog.
+        .on_mouse_down_out(move |event, window, cx| {
+            if event.button == MouseButton::Left {
+                close(ShellRequest::Command(Command::TogglePalette), window, cx);
+            }
+        })
         .track_focus(&focus)
         .on_action({
             let actions = actions.select_prev.clone();
@@ -576,12 +584,6 @@ pub(crate) fn overlay(
         .justify_center()
         .items_start()
         .pt(top)
-        // The dark around the dialog dismisses, on the press itself rather
-        // than the click: a press inside the dialog never reaches this
-        // listener, because the dialog stops it first.
-        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-            close(ShellRequest::Command(Command::TogglePalette), window, cx);
-        })
         .child(boxed)
         .into_any_element()
 }

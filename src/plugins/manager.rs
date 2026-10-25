@@ -121,9 +121,18 @@ pub(crate) fn overlay(
             BoxShadow::new(px(0.), px(18.), black().opacity(0.45)).blur_radius(px(48.)),
             BoxShadow::new(px(0.), px(2.), black().opacity(0.3)).blur_radius(px(8.)),
         ])
-        // A press inside the dialog belongs to the dialog: stopping it keeps
-        // the scrim's listener from reading a control's click as a dismiss.
-        .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+        // A press anywhere outside the dialog dismisses, exactly as Escape
+        // does: the listener is the dialog's own, and fires only when the
+        // press landed outside its bounds, so a click on a control never
+        // reads as a click on the dark around the dialog.
+        .on_mouse_down_out({
+            let close = close.clone();
+            move |event, window, cx| {
+                if event.button == MouseButton::Left {
+                    close(ShellRequest::ClosePluginManager, window, cx);
+                }
+            }
+        })
         .track_focus(keys.focus)
         .on_key_down(move |event, window, cx| key(event, window, cx))
         .child(
@@ -199,15 +208,12 @@ pub(crate) fn overlay(
         .justify_center()
         // The shell stays visible behind it: a plugin is what it contributes to
         // what is already on screen. The same scrim the settings dialog wears.
+        // The dark itself dismisses nothing: the dialog's own outside-press
+        // listener owns that.
         .bg(if theme.is_dark() {
             black().opacity(0.45)
         } else {
             black().opacity(0.22)
-        })
-        // The dark around the dialog dismisses, as Escape does; the dialog
-        // stops its own presses before they get here.
-        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
-            close(ShellRequest::ClosePluginManager, window, cx);
         })
         .child(boxed)
         .into_any_element()
