@@ -313,7 +313,6 @@ mod tests {
             log_id: log_id.into(),
             plugin_id: "a.b".into(),
             action_id: Some("apply".into()),
-            event: None,
             command: vec!["true".into()],
             status,
             exit_code: None,

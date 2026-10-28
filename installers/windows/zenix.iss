@@ -64,14 +64,17 @@ Source: "res\zenix.png"; DestDir: "{app}"; Flags: ignoreversion
 ; License texts — same inventory as [package.metadata.deb] in Cargo.toml, the
 ; one rename being the project license ({app}\doc\LICENSE here,
 ; usr/share/doc/zenix/copyright in the .deb because cargo-deb uses that name).
-; The Lilex faces are compiled into the binary, so no font files ship, but
-; OFL-1.1 still requires the license text to travel with the font. Windows has
-; no /usr/share/doc, so they go under {app}\doc: Inno tracks them as installed
-; files and removes them on uninstall, which {commonappdata} would not (it is
-; machine-wide shared state the uninstaller leaves behind).
+; zenix embeds no font of its own; the component library compiles Inter,
+; JetBrains Mono and IBM Plex Sans in, so their OFL texts travel beside it.
+; Windows has no /usr/share/doc, so they go under {app}\doc: Inno tracks them
+; as installed files and removes them on uninstall, which {commonappdata}
+; would not (it is machine-wide shared state the uninstaller leaves behind).
 Source: "LICENSE"; DestDir: "{app}\doc"; Flags: ignoreversion
 Source: "THIRD-PARTY.md"; DestDir: "{app}\doc"; Flags: ignoreversion
-Source: "assets\fonts\OFL.txt"; DestDir: "{app}\doc"; DestFileName: "Lilex-OFL.txt"; Flags: ignoreversion
+Source: "licenses\ely\LICENSE"; DestDir: "{app}\doc\ely"; Flags: ignoreversion
+Source: "licenses\ely\Inter-OFL.txt"; DestDir: "{app}\doc\ely"; Flags: ignoreversion
+Source: "licenses\ely\JetBrainsMono-OFL.txt"; DestDir: "{app}\doc\ely"; Flags: ignoreversion
+Source: "licenses\ely\IBMPlexSans-OFL.txt"; DestDir: "{app}\doc\ely"; Flags: ignoreversion
 Source: "licenses\herdr\LICENSE"; DestDir: "{app}\doc\herdr"; Flags: ignoreversion
 Source: "vendor\herdr-client\LICENSE-APACHE"; DestDir: "{app}\doc\herdr-client"; Flags: ignoreversion
 Source: "vendor\herdr-client\NOTICE.md"; DestDir: "{app}\doc\herdr-client"; Flags: ignoreversion

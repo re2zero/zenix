@@ -1,6 +1,6 @@
 //! Terminal graphics occupy the cell, not the font's ink bounds. Keep their
 //! edges on the same device-pixel grid even with fractional cell metrics.
-use gpui_kit::{Bounds, Path, PathBuilder, Pixels, Point, point, px};
+use gpui::{Bounds, Path, PathBuilder, Pixels, Point, point, px};
 
 #[derive(Clone, Copy)]
 pub(super) enum Graphic {
@@ -42,7 +42,7 @@ impl CellSeparator {
         self,
         top_left: Point<Pixels>,
         bottom_right: Point<Pixels>,
-    ) -> gpui_kit::Result<Path<Pixels>> {
+    ) -> gpui::Result<Path<Pixels>> {
         let (left, top, right, bottom) = (top_left.x, top_left.y, bottom_right.x, bottom_right.y);
         let middle = (top + bottom) / 2.;
         let width = right - left;

@@ -5,7 +5,7 @@ fn bold_color_applies_to_default_foreground_only() {
     let theme = Theme {
         foreground: 0x999999,
         bold: Some(0xffffff),
-        ..Theme::default()
+        ..dark_theme()
     };
     let mut cell = CellData {
         symbol: "x".into(),
@@ -35,7 +35,7 @@ fn bold_color_follows_reverse_and_dim_like_any_foreground() {
         foreground: 0x999999,
         background: 0x000000,
         bold: Some(0xffffff),
-        ..Theme::default()
+        ..dark_theme()
     };
     let mut cell = CellData {
         symbol: "x".into(),
@@ -55,7 +55,7 @@ fn bold_text_keeps_the_foreground_without_a_bold_color() {
     let theme = Theme {
         foreground: 0x999999,
         bold: None,
-        ..Theme::default()
+        ..dark_theme()
     };
     let cell = CellData {
         symbol: "x".into(),

@@ -1,6 +1,6 @@
 use super::*;
 
-#[gpui_kit::test]
+#[gpui::test]
 fn edge_backgrounds_reach_the_canvas_without_stretching_popups_or_prompts(cx: &mut TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, _| Empty);
     for (extend, prompt) in [(false, false), (true, false), (false, true), (true, true)] {
@@ -133,7 +133,7 @@ fn spans_cover_skip_cells_and_resolved_colors_without_crossing_rows() {
     row[3].bg = 0x02123456;
     assert_eq!(
         background_spans(&row, 0..row.len(), &theme).collect::<Vec<_>>(),
-        vec![(0, 2, BACKGROUND), (2, 4, 0x123456)]
+        vec![(0, 2, theme.background), (2, 4, 0x123456)]
     );
     assert_eq!(background_spans(&[], 0..0, &theme).count(), 0);
     for cells in row.chunks(2) {
@@ -160,7 +160,7 @@ fn wide_continuation_cells_take_the_glyph_background() {
     row[3].bg = 0x02000000;
     assert_eq!(
         background_spans(&row, 0..row.len(), &theme).collect::<Vec<_>>(),
-        vec![(0, 2, 0x373737), (2, 3, BACKGROUND), (3, 4, 0)]
+        vec![(0, 2, 0x373737), (2, 3, theme.background), (3, 4, 0)]
     );
     // Halfwidth katakana with a voiced or semi-voiced mark is two columns
     // wide in Herdr although its Unicode width is one.
@@ -171,7 +171,7 @@ fn wide_continuation_cells_take_the_glyph_background() {
         row[3].bg = 0x02000000;
         assert_eq!(
             background_spans(&row, 0..row.len(), &theme).collect::<Vec<_>>(),
-            vec![(0, 2, 0x373737), (2, 3, BACKGROUND), (3, 4, 0)],
+            vec![(0, 2, 0x373737), (2, 3, theme.background), (3, 4, 0)],
             "{kana}"
         );
     }
@@ -207,7 +207,7 @@ fn spans_and_styles_use_custom_theme() {
 /// glyph painted with the cell before it. Upstream counts the decorations with
 /// its `integration-test` instrumentation; `painted_decorations` is the same
 /// observation without that feature.
-#[gpui_kit::test]
+#[gpui::test]
 fn blank_cells_paint_decorations_without_shaping(cx: &mut TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, _| Empty);
     cx.draw(Point::default(), size(px(800.), px(600.)), |_, _| {

@@ -8,9 +8,9 @@
 //! ## Threads
 //!
 //! The client's resident threads — the daemon reader (`herdr::connection`), the
-//! event stream (`events`), the fleet stream (`fleet`), the plugin host and its
-//! UI-data reader (`plugins::{host,ui_data}`) and the worktree worker
-//! (`worktrees`) — are detached and live for the process. The quit mode is
+//! event stream (`events`), the fleet stream (`fleet`), the plugin host
+//! (`plugins::host`) and the worktree worker (`worktrees`) — are detached and
+//! live for the process. The quit mode is
 //! `LastWindowClosed`: closing the last window is process exit, which takes
 //! every thread with it, so there is nothing for a stop flag to stop. A
 //! per-window shutdown story arrives with multi-window (PLAN §3 B tier); until
@@ -18,11 +18,10 @@
 
 rust_i18n::i18n!("locales");
 
-use std::borrow::Cow;
 use std::sync::OnceLock;
 
-use gpui_kit::component::TitleBar;
-use gpui_kit::*;
+use ely_core::theme::ActiveTheme;
+use gpui::*;
 
 /// Handle to the tokio runtime created by [`run`].
 ///
@@ -47,10 +46,10 @@ pub mod mcp;
 pub mod platform;
 pub mod plugins;
 pub mod provider;
-pub mod shell;
 pub mod single_instance;
 pub mod sys;
 pub mod terminal;
+pub mod ui;
 pub mod util;
 pub mod worktrees;
 
@@ -58,18 +57,6 @@ pub mod worktrees;
 pub use client::{find_herdr_binary, herdr_socket_path, is_socket_ready, start_herdr_server};
 pub use config::ConfigStore;
 pub use sys::{CpuSamples, SystemInfo};
-
-fn register_fonts(cx: &App) {
-    let fonts: Vec<Cow<'static, [u8]>> = vec![
-        Cow::Borrowed(include_bytes!("../assets/fonts/Lilex-Regular.ttf")),
-        Cow::Borrowed(include_bytes!("../assets/fonts/Lilex-Bold.ttf")),
-        Cow::Borrowed(include_bytes!("../assets/fonts/Lilex-Italic.ttf")),
-        Cow::Borrowed(include_bytes!("../assets/fonts/Lilex-BoldItalic.ttf")),
-    ];
-    if let Err(err) = cx.text_system().add_fonts(fonts) {
-        tracing::error!(%err, "failed to register the terminal font");
-    }
-}
 
 /// Start the client: tracing, the tokio runtime, the config directory, the
 /// single-instance lock, then the GPUI application and its first window.
@@ -109,11 +96,16 @@ pub fn run() {
         }
     };
 
-    gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
+    gpui_platform::application()
+        // The component library's fonts and icons, served from the binary. It
+        // is the whole source: nothing of the retired kit ships any more.
+        .with_assets(ely_core::Assets)
         .with_quit_mode(QuitMode::LastWindowClosed)
         .run(|cx| {
-            gpui_kit::init(cx);
+            // The theme global and the library's key bindings. The assets are
+            // compiled in, so a failure here is a broken build and a window
+            // without a theme would only draw a panic.
+            ely_core::init(cx).expect("the component library could not start");
             // The stored config decides the chrome's mode and the locale
             // before anything is drawn, so the first frame is already right.
             config::init(cx);
@@ -121,8 +113,6 @@ pub fn run() {
             // directory and cached; without this the embedded copy is used and
             // an edited `prompts/orchestrator.md` would never be read.
             ai::prompts::init();
-            register_fonts(cx);
-            shell::keymap::bind_keys(cx);
             // The window opens the shape the last one closed with: its size
             // and maximized state are the config's `window` section, written
             // by the closing window itself. The position is the compositor's
@@ -137,46 +127,34 @@ pub fn run() {
             } else {
                 WindowBounds::centered(window_size, cx)
             };
-            gpui_kit::open_window(
-                WindowOptions {
-                    window_bounds: Some(window_bounds),
-                    window_min_size: Some(size(px(640.), px(400.))),
-                    titlebar: Some(TitlebarOptions {
-                        title: Some("zenix".into()),
-                        ..TitleBar::title_bar_options()
-                    }),
-                    // The chrome draws the whole frame itself, controls
-                    // included; where the platform cannot honor it (on X11,
-                    // a compositor that does not advertise GTK frame
-                    // extents — KWin with desktop effects off among them)
-                    // gpui falls back to the window manager's own
-                    // decorations and the TitleBar hides our controls.
-                    window_decorations: Some(WindowDecorations::Client),
-                    ..TitleBar::window_options()
-                },
-                cx,
-                |window, cx| {
-                    // The window manager's close — a server-decorated window's
-                    // X, a WM kill — has no element of ours to hook, so the
-                    // geometry is saved here before the close proceeds. The
-                    // client-decorated strip's own button hooks into
-                    // `shell::save_window_bounds` directly.
-                    window.on_window_should_close(cx, |window, cx| {
-                        shell::save_window_bounds(window, cx);
-                        true
-                    });
-                    // The window goes in so the shell can build the state
-                    // that needs one (the conversation panel's composer).
-                    let view = cx.new(|cx| shell::ShellView::new(window, cx));
-                    // The pane takes the keyboard as soon as the window opens, as
-                    // upstream focuses in its constructor; without this, keys reach
-                    // the pane only after the first click. The handle is cloned
-                    // first: `read`'s shared borrow conflicts with `&mut App`.
-                    let focus = view.read(cx).focus_handle(cx);
-                    window.focus(&focus, cx);
-                    view
-                },
-            )
+            // The shell draws the whole frame itself, the window controls
+            // included, so the window asks for client-side decorations. Where
+            // the platform cannot honor that — on X11, a compositor that does
+            // not advertise GTK frame extents (KWin with desktop effects off
+            // among them) — gpui falls back to the window manager's own
+            // decorations and the chrome hides its controls instead of
+            // stacking two title bars. macOS keeps its traffic lights drawn
+            // over our strip, at the origin the theme reserves for them.
+            let titlebar = TitlebarOptions {
+                title: Some("zenix".into()),
+                appears_transparent: true,
+                traffic_light_position: Some(cx.theme().traffic_light_origin()),
+            };
+            let options = WindowOptions {
+                window_bounds: Some(window_bounds),
+                window_min_size: Some(size(px(640.), px(400.))),
+                titlebar: Some(titlebar),
+                window_decorations: Some(WindowDecorations::Client),
+                ..Default::default()
+            };
+            cx.open_window(options, |window, cx| {
+                // Both of the window's close paths — the strip's own button
+                // and the window manager's — save its geometry through this
+                // one check. It goes in before the shell because a close can
+                // arrive before the first paint.
+                ui::install_close_guard(window, cx);
+                cx.new(|cx| ui::Root::new(window, cx))
+            })
             .expect("failed to open window");
         });
 

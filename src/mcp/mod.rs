@@ -7,7 +7,7 @@
 //! half had no consumer. What is left is the path the shell actually runs, plus
 //! the reverse bridge a separate process serves.
 //!
-//! Consumers: `src/shell/mod.rs` holds `start_orchestrator`'s return value, and
+//! Consumers: `src/ui/shell.rs` holds `start_orchestrator`'s return value, and
 //! that path runs through `server` → `handler` → `sse`/`plugin_tools`/`types`.
 //! `src/cli.rs` runs `agent_bridge` as `zenix mcp-agent`, which is the one place
 //! an external agent gets a tool from zenix.

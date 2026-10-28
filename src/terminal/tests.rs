@@ -1,5 +1,16 @@
 use super::*;
 
+use ely_core::theme::Mode;
+use gpui::OperatingSystem;
+
+use crate::ui::theme::ThemeSettings;
+
+/// The default (dark) chrome's grid, which is what the painter gets when the
+/// window has not dressed itself otherwise.
+fn dark_theme() -> Theme {
+    ThemeSettings::default().terminal_theme(Mode::Dark)
+}
+
 mod bold_color;
 mod links;
 mod selection;
@@ -334,9 +345,9 @@ fn popup_origin_rounds_horizontal_pixels_and_saturates_oversized_frames() {
 
 #[test]
 fn wire_colors_are_not_argb() {
-    let theme = Theme::default();
-    assert_eq!(color(0, FOREGROUND, &theme), FOREGROUND);
-    assert_eq!(color(0, BACKGROUND, &theme), BACKGROUND);
+    let theme = dark_theme();
+    // A cell color of 0 asks for the default the caller names.
+    assert_eq!(color(0, 0x123456, &theme), 0x123456);
     for (i, expected) in theme.palette[..16].iter().enumerate() {
         assert_eq!(color(i as u32 + 1, 0, &theme), *expected);
         assert_eq!(color(0x01000000 | i as u32, 0, &theme), *expected);
@@ -360,9 +371,9 @@ fn reverse_and_hidden_colors() {
         skip: false,
         hyperlink: None,
     };
-    assert_eq!(cell_colors(&cell, &Theme::default()), (0x0000ff, 0xff0000));
+    assert_eq!(cell_colors(&cell, &dark_theme()), (0x0000ff, 0xff0000));
     cell.modifier |= 1 << 7;
-    assert_eq!(cell_colors(&cell, &Theme::default()), (0xff0000, 0xff0000));
+    assert_eq!(cell_colors(&cell, &dark_theme()), (0xff0000, 0xff0000));
 }
 
 #[test]
@@ -388,7 +399,7 @@ fn custom_palette_and_defaults_preserve_truecolor_and_modifiers() {
     let mut theme = Theme {
         foreground: 0xabcdef,
         background: 0x123456,
-        ..Theme::default()
+        ..dark_theme()
     };
     for (i, entry) in theme.palette.iter_mut().enumerate() {
         *entry = 0x654300 + i as u32;
@@ -428,7 +439,9 @@ fn held_keys_release_what_was_pressed_only_under_report_all() {
     let press = |s: &str| {
         key_input(
             &KeyDownEvent {
-                keystroke: Keystroke::parse(s).unwrap(),
+                // A dynamic source (the test builds `f1`…`f24`): the static
+                // `Keystroke::parse` cannot take it.
+                keystroke: Keystroke::parse_with_os(s, OperatingSystem::Linux).unwrap(),
                 is_held: true,
                 prefer_character_input: false,
             },

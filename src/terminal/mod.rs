@@ -4,6 +4,16 @@
 //! Ported from herdr-gpui (Apache-2.0) `crates/herdr-gpui/src/terminal.rs`.
 //! Selection, links, copy mode and scrollback search live beside this module;
 //! accessibility still waits for the feature that needs it.
+//!
+//! ## The window side (U2-3)
+//!
+//! The painter, the pane view, splits, drag, regions, selection, links, copy
+//! mode, find and the card helpers live on `gpui_pre` and the component
+//! library, and the view's chrome reads `ely_core::theme`. The view does not
+//! own a daemon connection — `crate::ui::shell::Root` owns the one, pushes
+//! each pulled [`crate::herdr::LiveState`] into it, and the view paints and
+//! answers input from that copy. The cell colors still come from the chrome's
+//! palette by [`crate::ui::theme`], as they did after U1-3.
 
 pub(crate) mod cards;
 pub(crate) mod copy_mode;
@@ -21,8 +31,8 @@ pub(crate) mod view;
 
 pub(crate) use theme::Theme;
 
-use gpui_kit::{
-    Bounds, KeyDownEvent, Keystroke, Modifiers, Pixels, Point, ScrollDelta, ScrollWheelEvent,
+use gpui::{
+    Bounds, KeyDownEvent, Keystroke, Modifiers, Pixels, Point, ScrollDelta, ScrollEvent,
     TouchPhase, point, px, size,
 };
 use herdr_client::protocol::{
@@ -31,10 +41,6 @@ use herdr_client::protocol::{
     PaneSurfaceFrame, PaneSurfacePane, SurfaceRect,
 };
 
-#[cfg(test)]
-pub const BACKGROUND: u32 = 0x101419;
-#[cfg(test)]
-pub const FOREGROUND: u32 = 0xd8dee9;
 /// The font size and cell height the grid draws at until the config says
 /// otherwise (`crate::config::TerminalConfig`). Both stay: the painter's own
 /// default, and the pair every terminal test measures against.
@@ -256,7 +262,7 @@ impl WheelAccumulator {
     pub fn steps(
         &mut self,
         target: &WheelTarget,
-        event: &ScrollWheelEvent,
+        event: &ScrollEvent,
         cell_width: f32,
         cell_height: f32,
     ) -> WheelSteps {

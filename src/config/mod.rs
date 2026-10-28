@@ -7,9 +7,9 @@
 //!
 //! - `zenix/config.json` (this module, `~/.config/zenix/config.json`) holds what
 //!   the *client* acts on and the daemon has no opinion about: the chrome's
-//!   light/dark mode, the UI language, the terminal palettes the client resolves
-//!   named colors against, and the client's own layout (sidebar visibility and
-//!   width).
+//!   appearance (mode, accent, code theme, whether the terminal follows a light
+//!   chrome), the UI language, the terminal's metrics and cursor shape, and the
+//!   client's own layout (sidebar visibility and width).
 //! - the daemon's own `config.toml` holds what the *daemon* acts on: the shell a
 //!   new pane starts, the cwd a new workspace starts in, the scrollback byte
 //!   limit, keybindings, toasts, plugin settings. zenix sends commands and reads
@@ -30,10 +30,15 @@
 //!
 //! ```jsonc
 //! {
-//!   "appearance": { "theme": "gruvbox", "theme_mode": "light", "locale": "en" },
+//!   "appearance": {
+//!     "mode": "dark",
+//!     "accent": "default",
+//!     "syntax": "standard",
+//!     "terminal_follows_mode": true,
+//!     "locale": "en",
+//!     "density": "comfortable"
+//!   },
 //!   "terminal": {
-//!     "palette_dark": "Default",
-//!     "palette_light": "Catppuccin Latte",
 //!     "font_size": 14.0,
 //!     "line_height": 1.43,
 //!     "cursor": "block"
@@ -63,12 +68,19 @@
 //! every default. The client starts either way; the problems are listed on the
 //! settings panel's Config page and counted in the status bar.
 //!
+//! A key the file used to carry is walked too: `appearance.theme_mode` is
+//! carried over to `mode`, and `appearance.theme` (a theme family) is dropped,
+//! each with a [`DiagnosticKind::Deprecated`] diagnostic. So are the
+//! `terminal.palette_dark` / `terminal.palette_light` names: the terminal now
+//! takes the chrome's own ANSI palette, and `appearance.terminal_follows_mode`
+//! decides whether a light chrome reaches it. An old file keeps what still
+//! means something and says what was lost instead of being reset quietly.
+//!
 //! Written by the settings panel and the sidebar's own drag, both through
 //! [`update`], so the in-memory value, the file and every window move together.
 
 pub mod jsonc;
 pub mod scanner;
-pub mod theme;
 
 use std::{
     fs,
@@ -76,12 +88,9 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use gpui_kit::component::ThemeMode;
-use gpui_kit::*;
+use gpui::{App, Global};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
-
-use crate::terminal::Theme as TerminalTheme;
 
 /// The sidebar's width before anyone drags it, in pixels.
 pub const SIDEBAR_WIDTH_DEFAULT: f32 = 232.;
@@ -90,9 +99,10 @@ pub const SIDEBAR_WIDTH_MIN: f32 = 160.;
 /// The widest a stored sidebar width may be: past this it is not a panel.
 pub const SIDEBAR_WIDTH_MAX: f32 = 4096.;
 
-/// The right-hand panel's width before anyone drags it, in pixels: wide enough
-/// for a message and its tool card, which is what it is for.
-pub const ASIDE_WIDTH_DEFAULT: f32 = 380.;
+/// The right-hand panel's width before anyone drags it, in pixels: the
+/// design's 372, wide enough for a message and its tool card, which is what it
+/// is for.
+pub const ASIDE_WIDTH_DEFAULT: f32 = 372.;
 /// The narrowest a stored right-hand panel width may be.
 pub const ASIDE_WIDTH_MIN: f32 = 240.;
 /// The widest a stored right-hand panel width may be.
@@ -151,15 +161,136 @@ pub struct ConfigFile {
     pub window: Window,
 }
 
-/// What the chrome looks like: which theme family draws it, the mode that
-/// picks the family's light or dark variant (an absent variant falls back to
-/// gpui-kit's built-in slot), and the UI language. The terminal palette pair
-/// follows the mode (see `ShellView`).
+/// The accents the appearance page offers beside the well, in its order: the
+/// preset names a config may spell. The file may also hold `#rrggbb`.
+pub const ACCENT_PRESETS: &[&str] = &[
+    "default", "blue", "teal", "amber", "rose", "violet", "green",
+];
+
+/// The accent the chrome paints chosen rows and primary buttons with, as the
+/// file spells it.
+///
+/// The config owns this spelling rather than borrowing a UI crate's: the file
+/// outlives any one toolkit. A custom color is kept as lowercase `#rrggbb`, so
+/// a hand-edited `#AA732B` and the well's own spelling are one value.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub enum AccentChoice {
+    /// The palette's own accent: near-black in light mode, near-white in dark.
+    #[default]
+    Default,
+    /// The palette's blue.
+    Blue,
+    /// The palette's teal.
+    Teal,
+    /// The palette's ochre.
+    Amber,
+    /// The palette's rose.
+    Rose,
+    /// The palette's violet.
+    Violet,
+    /// The palette's green.
+    Green,
+    /// A color read off the appearance page's well, as `#rrggbb`.
+    Custom(String),
+}
+
+impl AccentChoice {
+    /// Read the file's spelling: a preset name, or `#rrggbb`.
+    pub fn parse(text: &str) -> Option<Self> {
+        match text {
+            "default" => Some(Self::Default),
+            "blue" => Some(Self::Blue),
+            "teal" => Some(Self::Teal),
+            "amber" => Some(Self::Amber),
+            "rose" => Some(Self::Rose),
+            "violet" => Some(Self::Violet),
+            "green" => Some(Self::Green),
+            _ => hex_color(text).map(Self::Custom),
+        }
+    }
+
+    /// The spelling this value goes into the file as.
+    pub fn as_str(&self) -> &str {
+        match self {
+            Self::Default => "default",
+            Self::Blue => "blue",
+            Self::Teal => "teal",
+            Self::Amber => "amber",
+            Self::Rose => "rose",
+            Self::Violet => "violet",
+            Self::Green => "green",
+            Self::Custom(text) => text,
+        }
+    }
+}
+
+/// A `#rrggbb` color, canonicalized to lowercase; anything else is not one.
+fn hex_color(text: &str) -> Option<String> {
+    let digits = text.strip_prefix('#')?;
+    if digits.len() == 6 && digits.chars().all(|digit| digit.is_ascii_hexdigit()) {
+        Some(format!("#{}", digits.to_ascii_lowercase()))
+    } else {
+        None
+    }
+}
+
+impl TryFrom<String> for AccentChoice {
+    type Error = String;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        Self::parse(&text).ok_or_else(|| format!("{text:?} is not an accent"))
+    }
+}
+
+impl From<AccentChoice> for String {
+    fn from(accent: AccentChoice) -> Self {
+        accent.as_str().to_owned()
+    }
+}
+
+/// Which colors code and markdown code blocks set in, as the config spells it:
+/// the standard set, the quiet one, or the warm paper one.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SyntaxChoice {
+    /// The library's own colors, made from the palette.
+    #[default]
+    Standard,
+    /// Low-chroma inks that keep to the text's own tones.
+    Quiet,
+    /// A warm paper set.
+    Paper,
+}
+
+/// The chrome's light or dark mode, or the system's, as the config spells it.
+///
+/// The config owns this spelling rather than borrowing a UI crate's: the mode
+/// outlives any one toolkit, and the file is the client's own.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeMode {
+    /// Dark text on light grounds.
+    Light,
+    /// Light text on dark grounds: the design's default.
+    #[default]
+    Dark,
+    /// As the system is.
+    System,
+}
+
+/// What the chrome looks like: its mode, accent and code theme, whether the
+/// terminal takes a light chrome's colors too, the UI language, and how tall
+/// the chrome's list rows are drawn.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Appearance {
-    pub theme: String,
-    pub theme_mode: ThemeMode,
+    pub mode: ThemeMode,
+    pub accent: AccentChoice,
+    pub syntax: SyntaxChoice,
+    /// Whether the terminal follows a light chrome. Off, it keeps the dark
+    /// colors, as the design's visual anchor.
+    pub terminal_follows_mode: bool,
     pub locale: String,
     /// How tall the chrome's list rows are drawn: `"comfortable"` or
     /// `"compact"`. The grid's rows are the terminal's own metrics.
@@ -167,10 +298,14 @@ pub struct Appearance {
 }
 
 impl Default for Appearance {
+    /// The design's defaults (PLAN §3, decision 01): a dark chrome, the
+    /// palette's own accent, the standard code theme, a terminal that follows.
     fn default() -> Self {
         Self {
-            theme: "default".into(),
-            theme_mode: ThemeMode::Light,
+            mode: ThemeMode::Dark,
+            accent: AccentChoice::Default,
+            syntax: SyntaxChoice::Standard,
+            terminal_follows_mode: true,
             locale: "en".into(),
             density: "comfortable".into(),
         }
@@ -188,15 +323,12 @@ impl Appearance {
     }
 }
 
-/// The palettes the client resolves the daemon's named cell colors against
-/// (`terminal::color`), one per mode; the metrics the grid draws cells at; and
-/// the shape the cursor is drawn as. Shaping and painting are the client's,
-/// so these are the client's to hold.
+/// The metrics the grid draws cells at and the shape the cursor is drawn as.
+/// Shaping and painting are the client's, so these are the client's to hold;
+/// the cells' colors are the chrome's (`appearance`) and are not repeated here.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TerminalConfig {
-    pub palette_dark: String,
-    pub palette_light: String,
     /// The font's size in whole pixels. The cell's width is measured from the
     /// shaped glyphs every frame; this sets what is shaped.
     pub font_size: f32,
@@ -209,8 +341,6 @@ pub struct TerminalConfig {
 impl Default for TerminalConfig {
     fn default() -> Self {
         Self {
-            palette_dark: "Default".into(),
-            palette_light: "Catppuccin Latte".into(),
             font_size: FONT_SIZE_DEFAULT,
             line_height: LINE_HEIGHT_DEFAULT,
             cursor: "block".into(),
@@ -314,14 +444,27 @@ enum Field {
     Flag,
     /// One of these strings.
     Choice(&'static [&'static str]),
+    /// A preset name, or a `#rrggbb` color.
+    Accent,
     /// A number within these bounds.
     Size { min: f32, max: f32 },
 }
 
-/// One section of the file, and the fields it may carry.
+/// One section of the file, the fields it may carry, and the keys it used to.
 struct Section {
     name: &'static str,
     fields: &'static [(&'static str, Field)],
+    deprecated: &'static [Deprecated],
+}
+
+/// A key the file used to carry, and what a load does with it now.
+struct Deprecated {
+    name: &'static str,
+    /// The key that replaces it: the old value is carried over when the file
+    /// does not set the new key itself. `None` when nothing replaces it.
+    becomes: Option<&'static str>,
+    /// What the diagnostic says about the key, before the fate of the value.
+    note: &'static str,
 }
 
 /// The whole schema: what a load keeps, in the order the panel shows it.
@@ -329,17 +472,29 @@ const SECTIONS: &[Section] = &[
     Section {
         name: "appearance",
         fields: &[
-            ("theme", Field::Choice(theme::NAMES)),
-            ("theme_mode", Field::Choice(&["light", "dark"])),
+            ("mode", Field::Choice(&["light", "dark", "system"])),
+            ("accent", Field::Accent),
+            ("syntax", Field::Choice(&["standard", "quiet", "paper"])),
+            ("terminal_follows_mode", Field::Flag),
             ("locale", Field::Choice(LOCALES)),
             ("density", Field::Choice(DENSITIES)),
+        ],
+        deprecated: &[
+            Deprecated {
+                name: "theme_mode",
+                becomes: Some("mode"),
+                note: "deprecated: renamed to \"mode\"",
+            },
+            Deprecated {
+                name: "theme",
+                becomes: None,
+                note: "deprecated: theme families are no longer supported",
+            },
         ],
     },
     Section {
         name: "terminal",
         fields: &[
-            ("palette_dark", Field::Choice(TerminalTheme::BUILTIN_NAMES)),
-            ("palette_light", Field::Choice(TerminalTheme::BUILTIN_NAMES)),
             (
                 "font_size",
                 Field::Size {
@@ -355,6 +510,20 @@ const SECTIONS: &[Section] = &[
                 },
             ),
             ("cursor", Field::Choice(CURSOR_SHAPES)),
+        ],
+        deprecated: &[
+            Deprecated {
+                name: "palette_dark",
+                becomes: None,
+                note: "deprecated: the terminal takes the chrome's ANSI palette; \
+                       \"appearance.terminal_follows_mode\" decides whether a light chrome reaches it",
+            },
+            Deprecated {
+                name: "palette_light",
+                becomes: None,
+                note: "deprecated: the terminal takes the chrome's ANSI palette; \
+                       \"appearance.terminal_follows_mode\" decides whether a light chrome reaches it",
+            },
         ],
     },
     Section {
@@ -377,6 +546,7 @@ const SECTIONS: &[Section] = &[
                 },
             ),
         ],
+        deprecated: &[],
     },
     Section {
         name: "window",
@@ -397,6 +567,7 @@ const SECTIONS: &[Section] = &[
             ),
             ("maximized", Field::Flag),
         ],
+        deprecated: &[],
     },
 ];
 
@@ -411,6 +582,8 @@ pub enum DiagnosticKind {
     WrongType,
     /// A number outside the range its key allows.
     OutOfRange,
+    /// A key the file used to carry, whose meaning has moved or gone.
+    Deprecated,
     /// The file could not be written.
     Write,
 }
@@ -463,6 +636,25 @@ impl Diagnostic {
             path: path.to_owned(),
             kind: DiagnosticKind::OutOfRange,
             message: format!("{found} is outside {min}..={max} — using {used}"),
+        }
+    }
+
+    fn accent(path: &str, found: &str) -> Self {
+        Self {
+            path: path.to_owned(),
+            kind: DiagnosticKind::WrongType,
+            message: format!(
+                "{found:?} is not one of {}, or #rrggbb — using the default",
+                ACCENT_PRESETS.join(", ")
+            ),
+        }
+    }
+
+    fn deprecated(path: &str, message: String) -> Self {
+        Self {
+            path: path.to_owned(),
+            kind: DiagnosticKind::Deprecated,
+            message,
         }
     }
 
@@ -537,7 +729,12 @@ fn sanitize_section(section: &Section, raw: &Value, diagnostics: &mut Vec<Diagno
         ));
         return Value::Object(kept);
     };
+    // The current keys first, so a deprecated one can never shadow a value the
+    // file set on purpose.
     for (key, value) in object {
+        if section.deprecated.iter().any(|old| old.name == key) {
+            continue;
+        }
         let path = format!("{}.{key}", section.name);
         match section.fields.iter().find(|(name, _)| name == key) {
             Some((_, field)) => {
@@ -547,6 +744,37 @@ fn sanitize_section(section: &Section, raw: &Value, diagnostics: &mut Vec<Diagno
             }
             None => diagnostics.push(Diagnostic::unknown_key(&path)),
         }
+    }
+    for old in section.deprecated {
+        let Some(value) = object.get(old.name) else {
+            continue;
+        };
+        let path = format!("{}.{}", section.name, old.name);
+        let message = match old.becomes {
+            Some(new) if kept.contains_key(new) => format!(
+                "{value} — {}; {new:?} is set in the same file, so this value was dropped",
+                old.note
+            ),
+            Some(new) => {
+                let field = section
+                    .fields
+                    .iter()
+                    .find(|(name, _)| *name == new)
+                    .map(|(_, field)| field);
+                match field.and_then(|field| keep(field, &path, value, &mut Vec::new())) {
+                    Some(carried) => {
+                        kept.insert(new.to_owned(), carried);
+                        format!("{value} — {}; the value was carried over", old.note)
+                    }
+                    None => format!(
+                        "{value} — {}; the value does not fit, so the default is used",
+                        old.note
+                    ),
+                }
+            }
+            None => format!("{value} — {}; the value was dropped", old.note),
+        };
+        diagnostics.push(Diagnostic::deprecated(&path, message));
     }
     Value::Object(kept)
 }
@@ -574,6 +802,13 @@ fn keep(
         Field::Choice(allowed) => match value.as_str() {
             Some(text) if allowed.contains(&text) => return Some(value.clone()),
             Some(text) => diagnostics.push(Diagnostic::choice(path, text, allowed)),
+            None => diagnostics.push(Diagnostic::wrong_type(path, "a string", type_name(value))),
+        },
+        Field::Accent => match value.as_str() {
+            Some(text) => match AccentChoice::parse(text) {
+                Some(accent) => return Some(Value::String(accent.as_str().to_owned())),
+                None => diagnostics.push(Diagnostic::accent(path, text)),
+            },
             None => diagnostics.push(Diagnostic::wrong_type(path, "a string", type_name(value))),
         },
         Field::Size { min, max } => match value.as_f64() {
@@ -702,7 +937,7 @@ impl Global for ConfigStore {}
 // ── The config as the app uses it ────────────────────────────────────
 
 /// Load the user's file, make it the app's config, and put the client in step
-/// with it. Call once, after `gpui_kit::init`.
+/// with it. Call once, after the component library's `init`.
 pub fn init(cx: &mut App) {
     cx.set_global(ConfigStore::load());
     for diagnostic in diagnostics(cx) {
@@ -713,7 +948,6 @@ pub fn init(cx: &mut App) {
             diagnostic.message
         );
     }
-    theme::register(cx);
     apply(cx);
 }
 
@@ -747,20 +981,15 @@ pub fn save(cx: &mut App) {
     }
 }
 
-/// Put the client in step with the config: the chrome's theme family, the
-/// mode and the locale are globals of their own, and are set from scratch on
-/// every change so a value can never be half-applied.
+/// Put the client in step with the config: the locale is a global of its own
+/// and is set from scratch on every change so a value can never be
+/// half-applied, and the appearance's four layers are dressed onto the
+/// component library's theme (`ui::theme::sync`, which does nothing when the
+/// layers already match so an unrelated write starts no fade).
 fn apply(cx: &mut App) {
-    let (theme, mode, locale) = {
-        let appearance = &get(cx).appearance;
-        (
-            appearance.theme.clone(),
-            appearance.theme_mode,
-            appearance.locale.clone(),
-        )
-    };
+    let locale = get(cx).appearance.locale.clone();
     crate::i18n::set_locale(&locale);
-    theme::apply(&theme, mode, cx);
+    crate::ui::theme::sync(cx);
 }
 
 fn config_path() -> PathBuf {
@@ -796,46 +1025,244 @@ mod tests {
         let (config, diagnostics) = parse(
             r#"{
               // the chrome the client draws for itself
-              "appearance": { "theme_mode": "dark", "locale": "zh-CN" },
-              "terminal": { "palette_dark": "Nord", "palette_light": "Dracula" },
+              "appearance": {
+                "mode": "dark",
+                "accent": "teal",
+                "syntax": "quiet",
+                "terminal_follows_mode": false,
+                "locale": "zh-CN"
+              },
+              "terminal": { "font_size": 15, "line_height": 1.5, "cursor": "bar" },
               "layout": { "sidebar_visible": false, "sidebar_width": 300.5 }
             }"#,
         );
         assert_eq!(diagnostics, Vec::new());
-        assert_eq!(config.appearance.theme_mode, ThemeMode::Dark);
+        assert_eq!(config.appearance.mode, ThemeMode::Dark);
+        assert_eq!(config.appearance.accent, AccentChoice::Teal);
+        assert_eq!(config.appearance.syntax, SyntaxChoice::Quiet);
+        assert!(!config.appearance.terminal_follows_mode);
         assert_eq!(config.appearance.locale, "zh-CN");
-        assert_eq!(config.terminal.palette_dark, "Nord");
-        assert_eq!(config.terminal.palette_light, "Dracula");
+        assert_eq!(config.terminal.font_size, 15.);
+        assert_eq!(config.terminal.line_height, 1.5);
+        assert_eq!(config.terminal.cursor, "bar");
         assert!(!config.layout.sidebar_visible);
         assert_eq!(config.layout.sidebar_width, 300.5);
     }
 
+    /// A new install opens dark, with the design's other three defaults.
     #[test]
-    fn a_theme_family_is_kept_only_if_it_is_one_of_the_names() {
-        let (config, diagnostics) = parse(r#"{"appearance": { "theme": "solarized" }}"#);
-        assert_eq!(config.appearance.theme, "solarized");
-        assert!(diagnostics.is_empty());
+    fn a_new_install_is_dark() {
+        let defaults = ConfigFile::default();
+        assert_eq!(defaults.appearance.mode, ThemeMode::Dark);
+        assert_eq!(defaults.appearance.accent, AccentChoice::Default);
+        assert_eq!(defaults.appearance.syntax, SyntaxChoice::Standard);
+        assert!(defaults.appearance.terminal_follows_mode);
+    }
 
-        let (config, diagnostics) = parse(r#"{"appearance": { "theme": "nord" }}"#);
-        assert_eq!(
-            config.appearance.theme, "default",
-            "an unknown family falls back"
+    /// An old file keeps what still means something: its mode is carried over
+    /// under the new spelling, and each retired key says so instead of being
+    /// reset quietly.
+    #[test]
+    fn the_old_appearance_keys_are_migrated_and_reported() {
+        let (config, diagnostics) = parse(
+            r#"{
+              "appearance": { "theme": "gruvbox", "theme_mode": "light", "locale": "zh-CN" }
+            }"#,
         );
+        assert_eq!(config.appearance.mode, ThemeMode::Light);
+        assert_eq!(config.appearance.locale, "zh-CN");
+        assert_eq!(config.appearance.accent, AccentChoice::Default);
+        assert_eq!(config.appearance.syntax, SyntaxChoice::Standard);
         assert_eq!(
             kinds(&diagnostics),
-            vec![("appearance.theme".to_owned(), DiagnosticKind::WrongType)]
+            vec![
+                (
+                    "appearance.theme_mode".to_owned(),
+                    DiagnosticKind::Deprecated
+                ),
+                ("appearance.theme".to_owned(), DiagnosticKind::Deprecated),
+            ]
         );
+        assert!(
+            diagnostics[0].message.contains("carried over"),
+            "{}",
+            diagnostics[0].message
+        );
+        assert!(
+            diagnostics[1].message.contains("gruvbox"),
+            "{}",
+            diagnostics[1].message
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| !diagnostic.is_blocking()),
+            "a retired key never blocks the client"
+        );
+
+        // What would be written back carries the new spelling only.
+        let written = serde_json::to_value(&config).expect("the config serializes");
+        assert_eq!(written["appearance"]["mode"], "light");
+        assert_eq!(written["appearance"]["theme"], Value::Null);
+        assert_eq!(written["appearance"]["theme_mode"], Value::Null);
+    }
+
+    /// The named terminal palettes are gone: the terminal takes the chrome's
+    /// ANSI palette now. An old file's names are reported, not obeyed, and the
+    /// rest of the section still loads.
+    #[test]
+    fn the_retired_terminal_palettes_are_reported_and_dropped() {
+        let (config, diagnostics) = parse(
+            r#"{
+              "terminal": {
+                "palette_dark": "Nord",
+                "palette_light": "Dracula",
+                "font_size": 15
+              }
+            }"#,
+        );
+        assert_eq!(config.terminal.font_size, 15.);
+        assert_eq!(
+            kinds(&diagnostics),
+            vec![
+                (
+                    "terminal.palette_dark".to_owned(),
+                    DiagnosticKind::Deprecated
+                ),
+                (
+                    "terminal.palette_light".to_owned(),
+                    DiagnosticKind::Deprecated
+                ),
+            ]
+        );
+        assert!(
+            diagnostics[0].message.contains("Nord") && diagnostics[0].message.contains("dropped"),
+            "{}",
+            diagnostics[0].message
+        );
+        assert!(
+            diagnostics[0].message.contains("terminal_follows_mode"),
+            "the replacement is named: {}",
+            diagnostics[0].message
+        );
+        assert!(
+            diagnostics
+                .iter()
+                .all(|diagnostic| !diagnostic.is_blocking()),
+            "a retired key never blocks the client"
+        );
+
+        let written = serde_json::to_value(&config).expect("the config serializes");
+        assert_eq!(written["terminal"]["palette_dark"], Value::Null);
+        assert_eq!(written["terminal"]["palette_light"], Value::Null);
+        assert_eq!(written["terminal"]["font_size"], 15.);
+    }
+
+    #[test]
+    fn a_current_key_wins_over_the_retired_one() {
+        let (config, diagnostics) =
+            parse(r#"{"appearance": { "mode": "dark", "theme_mode": "light" }}"#);
+        assert_eq!(config.appearance.mode, ThemeMode::Dark);
+        assert_eq!(
+            kinds(&diagnostics),
+            vec![(
+                "appearance.theme_mode".to_owned(),
+                DiagnosticKind::Deprecated
+            )]
+        );
+        assert!(
+            diagnostics[0].message.contains("dropped"),
+            "{}",
+            diagnostics[0].message
+        );
+    }
+
+    /// A retired value that does not fit the new key does not carry: the
+    /// default stands, and the diagnostic says which.
+    #[test]
+    fn a_retired_value_that_does_not_fit_takes_the_default() {
+        let (config, diagnostics) = parse(r#"{"appearance": { "theme_mode": "auto" }}"#);
+        assert_eq!(config.appearance.mode, ThemeMode::Dark);
+        assert_eq!(
+            kinds(&diagnostics),
+            vec![(
+                "appearance.theme_mode".to_owned(),
+                DiagnosticKind::Deprecated
+            )]
+        );
+        assert!(
+            diagnostics[0].message.contains("does not fit"),
+            "{}",
+            diagnostics[0].message
+        );
+    }
+
+    #[test]
+    fn an_accent_is_a_preset_or_a_hex_color() {
+        for (text, expected) in [
+            ("blue", AccentChoice::Blue),
+            ("#aa732b", AccentChoice::Custom("#aa732b".into())),
+            ("#AA732B", AccentChoice::Custom("#aa732b".into())),
+        ] {
+            let (config, diagnostics) =
+                parse(&format!(r#"{{"appearance": {{ "accent": "{text}" }}}}"#));
+            assert_eq!(config.appearance.accent, expected, "{text}");
+            assert!(diagnostics.is_empty(), "{text}");
+        }
+    }
+
+    #[test]
+    fn an_accent_that_is_neither_is_reported_and_defaulted() {
+        for text in ["chartreuse", "#12345", "#gggggg", "rgb(1,2,3)"] {
+            let (config, diagnostics) =
+                parse(&format!(r#"{{"appearance": {{ "accent": "{text}" }}}}"#));
+            assert_eq!(config.appearance.accent, AccentChoice::Default, "{text}");
+            assert_eq!(
+                kinds(&diagnostics),
+                vec![("appearance.accent".to_owned(), DiagnosticKind::WrongType)],
+                "{text}"
+            );
+        }
+
+        let (_, diagnostics) = parse(r#"{"appearance": { "accent": 7 }}"#);
+        assert_eq!(
+            kinds(&diagnostics),
+            vec![("appearance.accent".to_owned(), DiagnosticKind::WrongType)]
+        );
+    }
+
+    /// The new schema writes itself back: every layer survives a save and a
+    /// load with no diagnostic.
+    #[test]
+    fn a_new_file_round_trips() {
+        let text = r##"{
+          "appearance": {
+            "mode": "system",
+            "accent": "#aa732b",
+            "syntax": "paper",
+            "terminal_follows_mode": false,
+            "locale": "zh-CN",
+            "density": "compact"
+          }
+        }"##;
+        let (config, diagnostics) = parse(text);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        let written = serde_json::to_string_pretty(&config).expect("the config serializes");
+        let (reloaded, diagnostics) = parse(&written);
+        assert!(diagnostics.is_empty(), "{diagnostics:?}");
+        assert_eq!(reloaded, config);
+        assert_eq!(reloaded.appearance.accent.as_str(), "#aa732b");
     }
 
     #[test]
     fn an_unknown_key_is_reported_and_dropped() {
         let (config, diagnostics) = parse(
             r#"{
-              "appearance": { "theme_mode": "dark", "font_family": "Lilex" },
+              "appearance": { "mode": "dark", "font_family": "SomeFont" },
               "wat": 1
             }"#,
         );
-        assert_eq!(config.appearance.theme_mode, ThemeMode::Dark);
+        assert_eq!(config.appearance.mode, ThemeMode::Dark);
         assert_eq!(
             kinds(&diagnostics),
             vec![
@@ -858,12 +1285,12 @@ mod tests {
         let (config, diagnostics) = parse(
             r#"{
               "appearance": "dark",
-              "terminal": { "palette_dark": ["Nord"] },
+              "terminal": { "cursor": ["block"] },
               "layout": { "sidebar_visible": "yes", "sidebar_width": 300.0 }
             }"#,
         );
         assert_eq!(config.appearance, Appearance::default());
-        assert_eq!(config.terminal.palette_dark, "Default");
+        assert_eq!(config.terminal.cursor, "block");
         assert!(
             config.layout.sidebar_visible,
             "a wrong type takes its field's default"
@@ -873,10 +1300,7 @@ mod tests {
             kinds(&diagnostics),
             vec![
                 ("appearance".to_owned(), DiagnosticKind::WrongType),
-                (
-                    "terminal.palette_dark".to_owned(),
-                    DiagnosticKind::WrongType
-                ),
+                ("terminal.cursor".to_owned(), DiagnosticKind::WrongType),
                 (
                     "layout.sidebar_visible".to_owned(),
                     DiagnosticKind::WrongType
@@ -887,21 +1311,17 @@ mod tests {
 
     #[test]
     fn a_value_outside_its_choices_is_reported() {
-        let (config, diagnostics) =
-            parse(r#"{"appearance": { "theme_mode": "auto", "locale": "fr" }}"#);
+        let (config, diagnostics) = parse(r#"{"appearance": { "mode": "auto", "locale": "fr" }}"#);
         assert_eq!(config.appearance, Appearance::default());
         assert_eq!(
             kinds(&diagnostics),
             vec![
-                (
-                    "appearance.theme_mode".to_owned(),
-                    DiagnosticKind::WrongType
-                ),
+                ("appearance.mode".to_owned(), DiagnosticKind::WrongType),
                 ("appearance.locale".to_owned(), DiagnosticKind::WrongType),
             ]
         );
         assert!(
-            diagnostics[0].message.contains("light, dark"),
+            diagnostics[0].message.contains("light, dark, system"),
             "{}",
             diagnostics[0].message
         );
@@ -1055,7 +1475,7 @@ mod tests {
 
     #[test]
     fn a_broken_file_keeps_every_default_and_says_why() {
-        let (config, diagnostics) = parse(r#"{ "appearance": { "theme_mode": }"#);
+        let (config, diagnostics) = parse(r#"{ "appearance": { "mode": }"#);
         assert_eq!(config, ConfigFile::default());
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].kind, DiagnosticKind::Syntax);

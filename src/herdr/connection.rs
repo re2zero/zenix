@@ -11,9 +11,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use herdr_client::protocol::ClientPaneInputEvent;
-use herdr_client::{
-    ClientEvent, ClientHandle, ConnectOptions, ConnectTarget, Method, VersionMismatch, connect,
-};
+use herdr_client::{ClientEvent, ClientHandle, ConnectOptions, ConnectTarget, Method, connect};
 use serde_json::Value;
 
 use super::state::{ConnectionStatus, LiveState, Notice};
@@ -95,19 +93,6 @@ impl Connection {
         lock(&self.changed).in_flight.contains(request_id)
     }
 
-    /// Clear the unread count for bells and attention notifications. The
-    /// counter lives on the shared state, so the next pulled copy is zeroed
-    /// too.
-    pub(crate) fn acknowledge_alerts(&self) {
-        let mut state = lock(&self.changed);
-        if state.bells == 0 && state.attention == 0 {
-            return;
-        }
-        state.bells = 0;
-        state.attention = 0;
-        state.revision += 1;
-    }
-
     /// Remove and return the pending OSC 52 clipboard payloads, oldest first.
     ///
     /// This drains the shared state under the mutex instead of going through
@@ -116,27 +101,6 @@ impl Connection {
     /// delivered again on the next pull.
     pub(crate) fn take_clipboard(&self) -> Vec<String> {
         lock(&self.changed).take_clipboard()
-    }
-
-    pub(crate) fn footer(&self) -> Option<String> {
-        let state = lock(&self.changed);
-        if let Some(error) = &state.error {
-            return Some(error.clone());
-        }
-        state.version_mismatch.as_ref().map(|mismatch| {
-            let note = mismatch
-                .server_version()
-                .map(|version| format!(" (version {version})"))
-                .unwrap_or_default();
-            match mismatch {
-                VersionMismatch::DaemonOutdated { .. } => {
-                    format!("the herdr daemon must be updated{note}")
-                }
-                VersionMismatch::ClientOutdated { .. } => {
-                    format!("zenix must be updated{note}")
-                }
-            }
-        })
     }
 
     /// Queue one pane's semantic input. `boot_id` is read here so callers name

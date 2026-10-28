@@ -3,9 +3,9 @@
 //! Field names and optionality mirror herdr's own schema (protocol 22,
 //! `schema_version` 1, dumped with `herdr api schema --json`). The daemon omits
 //! an absent collection rather than sending it empty — a global action has no
-//! `contexts` key at all, and `warnings` / `platforms` / `description` simply
-//! vanish — so every collection here is `#[serde(default)]` and "absent" is
-//! modelled rather than smoothed into "empty" where the two differ.
+//! `contexts` key at all, and `warnings` / `platforms` simply vanish — so every
+//! collection here is `#[serde(default)]` and "absent" is modelled rather than
+//! smoothed into "empty" where the two differ.
 
 use serde::Deserialize;
 
@@ -31,8 +31,6 @@ pub(crate) struct InstalledPlugin {
     /// host needs it: `<plugin_root>/zenix-ui.toml` is the UI the plugin
     /// declares for this client, which the daemon neither reads nor validates.
     pub(crate) plugin_root: String,
-    #[serde(default)]
-    pub(crate) description: Option<String>,
     pub(crate) enabled: bool,
     /// The platforms the manifest names. `None` is the daemon's own "absent
     /// key" for a manifest that does not say, which it warns about at link.
@@ -315,8 +313,6 @@ pub(crate) struct PluginCommandLog {
     #[serde(default)]
     pub(crate) action_id: Option<String>,
     #[serde(default)]
-    pub(crate) event: Option<String>,
-    #[serde(default)]
     pub(crate) command: Vec<String>,
     pub(crate) status: LogStatus,
     #[serde(default)]
@@ -350,16 +346,6 @@ impl LogStatus {
 }
 
 impl PluginCommandLog {
-    /// What the daemon ran, as one line: the action, the event hook, or the
-    /// startup hook that has neither.
-    pub(crate) fn what(&self) -> String {
-        match (self.action_id.as_deref(), self.event.as_deref()) {
-            (Some(action), _) => format!("{}/{action}", self.plugin_id),
-            (None, Some(event)) => format!("{}: {event}", self.plugin_id),
-            (None, None) => self.plugin_id.clone(),
-        }
-    }
-
     /// The outcome line: the status, the exit code while there is one, and
     /// whatever the command last said. Only the first line is shown — a plugin's
     /// whole output belongs in a log view of its own, not in a sidebar row.
@@ -423,7 +409,6 @@ impl InstalledPlugin {
             min_herdr_version: String::new(),
             manifest_path: format!("/tmp/{id}/herdr-plugin.toml"),
             plugin_root: format!("/tmp/{id}"),
-            description: None,
             enabled: true,
             platforms: None,
             source: PluginSource::default(),
@@ -603,7 +588,6 @@ mod tests {
             "exit_code": 7, "stdout": "before\n", "stderr": "deliberate failure\n",
         }))
         .expect("decodes a failed log");
-        assert_eq!(failed.what(), "zenix.m8probe/fail");
         assert_eq!(failed.outcome(), "failed · exit 7 · deliberate failure");
 
         // A spawn failure has no exit code and no output: the daemon's reason is
@@ -615,17 +599,5 @@ mod tests {
         spawn_failure.stderr = None;
         spawn_failure.error = Some("no such file".into());
         assert_eq!(spawn_failure.outcome(), "running: no such file");
-    }
-
-    #[test]
-    fn a_startup_hook_log_names_the_plugin_because_it_has_neither_action_nor_event() {
-        let log: PluginCommandLog = serde_json::from_value(serde_json::json!({
-            "log_id": "plugin-log-1", "plugin_id": "zenix.m8probe", "event": "startup",
-            "command": ["sh", "-c", "true"], "status": "succeeded",
-            "exit_code": 0, "stdout": "started\n",
-        }))
-        .expect("decodes a startup log");
-        assert_eq!(log.what(), "zenix.m8probe: startup");
-        assert_eq!(log.outcome(), "succeeded · exit 0 · started");
     }
 }

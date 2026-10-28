@@ -10,7 +10,15 @@ license = "GPL-3.0-or-later"
 # Vendored daemon-facing crates (not published; see vendor/*/NOTICE.md).
 herdr-client = { path = "vendor/herdr-client" }
 herdr-protocol = { path = "vendor/herdr-protocol" }
-gpui-kit = "0.7.3"
+# GPUI itself (the `gpui-pre` snapshot the component library pins) and its
+# platform backends. The library draws on the same snapshot, so an entity
+# crosses the seam without a translation type.
+gpui = { package = "gpui-pre", version = "=0.3.10" }
+gpui_platform = { package = "gpui-pre-platform", version = "=0.3.10", features = [
+    "font-kit",
+    "wayland",
+    "x11",
+] }
 ureq = { version = "2", features = ["json"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -34,13 +42,31 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 reqwest = { version = "0.12", features = ["json", "stream"] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync", "io-util", "process"] }
 futures = "0.3"
-open = "5"
 rmcp = { version = "2.2", default-features = true, features = ["transport-io"] }
+# The component library (MIT), pinned by commit: its crates share one GPUI
+# snapshot (`gpui-pre 0.3.10`, the same one declared above) with this app, so
+# an entity crosses the seam without a translation type. The three crates
+# named here are the ones the window reads directly; the rest arrive through
+# them as their own dependencies require.
+ely-core = { git = "file:///home/zero/zero/up/Ely-GPUI-Components", rev = "30c66fe1d5d23db769a6c834b771d054d7f288cf", features = [
+    "fonts",
+    "platform",
+] }
+ely-chat = { git = "file:///home/zero/zero/up/Ely-GPUI-Components", rev = "30c66fe1d5d23db769a6c834b771d054d7f288cf" }
+ely-agent = { git = "file:///home/zero/zero/up/Ely-GPUI-Components", rev = "30c66fe1d5d23db769a6c834b771d054d7f288cf" }
+# The settings surface's own pieces (U3-1): the section/row vocabulary the
+# design's pages are made of, and the appearance controls (mode, accent).
+ely-settings = { git = "file:///home/zero/zero/up/Ely-GPUI-Components", rev = "30c66fe1d5d23db769a6c834b771d054d7f288cf" }
+jiff = "0.2"
 
 [dev-dependencies]
 # Tests need GPUI's test support (headless windows, painted-frame inspection).
-# Resolver 2 keeps this off the production dependency graph.
-gpui-kit = { version = "0.7.3", features = ["test-support"] }
+# Resolver 2 keeps this off the production dependency graph. The component
+# library's own test entry rides on the same feature.
+gpui = { package = "gpui-pre", version = "=0.3.10", features = ["test-support"] }
+ely-core = { git = "file:///home/zero/zero/up/Ely-GPUI-Components", rev = "30c66fe1d5d23db769a6c834b771d054d7f288cf", features = [
+    "test-support",
+] }
 
 [target.'cfg(windows)'.dependencies]
 interprocess = "2"
@@ -63,12 +89,29 @@ assets = [
     ["res/herdr", "usr/share/zenix/", "755"],
     ["res/zenix.desktop", "usr/share/applications/", "644"],
     ["res/zenix.png", "usr/share/icons/hicolor/512x512/apps/", "644"],
-    # License texts. The Lilex faces are compiled into the binary
-    # (`include_bytes!` in src/main.rs), so they are not shipped as files, but
-    # OFL-1.1 still requires the license text to travel with the font.
+    # License texts. zenix embeds no font of its own: the component library's
+    # faces (Inter, JetBrains Mono, IBM Plex Sans) are compiled into the binary
+    # by its assets, so their OFL texts travel beside its MIT notice.
     ["LICENSE", "usr/share/doc/zenix/copyright", "644"],
     ["THIRD-PARTY.md", "usr/share/doc/zenix/", "644"],
-    ["assets/fonts/OFL.txt", "usr/share/doc/zenix/Lilex-OFL.txt", "644"],
+    # The component library is statically linked and MIT: its notice travels
+    # with the binary the same way the fonts' OFL texts do.
+    ["licenses/ely/LICENSE", "usr/share/doc/zenix/ely/LICENSE", "644"],
+    [
+        "licenses/ely/Inter-OFL.txt",
+        "usr/share/doc/zenix/ely/Inter-OFL.txt",
+        "644",
+    ],
+    [
+        "licenses/ely/JetBrainsMono-OFL.txt",
+        "usr/share/doc/zenix/ely/JetBrainsMono-OFL.txt",
+        "644",
+    ],
+    [
+        "licenses/ely/IBMPlexSans-OFL.txt",
+        "usr/share/doc/zenix/ely/IBMPlexSans-OFL.txt",
+        "644",
+    ],
     ["licenses/herdr/LICENSE", "usr/share/doc/zenix/herdr/LICENSE", "644"],
     [
         "vendor/herdr-client/LICENSE-APACHE",

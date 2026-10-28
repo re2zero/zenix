@@ -13,16 +13,15 @@ use std::ops::Range;
 use std::rc::Rc;
 use std::time::Instant;
 
-use gpui_kit::*;
+use gpui::*;
 // `when_some` and its siblings ride in on this trait, which the glob above does
 // not bring along.
-use gpui_kit::prelude::FluentBuilder as _;
+use gpui::prelude::FluentBuilder as _;
 // The chrome's accent, which a focused pane's card takes: the terminal palette
 // has no accent of its own that matches the shell around it.
-use gpui_kit::component::ActiveTheme as _;
-use gpui_kit::component::input::{Input, InputEvent, InputState};
+use ely_core::forms::{Input, InputEvent, TextInput};
+use ely_core::theme::{ActiveTheme as _, ControlSize};
 use herdr_client::ConnectOptions;
-use herdr_client::ConnectTarget;
 use herdr_client::Method;
 use herdr_client::protocol::{
     ClientMouseButton, ClientMouseKind, ClientPaneInputEvent, PaneSurfaceFrame, PaneSurfacePane,
@@ -32,7 +31,7 @@ use herdr_client::scrollback::{
 };
 use serde_json::json;
 
-use crate::herdr::{Connection, LiveState, decode};
+use crate::herdr::{Connection, LiveState};
 use crate::terminal::cards;
 use crate::terminal::copy_mode::{Command as CopyCommand, CopyMode, Outcome as CopyOutcome};
 use crate::terminal::find::{self, Count, Search, Step};
@@ -51,7 +50,7 @@ use crate::terminal::{
 #[cfg(target_os = "linux")]
 use crate::terminal::input::WeakInputHandler as ViewInputHandler;
 #[cfg(not(target_os = "linux"))]
-use gpui_kit::ElementInputHandler as ViewInputHandler;
+use gpui::ElementInputHandler as ViewInputHandler;
 
 /// A press forwarded to a pane's application: the drag and release that answer
 /// it must reach the same target, on the daemon boot it was pressed against.
@@ -81,7 +80,7 @@ struct PendingActivation {
 /// The find field over one pane: its text input, the search it drives, and
 /// the daemon boot both were opened on. Dropped when either goes away.
 struct FindBar {
-    input: Entity<InputState>,
+    input: Entity<TextInput>,
     search: Search,
     boot: String,
     /// Re-reads the query whenever the field's text changes.
@@ -169,8 +168,6 @@ pub(crate) struct TerminalView {
     /// The cursor the border under the pointer asks for, so a press there is
     /// visible before it happens.
     split_cursor: Option<CursorStyle>,
-    /// Keeps the event relay alive for as long as the view is.
-    _events: Task<()>,
     /// The per-pane cached views the grid paints through, so one busy pane
     /// stops reshaping every other one. The same instance must be used every
     /// frame, or no region is ever adopted.
@@ -178,45 +175,29 @@ pub(crate) struct TerminalView {
 }
 
 impl TerminalView {
-    pub(crate) fn new(cx: &mut Context<Self>) -> Self {
+    /// The grid over the shell's one connection. The connection and the state
+    /// it has pulled belong to `crate::ui::shell::Root` (U2-1): this view is a
+    /// component that paints a copy and answers input through a clone, never
+    /// the owner of a second reader.
+    pub(crate) fn new(connection: Connection, live: LiveState, cx: &mut Context<Self>) -> Self {
         let (font_size, line_height) = {
             let config = &crate::config::get(cx).terminal;
             (config.font_size, config.line_height)
         };
-        let (pulse, pulses) = crossbeam_channel::unbounded::<()>();
-        let connection = Connection::start(ConnectTarget::Local, move || {
-            // A closed inbox means the view that owns this connection is gone;
-            // the reader stops instead of retrying forever.
-            pulse.try_send(()).is_ok()
-        });
 
-        // The reader thread never touches GPUI: it pulses this foreground task,
-        // which pulls the state and repaints. Nothing polls the daemon.
-        let events = cx.spawn(async move |view, cx| {
-            loop {
-                let pulses = pulses.clone();
-                let alive = cx
-                    .background_executor()
-                    .spawn(async move { pulses.recv().is_ok() })
-                    .await;
-                if !alive {
-                    break;
-                }
-                if view.update(cx, |view, cx| view.pull(cx)).is_err() {
-                    break;
-                }
-            }
-        });
-
+        // The grid is the one place a face must be named: cells are laid out
+        // on a fixed advance, so it takes the component library's monospace
+        // default rather than the chrome's proportional one.
+        let mono = cx.theme().mono_family.clone();
         Self {
             focus: cx.focus_handle(),
             connection,
             painter: Rc::new(RefCell::new(TerminalPainter::default())),
-            font: font("Lilex"),
+            font: font(mono),
             font_size,
             cell_height: cell_height(font_size, line_height),
             theme: Theme::default(),
-            live: LiveState::default(),
+            live,
             drawn_revision: 0,
             bounds: Rc::new(Cell::new(Bounds::default())),
             cell_width: Rc::new(Cell::new(font_size / 2.)),
@@ -234,32 +215,12 @@ impl TerminalView {
             copy_mode: None,
             pending_copy: None,
             split_cursor: None,
-            _events: events,
             regions: Regions::new(),
         }
     }
 
-    /// Clear the unread count for terminal bells and attention notifications,
-    /// which the status bar shows until they are acknowledged. Pulls at once
-    /// so both this view and the shell see the zeroed count.
-    pub(crate) fn acknowledge_alerts(&mut self, cx: &mut Context<Self>) {
-        self.connection.acknowledge_alerts();
-        self.pull(cx);
-    }
-
     pub(crate) fn focus_handle(&self) -> &FocusHandle {
         &self.focus
-    }
-
-    /// The one connection, so the shell dispatches its own commands through
-    /// the client that already owns it.
-    pub(crate) fn connection(&self) -> Connection {
-        self.connection.clone()
-    }
-
-    /// What the last event brought in, for the shell's sidebar and tab strip.
-    pub(crate) fn live(&self) -> &LiveState {
-        &self.live
     }
 
     /// Paint the grid with another palette. The shell changes it when the
@@ -291,44 +252,21 @@ impl TerminalView {
         cx.notify();
     }
 
-    /// Take whatever the connection has applied since the last paint.
-    fn pull(&mut self, cx: &mut Context<Self>) {
-        // OSC 52 writes land on the system clipboard here, before the paint
-        // comparison: the drain is unconditional and on the shared state, so a
-        // cloned `LiveState` can never re-deliver a payload and no repaint is
-        // needed for the write to happen. The daemon base64-encodes before
-        // sending, so a payload that fails to decode is a protocol defect, not
-        // hostile input; it is dropped with a warning.
-        for data in self.connection.take_clipboard() {
-            if let Some(text) = decode(&data) {
-                cx.write_to_clipboard(ClipboardItem::new_string(text));
-            } else {
-                tracing::warn!(
-                    length = data.len(),
-                    "undecodable OSC 52 clipboard payload dropped"
-                );
-            }
-        }
-        // Notifications the daemon asked the platform to show. Draining is
-        // unconditional, like the clipboard: the queue lives on the shared
-        // state, so a cloned `LiveState` cannot deliver one twice.
-        for notice in self.connection.take_notices() {
-            cx.show_system_notification(SystemNotification {
-                tag: notice.tag.into(),
-                title: notice.title.into(),
-                body: notice.body.into(),
-                actions: Vec::new(),
-            });
-        }
+    /// Take the state `crate::ui::shell::Root` pulled on this pulse.
+    ///
+    /// Every pulse lands here, not only the ones that move the revision: a
+    /// find answer, a copy-mode motion or a split ratio's acknowledgement does
+    /// not bump it, and those answers are exactly what frees the next request.
+    /// The shell drains the clipboard and notifications off the shared state;
+    /// this view only paints the copy.
+    pub(crate) fn sync(&mut self, live: LiveState, cx: &mut Context<Self>) {
+        let boot_changed = live.boot_id() != self.live.boot_id();
+        let moved =
+            live.revision != self.drawn_revision || live.status != self.live.status || boot_changed;
+        self.live = live;
         self.poll_activation(cx);
-        let next = self.connection.state();
-        // A reconnect may reach a daemon with another boot: its surface has the
-        // geometry the *old* daemon was told, so the next paint must report the
-        // window's size again or the grid stays at the daemon's default.
-        let boot_changed = next.boot_id() != self.live.boot_id();
-        if next.revision != self.drawn_revision || next.status != self.live.status || boot_changed {
-            self.drawn_revision = next.revision;
-            self.live = next;
+        if moved {
+            self.drawn_revision = self.live.revision;
             if boot_changed {
                 self.sent_options.set(None);
                 // Everything below names cells of the old boot's content; a
@@ -450,23 +388,21 @@ impl TerminalView {
             .as_ref()
             .filter(|bar| bar.search.pane_id() == pane_id)
         {
-            let input = bar.input.clone();
-            let focus = input.read(cx).focus_handle(cx).clone();
+            let focus = bar.input.read(cx).focus().clone();
             window.focus(&focus, cx);
-            input.update(cx, |input, cx| input.select_all(window, cx));
             cx.notify();
             return;
         }
         let search = Search::new(pane);
         let boot = self.live.boot_id().map(str::to_owned).unwrap_or_default();
         let placeholder = rust_i18n::t!("terminal.find.placeholder").to_string();
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder));
+        let input = cx.new(|cx| TextInput::new(window, cx).placeholder(placeholder));
         let changed = cx.subscribe_in(
             &input,
             window,
             |this: &mut Self, input, event: &InputEvent, _window, cx| {
-                if matches!(event, InputEvent::Change) {
-                    let query = input.read(cx).value().to_string();
+                if matches!(event, InputEvent::Changed) {
+                    let query = input.read(cx).text().to_string();
                     if let Some(bar) = this.find.as_mut() {
                         bar.search.set_query(&query);
                     }
@@ -475,7 +411,7 @@ impl TerminalView {
                 }
             },
         );
-        let focus = input.read(cx).focus_handle(cx).clone();
+        let focus = input.read(cx).focus().clone();
         self.find = Some(FindBar {
             input,
             search,
@@ -493,7 +429,7 @@ impl TerminalView {
         let Some(bar) = self.find.take() else {
             return;
         };
-        if bar.input.read(cx).focus_handle(cx).is_focused(window) {
+        if bar.input.read(cx).focus().is_focused(window) {
             window.focus(&self.focus, cx);
         }
         cx.notify();
@@ -1116,7 +1052,7 @@ impl TerminalView {
     /// Wheel motion belongs to the target under the pointer, not the focused
     /// one: the target the hit names is the target the input is sent to, and an
     /// open popup is that target anywhere over its own grid.
-    fn scroll_wheel(&mut self, event: &ScrollWheelEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn scroll_wheel(&mut self, event: &ScrollEvent, _: &mut Window, cx: &mut Context<Self>) {
         let Some(surface) = self.live.surface.clone() else {
             return;
         };
@@ -1147,7 +1083,7 @@ impl TerminalView {
             return;
         }
         if event.button == MouseButton::Left
-            && event.modifiers.secondary()
+            && event.modifiers.secondary(cx)
             && self.press_link(event.position, window, cx)
         {
             return;
@@ -1319,7 +1255,7 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) {
         let next = modifiers
-            .secondary()
+            .secondary(cx)
             .then(|| self.link_at(position))
             .flatten();
         if next != self.hover_link {
@@ -1663,11 +1599,11 @@ impl TerminalView {
         let bar = self.find.as_ref()?;
         let chrome = cx.theme();
         let (bg, border, fg, muted, danger) = (
-            chrome.secondary,
-            chrome.border,
-            chrome.foreground,
-            chrome.muted_foreground,
-            chrome.danger,
+            chrome.colors.surface,
+            chrome.colors.border,
+            chrome.colors.fg,
+            chrome.colors.fg_muted,
+            chrome.colors.danger,
         );
         let label = match bar.search.error() {
             Some(error) => error.to_owned(),
@@ -1687,7 +1623,7 @@ impl TerminalView {
         let input = bar.input.clone();
         let focus_input = move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
             if let Some(bar) = this.find.as_ref() {
-                let focus = bar.input.read(cx).focus_handle(cx).clone();
+                let focus = bar.input.read(cx).focus().clone();
                 window.focus(&focus, cx);
             }
         };
@@ -1736,7 +1672,7 @@ impl TerminalView {
                 // The field is not a pane: a press in it must not start a
                 // selection or move focus to the grid under it.
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+                .on_scroll(|_, _, cx| cx.stop_propagation())
                 .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| {
                     let keystroke = &event.keystroke;
                     if keystroke.key == "escape" && !keystroke.modifiers.modified() {
@@ -1761,7 +1697,7 @@ impl TerminalView {
                     div()
                         .flex_1()
                         .min_w_0()
-                        .child(Input::new(&input).appearance(false).bordered(false)),
+                        .child(Input::new(&input).size(ControlSize::Sm)),
                 )
                 .child(
                     div()
@@ -1791,8 +1727,8 @@ impl TerminalView {
                 .px(px(8.))
                 .py(px(2.))
                 .rounded(px(4.))
-                .bg(chrome.primary)
-                .text_color(chrome.primary_foreground)
+                .bg(chrome.colors.accent)
+                .text_color(chrome.colors.on_accent)
                 .text_size(px(11.))
                 .child(rust_i18n::t!("terminal.copy_mode.badge").to_string())
                 .into_any_element(),
@@ -1924,14 +1860,14 @@ impl Render for TerminalView {
         let (scrim, card_bg, card_border, card_fg, card_muted, card_error, accent, accent_fg) = {
             let chrome = cx.theme();
             (
-                chrome.background.opacity(0.82),
-                chrome.secondary,
-                chrome.border,
-                chrome.foreground,
-                chrome.muted_foreground,
-                chrome.danger,
-                chrome.primary,
-                chrome.primary_foreground,
+                chrome.colors.bg.opacity(0.82),
+                chrome.colors.surface,
+                chrome.colors.border,
+                chrome.colors.fg,
+                chrome.colors.fg_muted,
+                chrome.colors.danger,
+                chrome.colors.accent,
+                chrome.colors.on_accent,
             )
         };
 
@@ -1949,7 +1885,7 @@ impl Render for TerminalView {
                     .overflow_hidden()
                     .track_focus(&self.focus)
                     .on_key_down(cx.listener(Self::key_down))
-                    .on_scroll_wheel(cx.listener(Self::scroll_wheel))
+                    .on_scroll(cx.listener(Self::scroll_wheel))
                     .on_mouse_down(MouseButton::Left, cx.listener(Self::mouse_down))
                     .on_mouse_down(MouseButton::Right, cx.listener(Self::mouse_down))
                     .on_mouse_down(MouseButton::Middle, cx.listener(Self::mouse_down))
@@ -2376,10 +2312,10 @@ fn paint_cards(
         }
     }
     let card_tone = rgb(theme.background);
-    let idle: Hsla = cx.theme().border;
+    let idle: Hsla = cx.theme().colors.border;
     // A pane edge reads as an edge, not as a choice: the focused one takes the
     // chrome's accent, the rest sit a step away from the channel.
-    let focused = cx.theme().primary;
+    let focused = cx.theme().colors.accent;
     let half_gap = px(cards::GAP / 2.);
     for pane in &surface.panes {
         let content = cells(cards::content(pane));
@@ -2581,7 +2517,7 @@ mod tests {
     // Named imports only: the glob above drags gpui's own `test` attribute
     // macro in, which shadows the builtin one and cannot expand.
     use super::{mouse_button, popup_target};
-    use gpui_kit::{MouseButton, NavigationDirection};
+    use gpui::{MouseButton, NavigationDirection};
     use herdr_client::protocol::{
         ClientMouseButton, ClientShellPopupSurface, FrameData, PaneSurfaceFrame,
     };

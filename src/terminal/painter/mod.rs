@@ -20,7 +20,7 @@ pub(crate) use self::images::ImageTarget;
 pub(crate) use self::images::PlacedImages;
 use self::images::{ImageCache, ImageGeometry, below_text};
 use crate::terminal::*;
-use gpui_kit::*;
+use gpui::*;
 use herdr_client::protocol::{CellData, FrameData, PaneSurfacePane, SurfaceRect};
 use std::{
     sync::Arc,

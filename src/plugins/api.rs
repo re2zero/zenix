@@ -141,22 +141,6 @@ pub(crate) fn open_pane(
     decode_field(&result, "plugin_pane", None)
 }
 
-/// Close a plugin pane. Only a pane the plugin surface owns can be closed this
-/// way; the daemon answers `plugin_pane_not_found` for anything else, including
-/// a pane that was already closed.
-pub(crate) fn close_pane(client: &ApiClient, pane_id: &str) -> Result<(), ApiError> {
-    client.call("plugin.pane.close", json!({"pane_id": pane_id}))?;
-    Ok(())
-}
-
-/// Close the popup pane the daemon has open, if any. A popup is a singleton
-/// terminal the daemon owns rather than a pane, so this is the only way to
-/// dismiss one from outside the plugin.
-pub(crate) fn close_popup(client: &ApiClient) -> Result<(), ApiError> {
-    client.call("popup.close", json!({}))?;
-    Ok(())
-}
-
 /// The pane id an open reported.
 pub(crate) fn opened_pane_id(opened: &OpenedPane) -> &str {
     opened.pane.pane_id.as_str()

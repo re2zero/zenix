@@ -1,7 +1,7 @@
 //! Cell-grid geometry shared by every rectangle and path the painter draws on
 //! the grid, so neighboring primitives meet on the same device pixel.
 use super::graphics::CellSeparator;
-use gpui_kit::{Bounds, Pixels, Point, Size, Window, size};
+use gpui::{Bounds, Pixels, Point, Size, Window, size};
 use herdr_client::protocol::FrameData;
 
 pub(super) fn background_extent(

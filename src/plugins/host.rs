@@ -63,6 +63,11 @@ pub(crate) struct PluginState {
     /// An invocation the daemon refused leaves no log entry, so this is the only
     /// place its reason appears.
     pub(crate) last: Option<String>,
+    /// The daemon's reason, when the last request was refused. The line in
+    /// `last` is for a surface that shows the whole sentence; this is the bare
+    /// reason, so the shell can put it under a localized title when the request
+    /// came from a control with nowhere else to answer (U3-5).
+    pub(crate) last_error: Option<String>,
 }
 
 /// The plugin host: one worker thread, one cache, one pulse channel.
@@ -103,16 +108,6 @@ impl PluginHost {
     /// Re-read the daemon's recent plugin commands.
     pub(crate) fn refresh_logs(&self) {
         let _ = self.commands.send(Request::RefreshLogs);
-    }
-
-    /// Whether any installed plugin runs something for `event`. The event stream
-    /// asks this the moment one arrives, so the log ring is re-read while the
-    /// run it started is still the newest thing in it.
-    pub(crate) fn hooks_on(&self, event: &str) -> bool {
-        lock(&self.cache)
-            .plugins
-            .iter()
-            .any(|plugin| plugin.hooks_on(event))
     }
 
     /// Link a plugin directory, enabled. The daemon reads the manifest; this
@@ -158,15 +153,6 @@ impl PluginHost {
             placement,
         });
     }
-
-    pub(crate) fn close_pane(&self, pane_id: String) {
-        let _ = self.commands.send(Request::ClosePane { pane_id });
-    }
-
-    /// Dismiss the popup pane the daemon has open, if any.
-    pub(crate) fn close_popup(&self) {
-        let _ = self.commands.send(Request::ClosePopup);
-    }
 }
 
 /// One unit of work for the worker thread.
@@ -193,10 +179,6 @@ enum Request {
         title: String,
         placement: Placement,
     },
-    ClosePane {
-        pane_id: String,
-    },
-    ClosePopup,
 }
 
 fn work(
@@ -228,8 +210,8 @@ fn handle(client: &ApiClient, cache: &Mutex<PluginState>, request: Request) {
         Request::Invoke { action, source } => {
             let name = action.qualified_id();
             match api::invoke_action(client, &action, source) {
-                Ok(log) => note(cache, format!("{name}: {}", log.status.label())),
-                Err(error) => note(cache, format!("{name} was not run: {error}")),
+                Ok(log) => note_ok(cache, format!("{name}: {}", log.status.label())),
+                Err(error) => note_err(cache, format!("{name} was not run: {error}"), error),
             }
             // The daemon answers as soon as the command is spawned, so the
             // outcome is read from the ring, once right away and once after the
@@ -241,38 +223,46 @@ fn handle(client: &ApiClient, cache: &Mutex<PluginState>, request: Request) {
         Request::Link { path } => {
             match api::link_plugin(client, &path, true) {
                 Ok(plugin) => {
-                    note(cache, format!("{}: linked", plugin.plugin_id));
+                    note_ok(cache, format!("{}: linked", plugin.plugin_id));
                     // Nothing pushes a link, so the registry is read again here:
                     // this is the one moment the client knows for certain that it
                     // changed.
                     refresh(client, cache);
                 }
-                Err(error) => note(cache, format!("{path} was not linked: {error}")),
+                Err(error) => note_err(cache, format!("{path} was not linked: {error}"), error),
             }
         }
         Request::SetEnabled { plugin_id, enabled } => {
             match api::set_enabled(client, &plugin_id, enabled) {
                 Ok(()) => {
                     let state = if enabled { "enabled" } else { "disabled" };
-                    note(cache, format!("{plugin_id}: {state}"));
+                    note_ok(cache, format!("{plugin_id}: {state}"));
                     // Nothing pushes this either, and every slot an unlinked or
                     // disabled plugin filled has to go, so read the registry now.
                     refresh(client, cache);
                 }
-                Err(error) => note(cache, format!("{plugin_id} was not changed: {error}")),
+                Err(error) => note_err(
+                    cache,
+                    format!("{plugin_id} was not changed: {error}"),
+                    error,
+                ),
             }
         }
         Request::Unlink { plugin_id } => {
             match api::unlink(client, &plugin_id) {
                 Ok(()) => {
-                    note(cache, format!("{plugin_id}: unlinked"));
+                    note_ok(cache, format!("{plugin_id}: unlinked"));
                     refresh(client, cache);
                     // A denied pane of an unlinked plugin is the daemon's to
                     // report; what this side remembers is what it opened, and a
                     // link that is gone cannot have anything left open.
                     lock(cache).panes.retain(|pane| pane.plugin_id != plugin_id);
                 }
-                Err(error) => note(cache, format!("{plugin_id} was not unlinked: {error}")),
+                Err(error) => note_err(
+                    cache,
+                    format!("{plugin_id} was not unlinked: {error}"),
+                    error,
+                ),
             }
         }
         Request::OpenPane {
@@ -295,25 +285,14 @@ fn handle(client: &ApiClient, cache: &Mutex<PluginState>, request: Request) {
                             title: title.clone(),
                         },
                     );
-                    note(cache, format!("{title}: open as {pane_id}"));
+                    note_ok(cache, format!("{title}: open as {pane_id}"));
                 }
-                Ok(None) => note(cache, format!("{title}: popup open")),
-                Err(error) => note(cache, format!("{title} was not opened: {error}")),
+                Ok(None) => note_ok(cache, format!("{title}: popup open")),
+                Err(error) => note_err(cache, format!("{title} was not opened: {error}"), error),
             }
             // The pane itself arrives on the endpoint lane as a snapshot and a
             // surface push, like any other pane.
         }
-        Request::ClosePane { pane_id } => {
-            match api::close_pane(client, &pane_id) {
-                Ok(()) => note(cache, format!("{pane_id}: closed")),
-                Err(error) => note(cache, format!("{pane_id} was not closed: {error}")),
-            }
-            lock(cache).panes.retain(|pane| pane.pane_id != pane_id);
-        }
-        Request::ClosePopup => match api::close_popup(client) {
-            Ok(()) => note(cache, "popup: closed".to_owned()),
-            Err(error) => note(cache, format!("the popup was not closed: {error}")),
-        },
     }
 }
 
@@ -350,6 +329,20 @@ fn refresh_logs(client: &ApiClient, cache: &Mutex<PluginState>) {
 fn note(cache: &Mutex<PluginState>, line: String) {
     tracing::info!(target: "zenix-plugins", "{line}");
     lock(cache).last = Some(line);
+}
+
+/// A request the daemon answered. Clearing the failure beside the line is what
+/// lets the same refusal a second time count as news worth saying again.
+fn note_ok(cache: &Mutex<PluginState>, line: String) {
+    note(cache, line);
+    lock(cache).last_error = None;
+}
+
+/// A request the daemon refused: the sentence for the forms that show it, and
+/// the bare reason for the shell's toast.
+fn note_err(cache: &Mutex<PluginState>, line: String, error: impl std::fmt::Display) {
+    note(cache, line);
+    lock(cache).last_error = Some(error.to_string());
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {

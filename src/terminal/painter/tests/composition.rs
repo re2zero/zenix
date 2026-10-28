@@ -27,7 +27,7 @@ fn composition_ranges_count_utf16_units() {
     assert_eq!(byte_index("", 1), 0);
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn composition_bounds_follow_the_converted_clause(cx: &mut TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, _| Empty);
     cx.draw(Point::default(), size(px(800.), px(600.)), |_, _| {

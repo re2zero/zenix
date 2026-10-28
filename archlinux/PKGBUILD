@@ -88,10 +88,13 @@ package() {
   install -Dm644 "LICENSE"  "${pkgdir}/usr/share/doc/zenix/LICENSE"
 
   # License texts — same inventory as [package.metadata.deb] in Cargo.toml.
-  # The Lilex faces are compiled into the binary, so no font files ship, but
-  # OFL-1.1 still requires the license text to travel with the font.
+  # zenix embeds no font of its own; the component library compiles Inter,
+  # JetBrains Mono and IBM Plex Sans in, so their OFL texts travel beside it.
   install -Dm644 "THIRD-PARTY.md" "${pkgdir}/usr/share/doc/zenix/THIRD-PARTY.md"
-  install -Dm644 "assets/fonts/OFL.txt" "${pkgdir}/usr/share/doc/zenix/Lilex-OFL.txt"
+  for font in Inter JetBrainsMono IBMPlexSans; do
+    install -Dm644 "licenses/ely/${font}-OFL.txt" \
+      "${pkgdir}/usr/share/doc/zenix/ely/${font}-OFL.txt"
+  done
   install -Dm644 "licenses/herdr/LICENSE" "${pkgdir}/usr/share/doc/zenix/herdr/LICENSE"
   for crate in herdr-client herdr-protocol; do
     install -Dm644 "vendor/${crate}/LICENSE-APACHE" \

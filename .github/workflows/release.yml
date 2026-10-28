@@ -217,11 +217,13 @@ jobs:
               cp res/zenix.png     "${APPDIR}/usr/share/icons/hicolor/512x512/apps/"
 
               # Same inventory as [package.metadata.deb]: license texts, no fonts
-              # and no themes — the Lilex faces are compiled into the binary and
-              # nothing reads assets/themes/.
+              # of zenix's own and no themes — the component library compiles
+              # its faces in, and nothing reads assets/themes/.
               cp LICENSE "${APPDIR}/usr/share/doc/zenix/copyright"
               cp THIRD-PARTY.md "${APPDIR}/usr/share/doc/zenix/"
-              cp assets/fonts/OFL.txt "${APPDIR}/usr/share/doc/zenix/Lilex-OFL.txt"
+              mkdir -p "${APPDIR}/usr/share/doc/zenix/ely"
+              cp licenses/ely/LICENSE licenses/ely/*-OFL.txt \
+                "${APPDIR}/usr/share/doc/zenix/ely/"
               cp licenses/herdr/LICENSE "${APPDIR}/usr/share/doc/zenix/herdr/LICENSE"
               cp vendor/herdr-client/LICENSE-APACHE vendor/herdr-client/NOTICE.md \
                 "${APPDIR}/usr/share/doc/zenix/herdr-client/"
@@ -259,11 +261,12 @@ jobs:
               src_files="target/release/zenix"
               test -f target/release/herdr && src_files="$src_files target/release/herdr"
               src_files="$src_files res/zenix.desktop res/zenix.png"
-              # License texts, same inventory as [package.metadata.deb]: no fonts
-              # and no themes — the Lilex faces are compiled into the binary and
-              # nothing reads assets/themes/. zenix.spec installs these into
-              # %{_docdir}/zenix/, so they have to be in the tarball.
-              src_files="$src_files THIRD-PARTY.md assets/fonts/OFL.txt licenses/herdr/LICENSE"
+              # License texts, same inventory as [package.metadata.deb]: no
+              # fonts of zenix's own and no themes — the component library
+              # compiles its faces in, and nothing reads assets/themes/.
+              # zenix.spec installs these into %{_docdir}/zenix/, so they have
+              # to be in the tarball.
+              src_files="$src_files THIRD-PARTY.md licenses/ely/ licenses/herdr/LICENSE"
               src_files="$src_files vendor/herdr-client/LICENSE-APACHE vendor/herdr-client/NOTICE.md"
               src_files="$src_files vendor/herdr-protocol/LICENSE-APACHE vendor/herdr-protocol/NOTICE.md"
               test -f README.md && src_files="$src_files README.md"
@@ -343,12 +346,14 @@ jobs:
               cp res/zenix.png     "${P}/usr/share/icons/hicolor/512x512/apps/"
 
               # Same inventory as [package.metadata.deb]: license texts, no fonts
-              # and no themes — the Lilex faces are compiled into the binary and
-              # nothing reads assets/themes/.
+              # of zenix's own and no themes — the component library compiles
+              # its faces in, and nothing reads assets/themes/.
               cp README.md "${P}/usr/share/doc/zenix/"
               cp LICENSE "${P}/usr/share/doc/zenix/copyright"
               cp THIRD-PARTY.md "${P}/usr/share/doc/zenix/"
-              cp assets/fonts/OFL.txt "${P}/usr/share/doc/zenix/Lilex-OFL.txt"
+              mkdir -p "${P}/usr/share/doc/zenix/ely"
+              cp licenses/ely/LICENSE licenses/ely/*-OFL.txt \
+                "${P}/usr/share/doc/zenix/ely/"
               cp licenses/herdr/LICENSE "${P}/usr/share/doc/zenix/herdr/LICENSE"
               cp vendor/herdr-client/LICENSE-APACHE vendor/herdr-client/NOTICE.md \
                 "${P}/usr/share/doc/zenix/herdr-client/"

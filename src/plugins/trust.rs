@@ -54,6 +54,7 @@ use serde::Deserialize;
 
 use super::model::InstalledPlugin;
 use super::ui_manifest::UiContributions;
+use crate::i18n::t;
 
 /// The manifest file, inside the plugin directory.
 pub(crate) const FILE_NAME: &str = "herdr-plugin.toml";
@@ -95,18 +96,6 @@ impl CommandKind {
     }
 }
 
-/// One command worth looking at twice.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct Hazard {
-    /// Index into `Preview::commands`.
-    pub(crate) index: usize,
-    /// The rule that matched, as a sentence. A command gets at most one hazard:
-    /// the first rule in [`HAZARD_RULES`] order that matches it.
-    pub(crate) reason: &'static str,
-    /// How much the rule asks for, which is what the surfaces color it by.
-    pub(crate) level: HazardLevel,
-}
-
 /// How much a hazard asks for — the prototype's `.hazard.hi` / `.hazard.mid`
 /// pair, with everything unflagged drawing as the third grade. A *high* is a
 /// command whose argv hides what will run or that steps around the user's
@@ -145,8 +134,6 @@ pub(crate) struct Preview {
     /// Empty when the manifest declares none, together with a warning.
     pub(crate) version: String,
     pub(crate) commands: Vec<CommandLine>,
-    /// Sorted by index.
-    pub(crate) hazards: Vec<Hazard>,
     /// Manifest problems that are not fatal here, in the daemon's own wording
     /// where the daemon has words for them.
     pub(crate) warnings: Vec<String>,
@@ -292,21 +279,20 @@ pub(crate) fn hazard_for(argv: &[String]) -> Option<(&'static str, HazardLevel)>
         .map(|(reason, level, _)| (*reason, *level))
 }
 
-/// One hazard at most per command, in command order.
-fn hazards_for(commands: &[CommandLine]) -> Vec<Hazard> {
-    let mut hazards: Vec<Hazard> = commands
-        .iter()
-        .enumerate()
-        .filter_map(|(index, command)| {
-            hazard_for(&command.argv).map(|(reason, level)| Hazard {
-                index,
-                reason,
-                level,
-            })
-        })
-        .collect();
-    hazards.sort_by_key(|hazard| hazard.index);
-    hazards
+/// A rule's sentence in the reader's language. The rules keep English as the
+/// identity the tests compare; the surfaces draw this. A sentence without a
+/// translation is shown as written rather than hidden.
+pub(crate) fn reason_label(reason: &str) -> String {
+    let key = match reason {
+        "runs a program at an absolute path outside the plugin" => "hazard_absolute_program",
+        "asks for elevated privileges" => "hazard_elevation",
+        "runs inline shell code that is not in the manifest" => "hazard_inline_shell",
+        "runs inline interpreter code that is not in the manifest" => "hazard_inline_interpreter",
+        "reaches the network or installs packages" => "hazard_network",
+        "touches a system path outside the plugin" => "hazard_system_path",
+        _ => return reason.to_owned(),
+    };
+    t(&format!("shell.trust.{key}"))
 }
 
 /// Elevated-privilege programs, matched as a token anywhere in argv: `sh x.sh`
@@ -540,7 +526,6 @@ fn summarise(raw: RawManifest, path: &Path) -> Result<Preview, String> {
         });
     }
 
-    let hazards = hazards_for(&commands);
     let ui = path
         .parent()
         .map(|dir| UiContributions::read(&plugin_id, dir))
@@ -550,7 +535,6 @@ fn summarise(raw: RawManifest, path: &Path) -> Result<Preview, String> {
         name,
         version,
         commands,
-        hazards,
         warnings,
         ui,
     })
@@ -723,6 +707,19 @@ mod tests {
         hazard_for(argv).map(|(reason, _)| reason)
     }
 
+    /// The hazards a preview's commands draw, as the review derives them: one
+    /// at most per command, in command order.
+    fn preview_hazards(preview: &Preview) -> Vec<(usize, &'static str, HazardLevel)> {
+        preview
+            .commands
+            .iter()
+            .enumerate()
+            .filter_map(|(index, command)| {
+                hazard_for(&command.argv).map(|(reason, level)| (index, reason, level))
+            })
+            .collect()
+    }
+
     /// The review reads the UI the plugin would declare as well as the commands
     /// it would run: the daemon never reads `zenix-ui.toml`, so this screen is
     /// the only place its slots can be seen before a link.
@@ -829,11 +826,12 @@ panel = "board"
 
         // The clean action `sh mark.sh` is index 0 and stays unflagged: the script
         // is the plugin's own file, run from the plugin root.
-        assert_eq!(preview.hazards.len(), 4, "{:?}", preview.hazards);
-        let indices: Vec<usize> = preview.hazards.iter().map(|hazard| hazard.index).collect();
+        let hazards = preview_hazards(&preview);
+        assert_eq!(hazards.len(), 4, "{hazards:?}");
+        let indices: Vec<usize> = hazards.iter().map(|(index, ..)| *index).collect();
         assert_eq!(indices, vec![1, 2, 3, 4]);
-        for hazard in &preview.hazards {
-            assert_eq!(hazard.reason, reason_for("inline shell"), "{hazard:?}");
+        for (_, reason, _) in &hazards {
+            assert_eq!(*reason, reason_for("inline shell"), "{hazards:?}");
         }
     }
 
@@ -867,7 +865,11 @@ panel = "board"
         ];
         assert_eq!(preview.commands, expected);
         assert!(preview.warnings.is_empty(), "{:?}", preview.warnings);
-        assert!(preview.hazards.is_empty(), "{:?}", preview.hazards);
+        assert!(
+            preview_hazards(&preview).is_empty(),
+            "{:?}",
+            preview_hazards(&preview)
+        );
     }
 
     /// One sample per rule, in `HAZARD_RULES` order, so a rule added or reordered
@@ -1144,7 +1146,7 @@ panel = "board"
         let preview = preview(&dir.0).expect("an entry with no command still previews");
 
         assert!(preview.commands.is_empty());
-        assert!(preview.hazards.is_empty());
+        assert!(preview_hazards(&preview).is_empty());
         assert_eq!(preview.warnings, vec!["action 'mark' has no command"]);
     }
 
@@ -1190,7 +1192,11 @@ panel = "board"
         ];
         assert_eq!(preview.commands, expected);
         assert!(preview.warnings.is_empty(), "{:?}", preview.warnings);
-        assert!(preview.hazards.is_empty(), "{:?}", preview.hazards);
+        assert!(
+            preview_hazards(&preview).is_empty(),
+            "{:?}",
+            preview_hazards(&preview)
+        );
     }
 
     #[test]
@@ -1201,10 +1207,9 @@ panel = "board"
         let dir = PluginDir::new("link-handler-hazard", &manifest);
         let preview = preview(&dir.0).expect("the manifest previews");
 
-        let seen: Vec<(usize, &str)> = preview
-            .hazards
-            .iter()
-            .map(|hazard| (hazard.index, hazard.reason))
+        let seen: Vec<(usize, &str)> = preview_hazards(&preview)
+            .into_iter()
+            .map(|(index, reason, _)| (index, reason))
             .collect();
         let inline_shell = reason_for("inline shell");
         assert_eq!(seen, vec![(0, inline_shell), (1, inline_shell)]);

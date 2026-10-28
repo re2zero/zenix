@@ -165,11 +165,18 @@ pub(crate) struct Event {
     /// Epoch milliseconds when this client read the line. The daemon sends no
     /// time with an event, so this is arrival, not occurrence.
     pub(crate) at_unix_ms: u64,
-    /// The dot name. An event that is not one of [`HOOKABLE`] keeps the wire's
-    /// own spelling rather than being renamed into something it is not.
+    /// The dot name. An event that is not one of [`SUBSCRIBED`] keeps the
+    /// wire's own spelling rather than being renamed into something it is not.
     pub(crate) kind: String,
     /// What the event was about, from its payload.
     pub(crate) detail: String,
+    /// The name the daemon wrote on the line — the snake_case spelling for a
+    /// subscribed kind, the event's own name otherwise. The inspector shows
+    /// both spellings side by side.
+    pub(crate) wire: String,
+    /// The line as it arrived, trimmed of its newline. The inspector's raw and
+    /// JSON tabs both read this; nothing else parses it again.
+    pub(crate) raw: String,
 }
 
 /// Which slice of the stream the panel shows: everything, the agents, what a
@@ -275,13 +282,6 @@ impl Stream {
         lock(&self.cache).clone()
     }
 
-    /// Drop what has been read. The subscription is untouched: the next event
-    /// still arrives, which is what makes this clearing a view rather than
-    /// stopping one.
-    pub(crate) fn clear(&self) {
-        lock(&self.cache).events.clear();
-    }
-
     /// Move the view's filter. The stream reads everything either way; this
     /// decides what the panel shows of it.
     pub(crate) fn set_filter(&self, filter: EventFilter) {
@@ -370,6 +370,8 @@ fn event_from(line: &str, at_unix_ms: u64) -> Result<Option<Event>, String> {
         at_unix_ms,
         kind,
         detail: detail(data),
+        wire: wire.to_owned(),
+        raw: line.trim_end().to_owned(),
     }))
 }
 
@@ -411,11 +413,12 @@ pub(crate) fn now_unix_ms() -> u64 {
         .unwrap_or_default()
 }
 
-/// How long ago an event arrived, short enough for a sidebar row.
+/// How long ago an event arrived, short enough for a sidebar row. Only "now"
+/// is a word; the units above a second read the same in either locale.
 pub(crate) fn age(now_unix_ms: u64, at_unix_ms: u64) -> String {
     let seconds = now_unix_ms.saturating_sub(at_unix_ms) / 1000;
     match seconds {
-        0..=1 => "now".to_owned(),
+        0..=1 => crate::i18n::t("shell.age.now"),
         2..=59 => format!("{seconds}s"),
         60..=3599 => format!("{}m", seconds / 60),
         3600..=86_399 => format!("{}h", seconds / 3600),
@@ -484,8 +487,11 @@ mod tests {
         let line = r#"{"data":{"pane":{"pane_id":"w1:p4","label":"build","agent_status":"blocked"},"type":"pane_created"},"event":"pane_created"}"#;
         let event = event_from(line, 1_000).expect("a line").expect("an event");
         assert_eq!(event.kind, "pane.created");
+        assert_eq!(event.wire, "pane_created");
         assert_eq!(event.detail, "w1:p4 · build · blocked");
         assert_eq!(event.at_unix_ms, 1_000);
+        // The line is kept whole for the inspector's raw and JSON tabs.
+        assert_eq!(event.raw, line);
     }
 
     #[test]
@@ -540,15 +546,19 @@ mod tests {
 
     #[test]
     fn ages_step_from_seconds_to_minutes_to_hours() {
-        assert_eq!(age(1_000, 1_000), "now");
-        assert_eq!(age(1_500, 1_000), "now");
+        // "just now" is the one word; the rest are units. Read the word from
+        // the catalog so this test does not pin the locale another test may
+        // have changed.
+        let just_now = crate::i18n::t("shell.age.now");
+        assert_eq!(age(1_000, 1_000), just_now);
+        assert_eq!(age(1_500, 1_000), just_now);
         assert_eq!(age(12_000, 1_000), "11s");
         assert_eq!(age(60_000, 1_000), "59s");
         assert_eq!(age(121_000, 1_000), "2m");
         assert_eq!(age(7_200_000, 1_000), "1h");
         assert_eq!(age(172_800_000, 1_000), "1d");
         // A clock that moved backwards must not print a negative age.
-        assert_eq!(age(1_000, 9_000), "now");
+        assert_eq!(age(1_000, 9_000), just_now);
     }
 
     /// An event sits behind exactly one chip: the agent's, the layout's, the
@@ -562,6 +572,8 @@ mod tests {
             at_unix_ms: 1,
             kind: kind.to_owned(),
             detail: String::new(),
+            wire: kind.replace('.', "_"),
+            raw: String::new(),
         };
         assert_eq!(
             class(&event("pane.agent_detected"), &none),

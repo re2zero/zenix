@@ -1,7 +1,7 @@
 use super::{Look, Owner, Region, partition};
 use crate::terminal::painter::Span;
 use crate::terminal::theme::Theme;
-use gpui_kit::font;
+use gpui::font;
 use herdr_client::protocol::{
     CellData, CursorState, FrameData, PaneSurfaceFrame, PaneSurfacePane, PaneSurfaceScrollMetrics,
     SurfaceRect,
@@ -72,7 +72,7 @@ fn surface(frame: FrameData, panes: Vec<PaneSurfacePane>) -> Arc<PaneSurfaceFram
 
 fn look() -> Look {
     Look {
-        font: font("Lilex"),
+        font: font("JetBrains Mono"),
         font_size: 14.,
         cell_width: 8.,
         cell_height: 20.,

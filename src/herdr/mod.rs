@@ -20,6 +20,8 @@ pub(crate) mod connection;
 pub(crate) mod osc52;
 pub(crate) mod state;
 
+// The facade's public names: the shell and the terminal view reach the
+// connection and its pushed state through this module.
 pub(crate) use connection::Connection;
 pub(crate) use osc52::decode;
 pub(crate) use state::{ConnectionStatus, LiveState};

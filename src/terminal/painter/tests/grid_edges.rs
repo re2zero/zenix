@@ -73,7 +73,7 @@ fn paint_row(
     cx.update(|window, _| window.painted_quads())
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn a_background_span_ends_on_the_snapped_grid_edge(cx: &mut TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, _| Empty);
     let colors: Vec<u32> = (0..50)
@@ -91,7 +91,7 @@ fn a_background_span_ends_on_the_snapped_grid_edge(cx: &mut TestAppContext) {
     });
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn underline_runs_have_no_seams(cx: &mut TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, _| Empty);
     for x in [0., 3., 3.25, 17.] {

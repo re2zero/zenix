@@ -10,7 +10,7 @@
 
 use crate::terminal::painter::{Layer, Part, Span, TerminalPainter, cell_ranges, covers};
 use crate::terminal::theme::Theme;
-use gpui_kit::*;
+use gpui::*;
 use herdr_client::protocol::{FrameData, PaneSurfaceFrame, PaneSurfacePane, SurfaceRect};
 use std::{cell::RefCell, ops::Range, rc::Rc, sync::Arc};
 

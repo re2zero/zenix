@@ -1,5 +1,5 @@
 use super::*;
-use gpui_kit::size;
+use gpui::size;
 
 mod separators;
 

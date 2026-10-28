@@ -1,8 +1,8 @@
 //! The daemon's pushed truth: one snapshot, and the surface that belongs to it.
 //!
 //! Ported from herdr-gpui (Apache-2.0) `crates/herdr-gpui/src/state.rs`. The
-//! branches a terminal pane needs, plus the daemon's notifications, titles and
-//! bells, are carried over; sound playback, integrations and agent recency
+//! branches a terminal pane needs, plus the daemon's notifications and titles,
+//! are carried over; sound playback, bells, integrations and agent recency
 //! stay upstream.
 
 use std::collections::{BTreeSet, VecDeque};
@@ -41,6 +41,10 @@ pub(crate) struct LiveState {
     pub(crate) status: ConnectionStatus,
     pub(crate) error: Option<String>,
     pub(crate) version_mismatch: Option<herdr_client::VersionMismatch>,
+    /// The version the daemon reported in its handshake. Kept for the About
+    /// page: a matching daemon answers no other call that names its version,
+    /// and a mismatch is what `version_mismatch` carries.
+    pub(crate) server_version: Option<String>,
     /// Raw base64 OSC 52 payloads waiting to be written to the system
     /// clipboard, oldest first, bounded at `osc52::MAX_PENDING`: every write
     /// replaces the whole clipboard, so only the tail can still matter.
@@ -64,10 +68,6 @@ pub(crate) struct LiveState {
     pub(crate) notices: VecDeque<Notice>,
     /// The title the focused terminal reported, if any.
     pub(crate) title: Option<String>,
-    /// Bells the daemon forwarded, and the notifications that asked for
-    /// attention: the status bar reads both as an unread count.
-    pub(crate) bells: u64,
-    pub(crate) attention: u64,
     /// Whether the daemon's handshake advertised the scrollback methods copy
     /// mode and find are built on. A daemon that does not offer one refuses
     /// its request without an answer, so the client asks nothing instead.
@@ -83,6 +83,7 @@ impl Default for LiveState {
             status: ConnectionStatus::Connecting,
             error: None,
             version_mismatch: None,
+            server_version: None,
             clipboard_writes: VecDeque::new(),
             revision: 0,
             in_flight: BTreeSet::new(),
@@ -90,8 +91,6 @@ impl Default for LiveState {
             responses: VecDeque::new(),
             notices: VecDeque::new(),
             title: None,
-            bells: 0,
-            attention: 0,
             supports_copy_search: false,
             supports_copy_motion: false,
         }
@@ -111,6 +110,9 @@ impl LiveState {
                 self.status = ConnectionStatus::AwaitingSnapshot;
                 self.error = None;
                 self.version_mismatch = None;
+                // The handshake names the daemon's release; the About page is
+                // the one reader, and it must not have to reconnect to ask.
+                self.server_version = Some(welcome.server_version.clone());
                 // The handshake's method list is the daemon's own account of
                 // what it can answer; a feature built on one asks first.
                 self.supports_copy_search = Method::PaneCopySearch.advertised_in(&welcome.methods);
@@ -212,17 +214,11 @@ impl LiveState {
                     // recorded rather than silently dropped by the catch-all.
                     NotifyKind::Sound => {
                         tracing::debug!(message, "daemon asked for a sound");
-                        self.bells = self.bells.saturating_add(1);
-                        self.revision += 1;
                     }
                 }
             }
             ClientEvent::Message(ServerMessage::SemanticNotification(notification)) => {
                 self.apply_semantic(notification);
-            }
-            ClientEvent::Message(ServerMessage::TerminalBell { count }) => {
-                self.bells = self.bells.saturating_add(u64::from(count.max(1)));
-                self.revision += 1;
             }
             ClientEvent::Message(ServerMessage::WindowTitle { title }) if self.title != title => {
                 self.title = title;
@@ -264,14 +260,8 @@ impl LiveState {
     }
 
     /// A notification the daemon already resolved against its own session:
-    /// its title and body are what the user sees, and an agent asking for
-    /// attention also lights the rail's unread count.
+    /// its title and body are what the user sees.
     fn apply_semantic(&mut self, notification: SemanticNotification) {
-        use herdr_protocol::SemanticNotificationKind;
-        if matches!(notification.kind, SemanticNotificationKind::NeedsAttention) {
-            self.attention = self.attention.saturating_add(1);
-            self.revision += 1;
-        }
         let tag = notification
             .pane_id
             .or(notification.agent)
@@ -384,16 +374,12 @@ mod tests {
     }
 
     #[test]
-    fn a_terminal_title_and_a_bell_are_kept() {
+    fn a_terminal_title_is_kept() {
         let mut state = LiveState::default();
         state.apply(ClientEvent::Message(ServerMessage::WindowTitle {
             title: Some("vim src/main.rs".into()),
         }));
         assert_eq!(state.title.as_deref(), Some("vim src/main.rs"));
-        state.apply(ClientEvent::Message(ServerMessage::TerminalBell {
-            count: 2,
-        }));
-        assert_eq!(state.bells, 2);
     }
 
     #[test]
@@ -413,7 +399,7 @@ mod tests {
     }
 
     #[test]
-    fn a_semantic_notification_needing_attention_lights_the_count() {
+    fn a_semantic_notification_becomes_a_tagged_notice() {
         let mut state = LiveState::default();
         state.apply(ClientEvent::Message(ServerMessage::SemanticNotification(
             SemanticNotification {
@@ -428,7 +414,6 @@ mod tests {
                 position: None,
             },
         )));
-        assert_eq!(state.attention, 1);
         let notices = state.take_notices();
         assert_eq!(notices[0].tag, "zenix-p1");
         assert_eq!(notices[0].body, "waiting for input");

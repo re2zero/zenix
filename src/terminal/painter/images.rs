@@ -7,7 +7,7 @@
 //! size every GPU atlas accepts.
 
 use crate::terminal::error::{Error, Result};
-use gpui_kit::{App, Bounds, Pixels, RenderImage, Window, point, px, size};
+use gpui::{App, Bounds, Pixels, RenderImage, Window, point, px, size};
 use herdr_client::{
     MAX_IMAGE_SIDE, SurfaceImage, SurfaceImages,
     protocol::{
@@ -106,7 +106,7 @@ pub(crate) struct ImageGeometry {
 /// rest. Offsets arrive in the whole-pixel cell size this client reported.
 pub(crate) fn geometry(
     placement: &SurfaceGraphicsPlacement,
-    origin: gpui_kit::Point<Pixels>,
+    origin: gpui::Point<Pixels>,
     cell: (f32, f32),
     grid: Bounds<Pixels>,
 ) -> Option<ImageGeometry> {
@@ -162,7 +162,9 @@ pub(crate) fn decode(key: &SurfaceGraphicsAssetKey, data: &[u8]) -> Result<RgbaI
         SurfaceGraphicsFormat::Rgb => RgbaImage::from_raw(
             width,
             height,
-            data.chunks_exact(3)
+            data.as_chunks::<3>()
+                .0
+                .iter()
                 .flat_map(|pixel| [pixel[0], pixel[1], pixel[2], 0xff])
                 .collect(),
         ),
@@ -189,7 +191,7 @@ pub(crate) fn decode(key: &SurfaceGraphicsAssetKey, data: &[u8]) -> Result<RgbaI
         let fit = |side: u32| ((f64::from(side) * scale).round() as u32).clamp(1, MAX_TEXTURE_SIDE);
         pixels = image::imageops::resize(&pixels, fit(width), fit(height), FilterType::Triangle);
     }
-    for pixel in pixels.chunks_exact_mut(4) {
+    for pixel in pixels.as_chunks_mut::<4>().0 {
         pixel.swap(0, 2);
     }
     Ok(pixels)
@@ -350,7 +352,7 @@ impl ImageCache {
     pub(crate) fn prepare(
         &mut self,
         images: PlacedImages<'_>,
-        origin: gpui_kit::Point<Pixels>,
+        origin: gpui::Point<Pixels>,
         cell: (f32, f32),
         grid: Bounds<Pixels>,
         window: &mut Window,
