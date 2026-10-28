@@ -9,7 +9,7 @@ use super::*;
 /// share this test can observe is the decorations: the same cells split the
 /// same way, and a regression that made one layer paint another's cells would
 /// show up here as a count that is too high.
-#[gpui_kit::test]
+#[gpui::test]
 fn each_layer_paints_only_its_share_of_the_decorations(cx: &mut TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, _| Empty);
     cx.draw(Point::default(), size(px(800.), px(600.)), |_, _| {

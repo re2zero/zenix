@@ -115,6 +115,11 @@ pub(crate) struct WorktreeState {
     pub(crate) error: Option<String>,
     /// The last thing this client asked the daemon to do, and how it answered.
     pub(crate) last: Option<String>,
+    /// The daemon's reason, when the last request was refused. `last` carries
+    /// the whole sentence for the forms that show it inline; this carries only
+    /// the reason, so the shell can put it under a localized title when the
+    /// request came from a control with nowhere else to answer (U3-5).
+    pub(crate) last_error: Option<String>,
 }
 
 /// The worktree host: one worker thread, one cache, one pulse channel.
@@ -163,11 +168,16 @@ impl WorktreeHost {
         });
     }
 
-    /// Create a worktree from the focused workspace's repo, with the daemon's
-    /// own naming and focused on arrival. A branch name is the daemon's to
-    /// generate until this client has a place to ask for one.
-    pub(crate) fn create(&self, scope: String) {
-        let _ = self.commands.send(Request::Create { scope });
+    /// Create a worktree from the focused workspace's repo, focused on
+    /// arrival. A branch name and a base are the daemon's parameters; either
+    /// may be absent, in which case the daemon generates its own — the
+    /// checkout path is always its own.
+    pub(crate) fn create(&self, scope: String, branch: Option<String>, base: Option<String>) {
+        let _ = self.commands.send(Request::Create {
+            scope,
+            branch,
+            base,
+        });
     }
 
     /// Remove a worktree's workspace, as the confirmation dialog's confirm
@@ -210,6 +220,8 @@ enum Request {
     },
     Create {
         scope: String,
+        branch: Option<String>,
+        base: Option<String>,
     },
     Remove {
         workspace_id: String,
@@ -245,7 +257,7 @@ fn handle(client: &ApiClient, cache: &Mutex<WorktreeState>, request: Request) {
                         .get("already_open")
                         .and_then(serde_json::Value::as_bool)
                         .unwrap_or(false);
-                    note(
+                    note_ok(
                         cache,
                         if reopened {
                             "worktree: focused".to_owned()
@@ -255,21 +267,33 @@ fn handle(client: &ApiClient, cache: &Mutex<WorktreeState>, request: Request) {
                     );
                     refresh(client, cache, Some(scope));
                 }
-                Err(error) => note(cache, format!("the worktree was not opened: {error}")),
+                Err(error) => note_err(
+                    cache,
+                    format!("the worktree was not opened: {error}"),
+                    error,
+                ),
             }
         }
-        Request::Create { scope } => {
-            let params = serde_json::json!({ "workspace_id": scope, "focus": true });
+        Request::Create {
+            scope,
+            branch,
+            base,
+        } => {
+            let params = create_params(&scope, branch.as_deref(), base.as_deref());
             match client.call("worktree.create", params) {
                 Ok(answer) => {
                     let label = answer
                         .pointer("/worktree/label")
                         .and_then(serde_json::Value::as_str)
                         .unwrap_or("worktree");
-                    note(cache, format!("{label}: created"));
+                    note_ok(cache, format!("{label}: created"));
                     refresh(client, cache, Some(scope));
                 }
-                Err(error) => note(cache, format!("the worktree was not created: {error}")),
+                Err(error) => note_err(
+                    cache,
+                    format!("the worktree was not created: {error}"),
+                    error,
+                ),
             }
         }
         Request::Remove {
@@ -280,7 +304,7 @@ fn handle(client: &ApiClient, cache: &Mutex<WorktreeState>, request: Request) {
             let params = serde_json::json!({ "workspace_id": workspace_id, "force": force });
             match client.call("worktree.remove", params) {
                 Ok(_) => {
-                    note(cache, format!("{name}: removed"));
+                    note_ok(cache, format!("{name}: removed"));
                     // The removed workspace may be the one the list was scoped
                     // to — removing the focused worktree is exactly the case a
                     // person removes — so the refresh asks for the daemon's
@@ -291,10 +315,25 @@ fn handle(client: &ApiClient, cache: &Mutex<WorktreeState>, request: Request) {
                 // A dirty checkout is the refusal a force row exists for, and
                 // a remove already in flight is the daemon's own guard; both
                 // arrive as words, and the block shows them as words.
-                Err(error) => note(cache, format!("{name} was not removed: {error}")),
+                Err(error) => note_err(cache, format!("{name} was not removed: {error}"), error),
             }
         }
     }
+}
+
+/// The request `worktree.create` takes: the workspace the repo is scoped to,
+/// the branch and base when the form named them, and focus. The checkout path
+/// is never sent — the daemon names it, and a client-computed path could
+/// disagree with what it would have chosen.
+fn create_params(scope: &str, branch: Option<&str>, base: Option<&str>) -> serde_json::Value {
+    let mut params = serde_json::json!({ "workspace_id": scope, "focus": true });
+    if let Some(branch) = branch.map(str::trim).filter(|branch| !branch.is_empty()) {
+        params["branch"] = serde_json::json!(branch);
+    }
+    if let Some(base) = base.map(str::trim).filter(|base| !base.is_empty()) {
+        params["base"] = serde_json::json!(base);
+    }
+    params
 }
 
 fn refresh(client: &ApiClient, cache: &Mutex<WorktreeState>, scope: Option<String>) {
@@ -335,6 +374,20 @@ fn refresh(client: &ApiClient, cache: &Mutex<WorktreeState>, scope: Option<Strin
 fn note(cache: &Mutex<WorktreeState>, line: String) {
     tracing::info!(target: "zenix-worktrees", "{line}");
     lock(cache).last = Some(line);
+}
+
+/// A request the daemon answered. Clearing the failure beside the line is what
+/// lets the same refusal a second time count as news worth saying again.
+fn note_ok(cache: &Mutex<WorktreeState>, line: String) {
+    note(cache, line);
+    lock(cache).last_error = None;
+}
+
+/// A request the daemon refused: the sentence for the forms that show it, and
+/// the bare reason for the shell's toast.
+fn note_err(cache: &Mutex<WorktreeState>, line: String, error: impl std::fmt::Display) {
+    note(cache, line);
+    lock(cache).last_error = Some(error.to_string());
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -442,6 +495,28 @@ mod tests {
 
     /// A row's click resolves to exactly one of the two the daemon accepts
     /// before the request leaves the UI thread.
+    /// The form's two names travel only when they were given; the checkout
+    /// path never travels at all.
+    #[test]
+    fn a_create_request_carries_the_names_it_was_given() {
+        assert_eq!(
+            create_params("w1", Some("feat/cards"), Some("main")),
+            serde_json::json!({
+                "workspace_id": "w1", "focus": true,
+                "branch": "feat/cards", "base": "main",
+            })
+        );
+        assert_eq!(
+            create_params("w1", None, None),
+            serde_json::json!({ "workspace_id": "w1", "focus": true })
+        );
+        assert_eq!(
+            create_params("w1", Some("  "), Some("")),
+            serde_json::json!({ "workspace_id": "w1", "focus": true })
+        );
+        assert!(create_params("w1", Some("b"), None).get("path").is_none());
+    }
+
     #[test]
     fn a_target_is_one_of_branch_or_path_and_always_focuses() {
         let branch = serde_json::json!({ "branch": "zenix-m17", "focus": true });

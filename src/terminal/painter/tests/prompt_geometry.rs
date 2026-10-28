@@ -1,6 +1,6 @@
 use super::*;
 
-#[gpui_kit::test]
+#[gpui::test]
 fn separator_paths_share_absolute_grid_edges_at_rounding_ties(cx: &mut TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, _| Empty);
     cx.update(|window, _| {
@@ -35,7 +35,7 @@ fn separator_paths_share_absolute_grid_edges_at_rounding_ties(cx: &mut TestAppCo
     });
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn adjacent_background_spans_share_snapped_edges(cx: &mut TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, _| Empty);
     for (cell_width, start, end) in [
@@ -107,7 +107,7 @@ fn adjacent_background_spans_share_snapped_edges(cx: &mut TestAppContext) {
     }
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn separator_caps_use_cell_geometry_without_shaping(cx: &mut TestAppContext) {
     use herdr_client::{
         SurfaceImages,

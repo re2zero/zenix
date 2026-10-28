@@ -71,10 +71,23 @@ pub(crate) enum Node {
     },
     Split {
         direction: SplitDirection,
+        /// The daemon's ratio is an f32; widening it into the file would print
+        /// `0.4000000059604645` for a tree the daemon says is `0.4`. Three
+        /// decimals is what a person writes and diffs.
+        #[serde(serialize_with = "serialize_ratio")]
         ratio: f32,
         first: Box<Node>,
         second: Box<Node>,
     },
+}
+
+/// See [`Node::Split`]'s `ratio`: f32's nearest value to a short decimal is not
+/// that decimal once widened to f64.
+fn serialize_ratio<S>(ratio: &f32, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    serializer.serialize_f64((f64::from(*ratio) * 1000.0).round() / 1000.0)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -229,23 +242,6 @@ pub(crate) fn find(cwd: &Path) -> Option<PathBuf> {
     None
 }
 
-pub(crate) fn read(path: &Path) -> Result<Template, Error> {
-    let text = std::fs::read_to_string(path).map_err(|source| Error::Read {
-        path: path.to_path_buf(),
-        source,
-    })?;
-    toml::from_str(&text).map_err(|source| Error::Parse {
-        path: path.to_path_buf(),
-        source,
-    })
-}
-
-/// The file's text: the same bytes [`write`] puts on disk, for the block's
-/// preview of what the project carries.
-pub(crate) fn to_text(template: &Template) -> String {
-    toml::to_string(&template.stripped()).unwrap_or_default()
-}
-
 /// Write the template, creating the project's `.zenix` directory on the way. The
 /// ids are cleared here rather than by the caller, so a template read from a running
 /// daemon cannot carry its ids into the file.
@@ -290,6 +286,10 @@ pub(crate) struct LayoutState {
     pub(crate) root: Option<PathBuf>,
     pub(crate) path: Option<PathBuf>,
     pub(crate) template: Option<Template>,
+    /// The file's own bytes, as the inspector's code column shows them. A
+    /// template re-serialized from the parsed tree would lose the comments a
+    /// person wrote, so the text kept here is the file's, not the tree's.
+    pub(crate) text: Option<String>,
     /// What the last save or restore did, until the next one.
     pub(crate) last: Option<String>,
     /// Why the last read, save or restore failed, until one succeeds.
@@ -305,12 +305,21 @@ impl LayoutState {
         self.root = Some(project_root(cwd));
         self.path = find(cwd);
         self.template = None;
+        self.text = None;
         let Some(path) = self.path.clone() else {
             return;
         };
-        match read(&path) {
-            Ok(template) => self.template = Some(template),
-            Err(error) => self.error = Some(error.to_string()),
+        // One read serves both the parsed template and the inspector's text: a
+        // file that does not parse is still shown exactly as it is on disk.
+        match std::fs::read_to_string(&path) {
+            Ok(text) => {
+                self.text = Some(text.clone());
+                match toml::from_str::<Template>(&text) {
+                    Ok(template) => self.template = Some(template),
+                    Err(source) => self.error = Some(Error::Parse { path, source }.to_string()),
+                }
+            }
+            Err(source) => self.error = Some(Error::Read { path, source }.to_string()),
         }
     }
 
@@ -369,6 +378,24 @@ mod tests {
         let text = toml::to_string(&template()).expect("the template is writable");
         let back: Template = toml::from_str(&text).expect("the same text reads back");
         assert_eq!(back, template());
+    }
+
+    /// A ratio the daemon reports as f32 widens to `0.4000000059604645` when
+    /// serialized as an f64; the file a person commits must say `0.4`.
+    #[test]
+    fn a_ratio_is_written_with_three_decimals() {
+        let split = Node::Split {
+            direction: SplitDirection::Right,
+            ratio: 0.4,
+            first: Box::new(pane("code")),
+            second: Box::new(pane("notes")),
+        };
+        let text = toml::to_string(&split).expect("a split is writable");
+        assert!(text.contains("ratio = 0.4\n"), "{text}");
+        assert!(!text.contains("0.4000"), "{text}");
+        // The request keeps the same short value.
+        let params = serde_json::to_value(&split).expect("a split is encodable");
+        assert_eq!(params["ratio"], 0.4);
     }
 
     /// The file is not a zenix schema: it is the daemon's apply request, so the

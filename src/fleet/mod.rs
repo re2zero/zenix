@@ -50,19 +50,15 @@ const POLL: Duration = Duration::from_millis(500);
 /// How long to wait before subscribing again after a stream ended.
 const RECONNECT: Duration = Duration::from_secs(2);
 
-/// Rows a tail read asks the daemon for.
-pub(crate) const TAIL_ROWS: u32 = 40;
-
-/// Rows of a tail the panel draws per agent. The comparison is a glance, not a
-/// read: every row here costs the other agents a row of their own.
-pub(crate) const TAIL_SHOWN: usize = 3;
-
 /// One agent's status change, as this client read it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Transition {
     /// Epoch milliseconds when this client read the line.
     pub(crate) at_unix_ms: u64,
     pub(crate) pane_id: String,
+    /// The CLI the daemon named in the event. A pane that has left the fleet
+    /// keeps this in its transitions, so a panel can still say who moved.
+    pub(crate) agent: Option<String>,
     /// The status this client last saw the pane in, when it has seen one.
     pub(crate) from: Option<String>,
     pub(crate) to: String,
@@ -104,14 +100,6 @@ impl FleetState {
             .take(limit)
             .collect()
     }
-
-    /// How many panes are in a status, as the header counts them.
-    pub(crate) fn count(&self, status: &str) -> usize {
-        self.current
-            .iter()
-            .filter(|watched| watched.status == status)
-            .count()
-    }
 }
 
 /// One agent's recent output, read on demand for the side-by-side view.
@@ -143,33 +131,26 @@ pub(crate) fn tail_lines(text: &str, shown: usize) -> Vec<String> {
     rows
 }
 
-/// Read every agent's tail, keyed by pane.
+/// Read one pane's tail, on demand, for a surface that shows it now.
 ///
-/// The reads are serial on purpose. A local `pane.read` costs about 0.2 ms, so
-/// a fleet of eight is read in under 2 ms; and the daemon reads each
-/// connection's first request byte by polling in 100 ms steps
-/// (`herdr/src/api/server.rs:699-738`), so connections that arrive together are
-/// regularly parked for one of those sleeps. Measured with
-/// `.relay/notes/zenix-tail-read-bench.sh`: eight panes take 1.8 ms in a row and
-/// 101 ms from eight threads. Overlapping the reads loses the race it was meant
-/// to win.
-pub(crate) fn read_tails(endpoint: &ApiEndpoint, panes: &[String]) -> Tails {
-    let mut tails = Tails::new();
-    for pane_id in panes {
-        let (lines, error) = match endpoint.read_pane(pane_id, ReadSource::Recent, TAIL_ROWS) {
-            Ok(read) => (tail_lines(&read.text, TAIL_SHOWN), None),
-            Err(error) => (Vec::new(), Some(error.to_string())),
-        };
-        tails.insert(
-            pane_id.clone(),
-            Tail {
-                at_unix_ms: crate::events::now_unix_ms(),
-                lines,
-                error,
-            },
-        );
+/// The read is synchronous and blocking: callers run it off the UI thread and
+/// hand the answer back as a value, so a slow daemon costs a thread rather
+/// than a frame. `rows` is what the daemon is asked for, `shown` what the
+/// caller keeps.
+pub(crate) fn read_tail(endpoint: &ApiEndpoint, pane_id: &str, rows: u32, shown: usize) -> Tail {
+    let at_unix_ms = crate::events::now_unix_ms();
+    match endpoint.read_pane(pane_id, ReadSource::Recent, rows) {
+        Ok(read) => Tail {
+            at_unix_ms,
+            lines: tail_lines(&read.text, shown),
+            error: None,
+        },
+        Err(error) => Tail {
+            at_unix_ms,
+            lines: Vec::new(),
+            error: Some(error.to_string()),
+        },
     }
-    tails
 }
 
 /// The stream: one worker thread, one cache, one pulse channel.
@@ -227,11 +208,6 @@ impl Stream {
     /// A copy of the state for one paint.
     pub(crate) fn state(&self) -> FleetState {
         lock(&self.cache).clone()
-    }
-
-    /// Drop the transitions read so far. The subscription is untouched.
-    pub(crate) fn clear(&self) {
-        lock(&self.cache).transitions.clear();
     }
 }
 
@@ -324,8 +300,8 @@ fn read(
                 let at_unix_ms = crate::events::now_unix_ms();
                 match transition_from(&line) {
                     Ok(None) => {}
-                    Ok(Some((pane_id, status))) => {
-                        apply(cache, last, &pane_id, status, at_unix_ms, pulses);
+                    Ok(Some((pane_id, status, agent))) => {
+                        apply(cache, last, &pane_id, status, agent, at_unix_ms, pulses);
                     }
                     Err(reason) => {
                         set_error(cache, Some(reason), pulses);
@@ -339,7 +315,7 @@ fn read(
 
 /// One line as a status change. `Ok(None)` is a line that is not one — the
 /// subscription's acknowledgement, or an event this stream did not ask for.
-fn transition_from(line: &str) -> Result<Option<(String, String)>, String> {
+fn transition_from(line: &str) -> Result<Option<(String, String, Option<String>)>, String> {
     let value: Value = serde_json::from_str(line.trim_end())
         .map_err(|error| format!("the fleet stream wrote something that is not JSON: {error}"))?;
     if let Some(error) = value.get("error").filter(|error| !error.is_null()) {
@@ -360,7 +336,8 @@ fn transition_from(line: &str) -> Result<Option<(String, String)>, String> {
     let Some(status) = data.get("agent_status").and_then(Value::as_str) else {
         return Ok(None);
     };
-    Ok(Some((pane_id.to_owned(), status.to_owned())))
+    let agent = data.get("agent").and_then(Value::as_str).map(str::to_owned);
+    Ok(Some((pane_id.to_owned(), status.to_owned(), agent)))
 }
 
 /// Fold one status change into the cache: a transition to read and the pane's
@@ -370,6 +347,7 @@ fn apply(
     last: &mut HashMap<String, String>,
     pane_id: &str,
     status: String,
+    agent: Option<String>,
     at_unix_ms: u64,
     pulses: &Sender<()>,
 ) {
@@ -398,6 +376,7 @@ fn apply(
         state.transitions.push_front(Transition {
             at_unix_ms,
             pane_id: pane_id.to_owned(),
+            agent,
             from,
             to: status,
         });
@@ -420,6 +399,9 @@ mod tests {
         let change = transition_from(line).expect("a line").expect("a change");
         assert_eq!(change.0, "w1:p2");
         assert_eq!(change.1, "working");
+        // The CLI the daemon named travels with the transition, so a pane
+        // that leaves the snapshot can still be named in the panel's list.
+        assert_eq!(change.2.as_deref(), Some("pi"));
     }
 
     /// The acknowledgement is the first line of a subscription, and the daemon
@@ -454,9 +436,17 @@ mod tests {
         let cache = Mutex::new(FleetState::default());
         let mut last = HashMap::new();
         let (pulses, pulses_in) = crossbeam_channel::unbounded();
-        apply(&cache, &mut last, "w1:p2", "idle".into(), 10, &pulses);
-        apply(&cache, &mut last, "w1:p2", "idle".into(), 20, &pulses);
-        apply(&cache, &mut last, "w1:p2", "working".into(), 30, &pulses);
+        apply(&cache, &mut last, "w1:p2", "idle".into(), None, 10, &pulses);
+        apply(&cache, &mut last, "w1:p2", "idle".into(), None, 20, &pulses);
+        apply(
+            &cache,
+            &mut last,
+            "w1:p2",
+            "working".into(),
+            None,
+            30,
+            &pulses,
+        );
         let state = lock(&cache).clone();
         assert_eq!(state.transitions.len(), 2);
         assert_eq!(state.transitions[1].from, None);
@@ -468,7 +458,6 @@ mod tests {
             Some("working")
         );
         assert_eq!(state.watched("w1:p2").map(|w| w.since_unix_ms), Some(30));
-        assert_eq!(state.count("working"), 1);
         // One pulse per transition: the repeated status woke nobody.
         assert_eq!(pulses_in.try_iter().count(), 2);
     }
@@ -478,9 +467,25 @@ mod tests {
         let cache = Mutex::new(FleetState::default());
         let mut last = HashMap::new();
         let (pulses, _) = crossbeam_channel::bounded(1);
-        apply(&cache, &mut last, "w1:p1", "idle".into(), 1, &pulses);
-        apply(&cache, &mut last, "w1:p2", "blocked".into(), 2, &pulses);
-        apply(&cache, &mut last, "w1:p1", "working".into(), 3, &pulses);
+        apply(&cache, &mut last, "w1:p1", "idle".into(), None, 1, &pulses);
+        apply(
+            &cache,
+            &mut last,
+            "w1:p2",
+            "blocked".into(),
+            None,
+            2,
+            &pulses,
+        );
+        apply(
+            &cache,
+            &mut last,
+            "w1:p1",
+            "working".into(),
+            None,
+            3,
+            &pulses,
+        );
         let state = lock(&cache).clone();
         let history: Vec<&str> = state
             .history("w1:p1", 5)
@@ -505,6 +510,7 @@ mod tests {
                 &mut last,
                 "w1:p2",
                 status.into(),
+                None,
                 index as u64,
                 &pulses,
             );
@@ -553,29 +559,23 @@ mod tests {
         };
         let mut last = HashMap::new();
         let (pulses, _) = crossbeam_channel::bounded(1);
-        apply(&cache, &mut last, "w1:p2", "working".into(), 1, &pulses);
+        apply(
+            &cache,
+            &mut last,
+            "w1:p2",
+            "working".into(),
+            None,
+            1,
+            &pulses,
+        );
         stream.watch(vec!["w1:p2".into()]);
-        assert_eq!(lock(&cache).count("working"), 1);
+        assert_eq!(
+            lock(&cache).current.first().map(|w| w.status.as_str()),
+            Some("working")
+        );
         stream.watch(Vec::new());
         let state = lock(&cache).clone();
         assert_eq!(state.current.len(), 0);
         assert_eq!(state.transitions.len(), 1);
-    }
-
-    #[test]
-    fn clearing_drops_the_transitions_and_leaves_the_current_status() {
-        let cache = Arc::new(Mutex::new(FleetState::default()));
-        let watch = Arc::new(Mutex::new(Watch::default()));
-        let stream = Stream {
-            cache: cache.clone(),
-            watch,
-        };
-        let mut last = HashMap::new();
-        let (pulses, _) = crossbeam_channel::bounded(1);
-        apply(&cache, &mut last, "w1:p2", "blocked".into(), 1, &pulses);
-        stream.clear();
-        let state = lock(&cache).clone();
-        assert!(state.transitions.is_empty());
-        assert_eq!(state.count("blocked"), 1);
     }
 }

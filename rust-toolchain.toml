@@ -1,0 +1,6 @@
+[toolchain]
+# The GPUI snapshot the component library pins (`gpui-pre 0.3.10`) requires
+# Rust 1.98; 1.98.1 is the installed patch release. Every cargo command in the
+# workspace runs through this file, so the floor and the build agree.
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]

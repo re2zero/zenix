@@ -3,22 +3,28 @@
 **Extensible terminal workspace manager for AI coding agents.**
 *可扩展的 AI 编程助手终端工作区管理器。*
 
-A [gpui-kit](https://crates.io/crates/gpui-kit) desktop client for [herdr](https://github.com/ogulcancelik/herdr) — workspace, tab and pane management, a native terminal, system-side client settings, and an AI chat panel that drives the daemon's agents.
+A native GPUI desktop client for [herdr](https://github.com/ogulcancelik/herdr) — workspace, tab and pane management, a native terminal, client-side settings, and an AI chat panel that drives the daemon's agents.
 
-zenix 是 [herdr](https://github.com/ogulcancelik/herdr) 的 gpui-kit 桌面客户端，提供工作区、标签页与窗格管理、原生终端渲染、客户端设置，以及可直接驱动 daemon 智能体的 AI 对话面板。
+zenix 是 [herdr](https://github.com/ogulcancelik/herdr) 的原生 GPUI 桌面客户端，提供工作区、标签页与窗格管理、原生终端渲染、客户端设置，以及可直接驱动 daemon 智能体的 AI 对话面板。
 
 ## Features / 功能
 
-- **Workspace shell** — sidebar, tab strip, split panes, status bar; every panel mounts through a contribution registry, not hardcoded in the shell.
-  *工作台外壳 — 侧栏、标签栏、分屏、状态栏；所有面板经贡献点注册表装配，不硬编码在壳里。*
+- **Workspace shell** — identity strip, activity rail, sidebar, tab strip, pane cards and status bar, composed from the component library.
+  *工作台外壳 — 标识条、活动栏、侧栏、标签栏、窗格卡片与状态栏，由组件库组合而成。*
+- **One command surface** — a single command directory feeds the keymap (`Ctrl-B` prefix), the command palette (`Ctrl-Shift-P`) and every chrome trigger, so none of them can drift.
+  *统一命令面 — 单一命令目录同时供键位（`Ctrl-B` 前缀）、命令面板（`Ctrl-Shift-P`）与所有界面入口使用，三者不会各自漂移。*
 - **Native pane rendering** — the daemon owns the panes; zenix paints their surfaces and sends semantic input (keys, IME composition, paste, mouse, scrollback) rather than a byte stream.
   *原生窗格渲染 — 窗格归 daemon 所有；zenix 绘制 surface 并发送语义输入（按键、输入法组合串、粘贴、鼠标、回滚），而非字节流。*
-- **Client settings** — `config.json` (JSONC) is walked against a schema on every load: an unknown key is dropped, a wrong type falls back per field, an out-of-range number is clamped, and each problem is reported in the settings panel.
-  *客户端设置 — 每次加载都把 `config.json`（JSONC）与 schema 逐字段核对：未知键丢弃、类型错误按字段回落、越界数值收敛，问题在设置面板里逐条显示。*
-- **AI chat panel** — a resizable right-hand panel with real turns, tool cards and per-session history in SQLite; the orchestrator drives the daemon through its JSON API lane.
-  *AI 对话面板 — 右侧可调宽面板，真实多轮对话、工具卡片、会话落 SQLite；编排器经 daemon 的 JSON API lane 驱动其智能体。*
-- **Agent monitor** — the sidebar lists the daemon's agents from snapshot pushes (no polling).
-  *智能体监视器 — 侧栏按 snapshot 推送列出 daemon 的智能体（无轮询）。*
+- **Client settings** — a seven-page settings dialog writes `config.json` (JSONC) through one schema-checked store: an unknown key is dropped, a wrong type falls back per field, an out-of-range number is clamped, and each problem is reported in place.
+  *客户端设置 — 七页设置对话框经唯一的 schema 校验存储写入 `config.json`（JSONC）：未知键丢弃、类型错误按字段回落、越界数值收敛，问题就地逐条显示。*
+- **AI chat panel** — a resizable right-hand panel with real turns, streaming markdown, tool cards and approval gates; sessions persist to SQLite and the orchestrator drives the daemon through its JSON API lane.
+  *AI 对话面板 — 右侧可调宽面板，真实多轮对话、流式 markdown、工具卡片与审批门；会话落 SQLite，编排器经 daemon 的 JSON API lane 驱动其智能体。*
+- **Fleet & worktrees** — the aside's fleet tab draws each agent's status transitions and compares two panes' tails on demand; the sidebar lists the focused repo's worktrees.
+  *舰队与工作树 — aside 的舰队页绘制每个智能体的状态变迁并按需对比两个窗格的末尾；侧栏列出聚焦仓库的工作树。*
+- **Plugins** — installed plugins, their declared `zenix-ui.toml` slots, graded command lines before linking, action chords and per-action MCP tools.
+  *插件 — 已装插件、其声明的 `zenix-ui.toml` 槽位、链接前逐条评级的命令行、动作键位以及每个动作对应的 MCP 工具。*
+- **Events & layout** — the daemon's event stream is inspectable against its 21-name contract, and a project's layout travels with the repo as `.zenix/layout.toml`.
+  *事件与布局 — daemon 的事件流可对照 21 个事件名的契约检查；项目布局以 `.zenix/layout.toml` 随仓库携带。*
 - **MCP orchestration** — zenix serves its orchestration tools over MCP (SSE) for the whole time a window is open.
   *MCP 编排 — 窗口开启期间，zenix 经 MCP（SSE）暴露编排工具。*
 - **Plugin / sub-app SDK** — `src/lib.rs` is the public API surface for extensions.
@@ -43,20 +49,29 @@ daemon 是状态的唯一真相。zenix 连接 herdr 配置根下的两个 socke
 src/
   main.rs                  Entry point: fonts, config, keymap, window / 入口：字体、配置、键位、窗口
   lib.rs                   Public SDK for plugins & sub-apps / 插件与子应用 SDK
-  shell/                   Workspace shell: ShellView, commands, keymap, contribution
-                           registry, settings pages, chat panel, panel resize
-                           / 工作台外壳：ShellView、命令、键位、贡献点注册表、设置页、对话面板、面板拖宽
+  cli.rs                   Non-window verbs: `zenix mcp-agent`, `--help` / 无窗口子命令
+  ui/                      Window root: shell and chrome, sidebar views, settings,
+                           chat, fleet, aside, commands/keymap/palette, first-run
+                           block, toasts, theme
+                           / 窗口根：壳与框架、侧栏视图、设置、对话、舰队、aside、
+                           命令/键位/面板、首屏、通知、主题
   terminal/                Cell painting and semantic input / 单元格绘制与语义输入
+  fleet/                   Agent status transitions + tail reads / 智能体状态变迁与末尾读取
+  events/                  The daemon's event stream / daemon 事件流
+  layout/                  .zenix/layout.toml export / apply / 布局文件导出与应用
+  worktrees/               worktree.list/create/open/remove / 工作树管理
+  plugins/                 Registry cache, zenix-ui.toml, paths, trust / 插件注册表、UI 声明、路径、信任
   herdr/                   Endpoint facade: connection + live state (snapshots in,
                            commands out) / 端点门面：连接与实时状态（快照进、命令出）
   config/                  The client's own config: schema, diagnostics, global store
                            / 客户端自身配置：schema、诊断、全局存储
   ai/                      Orchestrator: engine, tools, sessions, prompts, compactor
                            / 编排器：引擎、工具、会话、提示词、压缩
-  client/mod.rs            Herdr binary manager (seed, start, sockets) / herdr 二进制管理
-  platform.rs              Platform paths and gated code / 平台路径与平台相关代码
+  client/mod.rs            herdr binary manager (seed, start, sockets) / herdr 二进制管理
+  mcp/                     MCP orchestrator + one tool per plugin action + reverse bridge
+                           / MCP 编排器 + 每插件动作一个工具 + 反向桥
   provider/, api_provider/ Agent-CLI and REST API providers / 智能体 CLI 与 REST API 提供商
-  mcp/, agent/, skills/    MCP server, agent detection, skill system / MCP 服务、智能体探测、技能系统
+  platform.rs              Platform paths and gated code / 平台路径与平台相关代码
   sys.rs, i18n.rs, util.rs System info, rust-i18n wiring, helpers / 系统信息、i18n、工具函数
 res/
   zenix.desktop            Desktop entry / 桌面入口
@@ -64,27 +79,35 @@ res/
   herdr                    The pinned daemon (fetched, gitignored), the package's first-run seed /
                             pin 的 daemon（脚本下载，不进 git）：包里的首启种子
 assets/
-  fonts/                   Lilex font family, compiled in via include_bytes! / Lilex 字体族（编译进二进制）
-  themes/                  Theme JSON, not wired into the client yet / 主题 JSON（尚未接入）
   prompts/                 Orchestrator prompt, seeded to the config dir / 编排器提示词（播种到配置目录）
-licenses/herdr/            herdr's Apache-2.0 text, shipped in the package / herdr 许可文本
+licenses/
+  herdr/LICENSE            herdr's Apache-2.0 text, shipped in the package / herdr 许可文本
+  ely/LICENSE              The component library's MIT text, shipped in the package /
+                            组件库 MIT 许可文本
 vendor/                    Endpoint protocol + client (herdr-gpui copies) and the daemon pin /
                            端点协议与客户端（herdr-gpui 副本）+ daemon 版本 pin
+docs/ui/redesign/          The interface's design proposal (interactive HTML) / 界面设计提案
 scripts/fetch-herdr.sh     Downloads the pinned herdr release into res/herdr (SHA-256 checked) /
                            下载 pin 的 herdr 发行版到 res/herdr（校验 SHA-256）
 build.rs                   Copies res/herdr next to the client; release builds verify it against the pin /
                            把 res/herdr 复制到客户端旁；release 构建按 pin 校验
 ```
 
+## Documentation / 文档
+
+- `docs/ui/redesign/` — the interface's design proposal: an interactive HTML walkthrough of nine surfaces and 26 states plus four review renders. Open `index.html` in a browser; `README.md` there records the decisions the shell was built against.
+- [AGENTS.md](AGENTS.md) and [src/AGENTS.md](src/AGENTS.md) — the codebase knowledge base: structure, where to look, conventions and anti-patterns.
+- [THIRD-PARTY.md](THIRD-PARTY.md) — the third-party inventory and the dependency census.
+
 ## Dependencies & Licenses / 依赖与许可证
 
 | Dependency | License | Relationship / 关系 |
 |-----------|---------|-------------|
-| [gpui-kit](https://crates.io/crates/gpui-kit) | Apache-2.0 | Statically linked UI framework / 静态链接 UI 框架 |
-| [gpui-component](https://crates.io/crates/gpui-component) | Apache-2.0 | Widget components (statically linked) / 静态链接组件库 |
+| [GPUI (`gpui-pre`)](https://crates.io/crates/gpui-pre) | Apache-2.0 | Statically linked UI framework, pinned at `=0.3.10` / 静态链接 UI 框架 |
+| [ely component library](https://github.com/ELY-Open-Source/Ely-GPUI-Components) | MIT | Statically linked widgets, chat and agent components, pinned at `30c66fe` / 静态链接组件、对话与智能体组件 |
 | [herdr](https://github.com/ogulcancelik/herdr) | Apache-2.0 | Bundled binary, socket IPC (mere aggregation) / 独立二进制，socket IPC |
 | [herdr-protocol / herdr-client](vendor/) | Apache-2.0 | Vendored endpoint protocol and client (statically linked) / 内嵌端点协议与客户端 |
-| [Lilex](https://github.com/mishamyrt/Lilex) | SIL OFL-1.1 | Terminal font, compiled into the binary / 终端字体（编译进二进制） |
+| [Inter](https://github.com/rsms/inter) · [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) · [IBM Plex Sans](https://github.com/IBM/plex) | SIL OFL-1.1 | The component library's faces, compiled in by its assets; zenix installs no face of its own and names the library's UI face once at the root / 组件库字体（由组件库 assets 编译进二进制；zenix 不装字体，根节点沿用组件库的 UI 字体） |
 
 zenix itself is licensed under **GPL-3.0-or-later** (see [LICENSE](LICENSE)); the full
 third-party inventory is in [THIRD-PARTY.md](THIRD-PARTY.md).
@@ -95,7 +118,7 @@ zenix 本体使用 **GPL-3.0-or-later**（详见 [LICENSE](LICENSE)），第三�
 
 ### Prerequisites / 前置依赖
 
-- Rust 1.85+ (edition 2024)
+- Rust 1.95+ (edition 2024; the component library's MSRV)
 - System libraries: `libxcb1-dev`, `libxkbcommon-dev`, `libxkbcommon-x11-dev`, `libfontconfig1-dev`, `libfreetype6-dev`, `libexpat1-dev`, `libwayland-dev`, `libegl1-mesa-dev`, `libgl1-mesa-dev`, `pkg-config`
 - **No Zig, no submodule** — the herdr daemon is a released binary pinned by version and
   SHA-256 in `vendor/herdr-pins.tsv`. Run `scripts/fetch-herdr.sh` once (it writes `res/herdr`),

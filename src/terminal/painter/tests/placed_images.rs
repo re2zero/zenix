@@ -1,6 +1,6 @@
 use super::*;
 
-#[gpui_kit::test]
+#[gpui::test]
 fn placed_images_decode_off_thread_then_paint_in_z_order(cx: &mut TestAppContext) {
     use herdr_client::{
         SurfaceImages,

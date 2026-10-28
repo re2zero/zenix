@@ -4,7 +4,7 @@
 //! view's UI owner keeps it alive; the platform handler must not extend that
 //! lifetime. The backend (Wayland or X11) is chosen at runtime, so every Linux
 //! build uses this handler. Other platforms use GPUI's own ElementInputHandler.
-use gpui_kit::*;
+use gpui::*;
 use std::ops::Range;
 
 /// Forwards to the view like GPUI's `ElementInputHandler`, but through a weak

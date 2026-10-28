@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="zh-CN" data-style="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>zenix · 界面重构提案</title>
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <header class="page-head" id="page-head">
+    <div class="page-brand">
+      <div class="page-logo">z</div>
+      <div>
+        <h1>zenix · 界面重构提案</h1>
+        <p>把 gpui-kit / gpui-component 全部换掉：以新组件库的设计系统重画外壳、设置、对话、舰队、插件与事件。终端是主区域，管理面不抢工作区。先拍板交互，再开新分支实施。</p>
+      </div>
+    </div>
+    <div class="page-meta">
+      <span class="status-pill">已拍板</span>
+      <span>2026-10-27 · v1</span>
+      <span>30c66fe · gpui-pre 0.3.10 · Rust 1.98</span>
+      <span>experiment/ely-chat → feat/ui-shell</span>
+      <div class="style-switch" style="margin-top:4px">
+        <button data-style="dark" class="on"><span class="sw"></span>深色</button>
+        <button data-style="light"><span class="sw"></span>浅色</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="page" id="page">
+    <nav class="nav" id="nav">
+      <div class="nav-group">
+        <span>提案</span>
+        <a href="#overview" data-target="overview"><b>00</b>概览</a>
+        <a href="#styles" data-target="styles"><b>01</b>风格方向</a>
+      </div>
+      <div class="nav-group" id="nav-screens">
+        <span>界面</span>
+      </div>
+      <div class="nav-group">
+        <span>系统</span>
+        <a href="#tokens" data-target="tokens"><b>10</b>设计 token</a>
+        <a href="#mapping" data-target="mapping"><b>11</b>组件映射</a>
+        <a href="#migration" data-target="migration"><b>12</b>迁移计划</a>
+        <a href="#decisions" data-target="decisions"><b>13</b>已拍板</a>
+      </div>
+    </nav>
+
+    <main class="content">
+      <section class="doc-section" id="overview">
+        <span class="eyebrow">00 · OVERVIEW</span>
+        <h2>先换骨，再换皮</h2>
+        <p class="lede">现在树里同时有 gpui-kit 的 Theme、gpui-component 的控件和组件库的聊天组件：三套 token、两套输入行为、两套主题缓存。彻底换到组件库不是“把 import 改掉”，而是把外壳按组件的语义重新组合，并删掉旧的设计系统。</p>
+
+        <div class="overview-grid">
+          <div class="overview-card"><div class="num">01</div><h4>为什么现在换</h4><p>gpui-kit 与组件库各有一套主题和控件。继续并存会让设置、输入法、焦点与快捷键继续分裂；组件库已经有 AppShell、Settings、Chat、Agent、Terminal 与一套语义 token。</p></div>
+          <div class="overview-card"><div class="num">02</div><h4>换到什么</h4><p>UI 只依赖 <b>组件库 + gpui-pre 0.3.10</b>（GPUI Kit 0.8.1 用的同一快照）。终端 painter 保留（它是 daemon surface 的绘制器，不是组件库），但只使用组件的 token 与 gpui-pre 类型。Cargo 里不再出现 gpui-kit / gpui-component。</p></div>
+          <div class="overview-card"><div class="num">03</div><h4>不做什么</h4><p>不引入本地 PTY，不改 daemon 协议，不做客户端无法执行的假开关。业务状态仍留在 <span class="mono">src/ai</span>、<span class="mono">src/herdr</span>、<span class="mono">src/plugins</span>，这次只换 UI 层。</p></div>
+        </div>
+
+        <div class="callout"><b>版本说明：</b>0.8.1 是 GPUI Kit 的版本号；组件库最新 main 是 <span class="mono">30c66fe</span>（核心包 0.2.0 / 其余 0.1.1），它钉的 <span class="mono">gpui-pre 0.3.10</span> 正是 GPUI Kit 0.8.1 用的同一快照。所以「基于 0.8.1」在这里 = 组件库 <span class="mono">30c66fe</span> + <span class="mono">gpui-pre 0.3.10</span> + Rust 1.98.1，不把 gpui-kit 加回来。</div>
+
+        <div class="callout"><b>主题不再自建：</b>直接用组件库的主题系统——模式（深色 / 浅色 / 跟随系统）、强调色（预设 + 自定义）、代码主题（标准 / 静谧 / 纸面）、以及可选的导入/编辑。删除 Zenix 主题 JSON、五个自建 family 和终端自建调色板；品牌身份靠布局、组件库的 Inter + JetBrains Mono 字体与图标。设置页 100% 卡片式；管理面用抽屉/模态，主区域永远留给终端。</div>
+
+        <h3>设计原则</h3>
+        <div class="overview-grid">
+          <div class="overview-card"><div class="num">A</div><h4>终端是锚点</h4><p>窗格卡片 1px 发丝线、8px 间距；chrome 退后，终端内容占最大面积。管理面不接管主区域。</p></div>
+          <div class="overview-card"><div class="num">B</div><h4>按组件的语义用色</h4><p>accent 只给主操作与选中，focus 只给焦点；danger 只给破坏性动作，warning 只给等待/需注意。不自建品牌色。</p></div>
+          <div class="overview-card"><div class="num">C</div><h4>发丝线，不堆阴影</h4><p>层级靠 surface 的明度差和 1px 边框；阴影只给真正浮起的层：palette、dialog、drawer。</p></div>
+          <div class="overview-card"><div class="num">D</div><h4>卡片只用于分组</h4><p>设置、舰队、插件合同用卡片；不为每一行、每一个窗格套卡片，避免“卡片汤”。</p></div>
+          <div class="overview-card"><div class="num">E</div><h4>每个面写明数据源</h4><p>侧栏脚注写 snapshot / event / plugin.list；只读事实标“只读”，不把不可执行的东西做成开关。</p></div>
+          <div class="overview-card"><div class="num">F</div><h4>键盘与指针同等</h4><p>每个动作都有 chord，每个 chord 都能在面板里找到；点击是最短的路径，不是唯一路径。</p></div>
+        </div>
+      </section>
+
+      <section class="doc-section" id="styles">
+        <span class="eyebrow">01 · STYLE</span>
+        <h2>两套模式，四个旋钮</h2>
+        <p class="lede">不另建主题：深色 / 浅色是两套基底模式；另有三层走组件库——强调色、代码主题、自定义导入。点击卡片可实时切换下方所有界面。</p>
+
+        <div class="styles" style="grid-template-columns: repeat(2, 1fr);">
+          <div class="style-card on" data-style="dark">
+            <div class="style-card-head"><h4>深色 · 默认</h4><span class="rec">默认</span></div>
+            <p>软灰 #252525 底、单色强调色、蓝色焦点；终端使用同一套 ANSI 16 色。对比度已校准。</p>
+            <div class="style-preview pv-dark">
+              <div class="pv-title"></div><div class="pv-rail"><i></i><i></i><i></i><i></i></div>
+              <div class="pv-body"><div class="pv-tabs"><span class="pv-tab"></span><span class="pv-tab"></span><span class="pv-tab"></span></div>
+                <div class="pv-line" style="width:38%"></div><div class="pv-line accent" style="width:22%"></div>
+                <div class="pv-panes"><div class="pv-pane"><i></i><i></i><i></i><i></i></div><div class="pv-pane"><i></i><i></i><i></i></div></div>
+              </div>
+            </div>
+            <div class="swatches"><i style="background:#252525"></i><i style="background:#2c2c2c"></i><i style="background:#3f3f3f"></i><i style="background:#f3f1f0"></i><i style="background:#69a1e8"></i><i style="background:#e5756e"></i></div>
+            <div class="style-facts"><div><b>密度</b> 标准 / 紧凑</div><div><b>对比</b> 已校准</div><div><b>适合</b> 全天开发</div><div><b>终端</b> 同一套 ANSI</div></div>
+          </div>
+
+          <div class="style-card" data-style="light">
+            <div class="style-card-head"><h4>浅色模式</h4></div>
+            <p>暖白纸面 #FCFAF7、墨色文字；终端跟随浅色模式变浅，不再单独维护一套深色终端。</p>
+            <div class="style-preview pv-light">
+              <div class="pv-title"></div><div class="pv-rail"><i></i><i></i><i></i><i></i></div>
+              <div class="pv-body"><div class="pv-tabs"><span class="pv-tab"></span><span class="pv-tab"></span><span class="pv-tab"></span></div>
+                <div class="pv-line" style="width:40%"></div><div class="pv-line accent" style="width:24%"></div>
+                <div class="pv-panes"><div class="pv-pane"><i></i><i></i><i></i><i></i></div><div class="pv-pane"><i></i><i></i><i></i></div></div>
+              </div>
+            </div>
+            <div class="swatches"><i style="background:#fcfaf7"></i><i style="background:#ffffff"></i><i style="background:#e1dfdd"></i><i style="background:#181613"></i><i style="background:#3772bb"></i><i style="background:#ba3e38"></i></div>
+            <div class="style-facts"><div><b>密度</b> 舒适 / 标准</div><div><b>对比</b> 已校准</div><div><b>适合</b> 白天、文档</div><div><b>终端</b> 跟随变浅</div></div>
+          </div>
+        </div>
+
+        <h3>主题的四层配置</h3>
+        <div class="overview-grid" style="grid-template-columns: repeat(2, 1fr); margin-bottom: 16px;">
+          <div class="overview-card"><div class="num">01</div><h4>模式 <span class="mono" style="font-size:10px;color:var(--page-subtle)">ThemeSelector</span></h4><p>Light / Dark / System 三档；只切换 Palette，不改布局与组件。系统切换可即时跟随。</p></div>
+          <div class="overview-card"><div class="num">02</div><h4>强调色 <span class="mono" style="font-size:10px;color:var(--page-subtle)">AccentColorPicker</span></h4><p>命名预设（由 zenix 传入）+ 任意自定义色；只覆盖强调色，不重建整块调色板。焦点仍是蓝色。</p></div>
+          <div class="overview-card"><div class="num">03</div><h4>代码主题 <span class="mono" style="font-size:10px;color:var(--page-subtle)">SyntaxThemePicker</span></h4><p>标准 / 静谧 / 纸面三套语法配色，各有明暗；只影响代码与 markdown 代码块，不改 UI。</p></div>
+          <div class="overview-card"><div class="num">04</div><h4>自定义 <span class="mono" style="font-size:10px;color:var(--page-subtle)">ThemeImporter / ThemeEditor</span></h4><p>可选的高级入口：导入一份调色板 JSON，或在组件的主题编辑器里改；不是 zenix 的默认路径。</p></div>
+        </div>
+
+        <div class="callout"><b>已经定下的：</b>主题只用组件库的系统，不再维护 Zenix / Gruvbox / Solarized / Tokyo Night / Matrix 五个自建 family 和主题 JSON。默认是深色 + 默认强调色 + 标准代码主题；强调色、代码主题和自定义导入都由组件提供。</div>
+      </section>
+
+      <section class="doc-section" id="screens">
+        <span class="eyebrow">02 · SCREENS</span>
+        <h2>每个功能界面的交互图</h2>
+        <p class="lede">九个面，右上角切换状态。图上的 1–7 号圆点是交互注释，悬停可看说明；下方是主流程与边界。所有图共用同一套组件 token。</p>
+        <div id="screens"></div>
+      </section>
+
+      <section class="doc-section" id="tokens">
+        <span class="eyebrow">10 · TOKENS</span>
+        <h2>设计 token</h2>
+        <p class="lede">颜色全部来自组件 <span class="mono">Palette</span> / <span class="mono">Syntax</span>；组件里不出现 hex，也没有自建主题层。强调色只覆盖 <span class="mono">accent</span>，代码主题只覆盖 <span class="mono">Syntax</span>。尺寸走 4px 网格，与组件的 <span class="mono">Density</span> 对齐。</p>
+
+        <div class="token-grid" style="grid-template-columns: repeat(2, 1fr);">
+          <div class="token-card"><h5>深色</h5>
+            <div class="token-row"><i style="background:#252525"></i><span class="name">bg</span><span class="val">#252525</span></div>
+            <div class="token-row"><i style="background:#2c2c2c"></i><span class="name">surface</span><span class="val">#2C2C2C</span></div>
+            <div class="token-row"><i style="background:#3f3f3f"></i><span class="name">border</span><span class="val">#3F3F3F</span></div>
+            <div class="token-row"><i style="background:#f3f1f0"></i><span class="name">fg / accent</span><span class="val">#F3F1F0</span></div>
+            <div class="token-row"><i style="background:#69a1e8"></i><span class="name">focus</span><span class="val">#69A1E8</span></div>
+            <div class="token-row"><i style="background:#6bbc89"></i><span class="name">success</span><span class="val">#6BBC89</span></div>
+            <div class="token-row"><i style="background:#e8b45e"></i><span class="name">warning</span><span class="val">#E8B45E</span></div>
+            <div class="token-row"><i style="background:#e5756e"></i><span class="name">danger</span><span class="val">#E5756E</span></div>
+          </div>
+          <div class="token-card"><h5>浅色</h5>
+            <div class="token-row"><i style="background:#fcfaf7"></i><span class="name">bg</span><span class="val">#FCFAF7</span></div>
+            <div class="token-row"><i style="background:#ffffff"></i><span class="name">surface</span><span class="val">#FFFFFF</span></div>
+            <div class="token-row"><i style="background:#e1dfdd"></i><span class="name">border</span><span class="val">#E1DFDD</span></div>
+            <div class="token-row"><i style="background:#181613"></i><span class="name">fg / accent</span><span class="val">#181613</span></div>
+            <div class="token-row"><i style="background:#3772bb"></i><span class="name">focus</span><span class="val">#3772BB</span></div>
+            <div class="token-row"><i style="background:#267b4c"></i><span class="name">success</span><span class="val">#267B4C</span></div>
+            <div class="token-row"><i style="background:#a25f12"></i><span class="name">warning</span><span class="val">#A25F12</span></div>
+            <div class="token-row"><i style="background:#ba3e38"></i><span class="name">danger</span><span class="val">#BA3E38</span></div>
+          </div>
+        </div>
+
+        <h3>排版、尺寸与动效</h3>
+        <table class="spec">
+          <thead><tr><th>类别</th><th>值</th><th>用在哪里</th></tr></thead>
+          <tbody>
+            <tr><td><b>UI / 正文</b></td><td><code>13 / 12.5 px · 1.45 / 1.65</code></td><td>侧栏、设置行、消息</td></tr>
+            <tr><td><b>等宽</b></td><td><code>11.5 px · 1.58</code></td><td>终端、JSON、参数、keycap</td></tr>
+            <tr><td><b>标签</b></td><td><code>10 px · 0.1em · uppercase</code></td><td>section 标题、栏头</td></tr>
+            <tr><td><b>行高</b></td><td><code>28 / 34 / 38 px</code></td><td>树行 / 历史行 / 设置行</td></tr>
+            <tr><td><b>圆角</b></td><td><code>6 / 8 / 10 / 12 px</code></td><td>控件 / 窗格 / 卡片 / 对话框</td></tr>
+            <tr><td><b>间距</b></td><td><code>4 / 8 / 12 / 16 / 24 px</code></td><td>4px 网格</td></tr>
+            <tr><td><b>动效</b></td><td><code>120 / 160 ms · ease-out</code></td><td>只用于状态变化；不做环境动画</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="doc-section" id="mapping">
+        <span class="eyebrow">11 · MAPPING</span>
+        <h2>组件映射</h2>
+        <p class="lede">“完全用组件库”不等于每个像素都由预置组件画：外壳与终端卡片是 zenix 的组合件，但只使用组件的原语、token 与布局容器；不再 import gpui-kit。</p>
+
+        <table class="spec">
+          <thead><tr><th>界面</th><th>组件</th><th>zenix 自建部分</th></tr></thead>
+          <tbody>
+            <tr><td><b>窗口壳</b></td><td><code>shell::{AppShell, TitleBar, WindowControls, ResizeBorder}</code></td><td>CSD/SSD 回退</td></tr>
+            <tr><td><b>左轨</b></td><td><code>shell::{ActivityBar, ActivityItem}</code></td><td>未读角标</td></tr>
+            <tr><td><b>侧栏</b></td><td><code>layout::Sidebar</code>, <code>lists::{SelectableList, tree}</code></td><td>工作区树 / 工作树行</td></tr>
+            <tr><td><b>标签条</b></td><td><code>shell::TabBar</code>, <code>navigation::tabs</code></td><td>智能体点 + 窗格数 slot</td></tr>
+            <tr><td><b>窗格</b></td><td><code>layout::SplitPane</code>, <code>shell::Toolbar</code></td><td>终端卡片与 painter（保留）</td></tr>
+            <tr><td><b>状态栏</b></td><td><code>shell::{StatusBar, StatusBarItem}</code></td><td>分支 / 诊断 / 前缀投影</td></tr>
+            <tr><td><b>命令面板</b></td><td><code>navigation::palette::CommandPalette</code></td><td>Catalog 三来源投影</td></tr>
+            <tr><td><b>对话</b></td><td><code>ely_chat::*</code>, <code>ely_agent::ToolCallCard</code></td><td>本地化包装、历史行</td></tr>
+            <tr><td><b>设置</b></td><td><code>ely_settings::{SettingsLayout, SettingsSection, SettingsRow, ThemeSelector, AccentColorPicker, SyntaxThemePicker, DensitySelector, ThemeEditor, ThemeImporter}</code>, <code>layout::Card</code></td><td>config 绑定与即时写入</td></tr>
+            <tr><td><b>舰队</b></td><td><code>ely_dashboard::{DashboardCard, Tile}</code>, <code>data_display::{Badge, Timeline}</code></td><td>转场条、TAIL 对比</td></tr>
+            <tr><td><b>插件</b></td><td><code>layout::Drawer</code>, <code>tables</code>, <code>feedback::ConfirmationCard</code></td><td>argv 分级、信任审查</td></tr>
+            <tr><td><b>事件</b></td><td><code>lists</code>, <code>data_display::Badge</code>, <code>typography::Code</code></td><td>21 事件契约</td></tr>
+            <tr><td><b>布局</b></td><td><code>layout::Dialog</code>, <code>Card</code></td><td>TOML 预览、split 草图</td></tr>
+            <tr><td><b>输入</b></td><td><code>forms::{TextInput, Select, Switch}</code>, <code>buttons::SegmentedControl</code></td><td>无</td></tr>
+            <tr><td><b>主题</b></td><td><code>theme::{Theme, Palette, Syntax, Mode}</code>, <code>ely_settings::{ThemeSelector, AccentColorPicker, SyntaxThemePicker, ThemeEditor, ThemeImporter}</code></td><td>config → theme 同步；不维护自建 family</td></tr>
+            <tr><td><b>终端绘制</b></td><td><code>gpui-pre</code> 直接依赖 + 组件 token</td><td>zenix painter（不是组件库）</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="doc-section" id="migration">
+        <span class="eyebrow">12 · MIGRATION</span>
+        <h2>新分支实施计划</h2>
+        <p class="lede">已拍板；在 <span class="mono">feat/ui-shell</span> 上按 U0–U4 做，不做长期兼容层：每个阶段结束都能编译、能运行、能截图对比。目标是 <span class="mono">cargo tree -i gpui-kit</span> 为空。</p>
+
+        <div class="timeline">
+          <div class="phase"><h4>U0 · 依赖手术 <span class="tag">0.5–1 天</span></h4><p>固定组件库 <span class="mono">30c66fe</span> 与 <span class="mono">rust-toolchain.toml</span>（1.98.1）；加入 <span class="mono">gpui-pre</span> 直接依赖；删掉 gpui-kit / gpui-component；先让空壳编译；更新 THIRD-PARTY（组件库 MIT）与 AGENTS。</p></div>
+          <div class="phase"><h4>U1 · 设计系统 <span class="tag">1–2 天</span></h4><p>把现有视觉映射到组件 Palette / Syntax，不维护五个 family；写 config → theme 同步（mode / accent / syntax / 自定义导入）；替换 h_flex/v_flex、Theme、Icon、Button、Input；删掉 gpui-kit 主题缓存；终端 painter 改用 gpui-pre 类型。</p></div>
+          <div class="phase"><h4>U2 · 壳层 <span class="tag">2–3 天</span></h4><p>AppShell / TitleBar / ActivityBar / TabBar / StatusBar / Sidebar / SplitPane；侧栏与对话折叠；面板拖拽；窗格卡片与聚焦态。</p></div>
+          <div class="phase"><h4>U3 · 管理面 <span class="tag">3–5 天</span></h4><p>命令面板、设置卡片页、对话（大部分已在）、舰队、插件抽屉、事件检查器、布局模态、工作树与共享确认。</p></div>
+          <div class="phase"><h4>U4 · 清理与验收 <span class="tag">1–2 天</span></h4><p>cargo tree 证明无 gpui-kit；fmt / clippy / test / probe；按本文逐面截图对比；cargo deb；AGENTS 与文档收尾。</p></div>
+        </div>
+
+        <h3>已知风险</h3>
+        <table class="spec">
+          <thead><tr><th>风险</th><th>处理</th></tr></thead>
+          <tbody>
+            <tr><td><b>gpui-pre 0.3.9 → 0.3.10</b></td><td>组件库最新 main 已升到 gpui-pre 0.3.10（GPUI Kit 0.8.1 钉的同一快照），并要求 Rust 1.98；实验分支还是 0.3.9 + Rust 1.96。先锁 1.98.1、只升依赖、编译 vendored terminal/input，再动 UI，避免把两件事混在一起。</td></tr>
+            <tr><td><b>组件缺少 slot</b></td><td>标签上的智能体点、窗格标题等，在 <span class="mono">src/ui/</span> 组合，不 fork 组件库；缺口记录到 upstream issue。</td></tr>
+            <tr><td><b>硬编码英文</b></td><td>工具卡“Arguments/Result”等由 zenix 包一层 i18n，或向上游提 PR；不复制组件。</td></tr>
+            <tr><td><b>主题配置</b></td><td>accent 只覆盖 accent，syntax 只覆盖代码，终端 ANSI 跟随深色 / 浅色模式；自定义导入只接受调色板 JSON，不做组件级覆盖。没有对应 token 的（title_bar 等）别名到 surface/border，不新增私有 token。</td></tr>
+            <tr><td><b>输入法行内 preedit</b></td><td>仍是 GPUI XIM 的上游限制；组件的 TextInput 继承它。提交可用，行内候选不承诺。</td></tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section class="doc-section" id="decisions">
+        <span class="eyebrow">13 · DECISIONS</span>
+        <h2>已拍板的七件事</h2>
+        <p class="lede">按推荐值执行，不再逐项确认；附加口径是界面文案不出现组件库名。</p>
+
+        <div class="decision-list">
+          <div class="decision"><div class="no">01</div><div><h4>基底模式</h4><p>深色默认、浅色、跟随系统；不再有自建风格。</p></div><span class="pick">推荐 深色 + 浅色</span></div>
+          <div class="decision"><div class="no">02</div><div><h4>设置形态</h4><p>1080×780 居中对话框，左侧页导航，右侧全卡片分组，改动即时写入；保留 7 页。</p></div><span class="pick">推荐 卡片 + 即时写入</span></div>
+          <div class="decision"><div class="no">03</div><div><h4>管理面位置</h4><p>插件管理器、事件检查器用右侧抽屉；布局用模态；主区域始终是终端。</p></div><span class="pick">推荐 抽屉 / 模态</span></div>
+          <div class="decision"><div class="no">04</div><div><h4>舰队形态</h4><p>Rail 花名册 + aside 卡片 / TAIL 对比双层；还是独立的舰队主视图？</p></div><span class="pick">推荐 双层</span></div>
+          <div class="decision"><div class="no">05</div><div><h4>尺寸</h4><p>侧栏 260、对话 372、设置 1080×780；与当前 276/372/1000×660 相比更宽。</p></div><span class="pick">推荐 260 / 372</span></div>
+          <div class="decision"><div class="no">06</div><div><h4>可配置主题</h4><p>设置页暴露强调色预设（zenix 传入）、代码主题（标准 / 静谧 / 纸面）和自定义导入；不保留自建 family。</p></div><span class="pick">推荐 暴露三层</span></div>
+          <div class="decision"><div class="no">07</div><div><h4>浅色终端</h4><p>终端跟随浅色模式一起变浅，并使用内置 ANSI 16 色；不再单独维护深色终端。</p></div><span class="pick">推荐 跟随浅色</span></div>
+        </div>
+
+        <div class="callout" style="margin-top:18px"><b>实施边界：</b>在 <span class="mono">feat/ui-shell</span> 上开，删除 gpui-kit / gpui-component，不做兼容层；每个阶段结束都跑 <span class="mono">cargo fmt --check</span>、<span class="mono">cargo clippy --all-targets -- -D warnings</span>、<span class="mono">cargo test --lib</span>，并在真实 <span class="mono">:0</span> 上截图对比本文。</div>
+
+        <p class="tiny" style="margin-top:26px">zenix · 界面重构提案 · 2026-10-27 · 已拍板</p>
+      </section>
+    </main>
+  </div>
+
+  <script src="ui.js"></script>
+  <script src="screens.js"></script>
+</body>
+</html>

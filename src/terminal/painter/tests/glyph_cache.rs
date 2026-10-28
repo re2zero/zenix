@@ -13,7 +13,7 @@ fn cache_style_is_the_font_face_alone() {
     }
 }
 
-#[gpui_kit::test]
+#[gpui::test]
 fn cache_reuses_cells_invalidates_fonts_and_bounds_storage(cx: &mut TestAppContext) {
     let (_, cx) = cx.add_window_view(|_, _| Empty);
     let painter = std::rc::Rc::new(std::cell::RefCell::new(TerminalPainter::default()));
@@ -113,7 +113,7 @@ fn cache_reuses_cells_invalidates_fonts_and_bounds_storage(cx: &mut TestAppConte
     // resolve Private Use Area glyphs a text face does not carry. zenix has no
     // `config::FontConfig`, so the cascade is built on `Font` directly.
     let with_fallbacks = |families: &[&str]| {
-        let mut font = gpui_kit::font("Courier");
+        let mut font = gpui::font("Courier");
         font.fallbacks = Some(FontFallbacks::from_fonts(
             families.iter().map(|family| (*family).to_owned()).collect(),
         ));

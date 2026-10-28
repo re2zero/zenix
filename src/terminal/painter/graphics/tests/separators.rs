@@ -37,10 +37,10 @@ fn separator_shapes_reach_the_cell_edges_at_fractional_sizes() -> anyhow::Result
     Ok(())
 }
 
-#[gpui_kit::test]
-fn separator_paths_match_gpui_backgrounds_at_half_device_pixels(cx: &mut gpui_kit::TestAppContext) {
+#[gpui::test]
+fn separator_paths_match_gpui_backgrounds_at_half_device_pixels(cx: &mut gpui::TestAppContext) {
     use crate::terminal::painter::grid::grid_corners;
-    use gpui_kit::{Empty, Point, Styled, canvas, fill, rgb};
+    use gpui::{Empty, Point, Styled, canvas, fill, rgb};
     use std::{cell::RefCell, rc::Rc};
     let (_, cx) = cx.add_window_view(|_, _| Empty);
     let paths = Rc::new(RefCell::new(Vec::new()));

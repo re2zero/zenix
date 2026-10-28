@@ -10,7 +10,7 @@
 //! drag ends as soon as the tab or the pane topology changes, because its path
 //! could then name a different border.
 
-use gpui_kit::CursorStyle;
+use gpui::CursorStyle;
 use herdr_client::Method;
 use herdr_client::protocol::{ClientShellSnapshot, PaneSurfaceFrame, PaneSurfaceSplit};
 use serde_json::json;

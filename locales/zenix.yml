@@ -75,6 +75,14 @@ status:
   no_reason:
     en: "disconnected"
     zh-CN: "已断开"
+  # The bar's other offline facts (U3-5): what the session holds when it holds
+  # nothing, and the daemon's own state as its own segment.
+  no_workspace:
+    en: "no workspace"
+    zh-CN: "没有工作区"
+  daemon_stopped:
+    en: "daemon not running"
+    zh-CN: "daemon 未启动"
   # What the session holds. The counts are the daemon's own lists, so the bar
   # cannot disagree with the sidebar about how many workspaces there are.
   # rust-i18n has no plural forms: the singular is a key of its own, chosen in
@@ -107,6 +115,73 @@ status:
   prefix:
     en: "prefix"
     zh-CN: "前缀"
+  # The stream the picture came from, as the bar's dim trailing fact.
+  source:
+    snapshot:
+      en: "snapshot"
+      zh-CN: "snapshot"
+    # The picture before the first snapshot: the segment names what it waits on
+    # rather than claiming `snapshot`.
+    waiting:
+      en: "waiting for snapshot"
+      zh-CN: "等待快照"
+
+# The appearance page's four layers. The code themes' engineering names stay in
+# code on purpose: a reader sees these words, never the component library's own
+# names for the same three sets.
+theme:
+  mode:
+    light:
+      en: "Light"
+      zh-CN: "浅色"
+    dark:
+      en: "Dark"
+      zh-CN: "深色"
+    system:
+      en: "System"
+      zh-CN: "跟随系统"
+  accent:
+    default:
+      en: "Default"
+      zh-CN: "默认"
+    blue:
+      en: "Blue"
+      zh-CN: "蓝"
+    teal:
+      en: "Teal"
+      zh-CN: "青"
+    amber:
+      en: "Amber"
+      zh-CN: "琥珀"
+    rose:
+      en: "Rose"
+      zh-CN: "玫瑰"
+    violet:
+      en: "Violet"
+      zh-CN: "紫"
+    green:
+      en: "Green"
+      zh-CN: "绿"
+    custom:
+      en: "Custom"
+      zh-CN: "自定义"
+  code:
+    standard:
+      en: "Standard"
+      zh-CN: "标准"
+    quiet:
+      en: "Quiet"
+      zh-CN: "静谧"
+    paper:
+      en: "Paper"
+      zh-CN: "纸面"
+  terminal:
+    follow:
+      en: "Terminal follows light mode"
+      zh-CN: "终端跟随浅色模式"
+    follow_hint:
+      en: "Off, the terminal keeps its dark colors as a visual anchor."
+      zh-CN: "关闭则终端保持深色，作为视觉锚点。"
 
 settings:
   title:
@@ -115,6 +190,24 @@ settings:
   close:
     en: "Close"
     zh-CN: "关闭"
+  # The dialog's own chrome: the foot's state line, the page-level reset, and
+  # the nav's three groups.
+  saved:
+    en: "Saved · every change takes effect at once"
+    zh-CN: "已保存 · 写入即生效"
+  reset_page:
+    en: "Restore this page"
+    zh-CN: "恢复本页默认"
+  group:
+    app:
+      en: "Application"
+      zh-CN: "应用"
+    extensions:
+      en: "Extensions"
+      zh-CN: "扩展"
+    about:
+      en: "About"
+      zh-CN: "关于"
   effective:
     en: "Every change takes effect at once, and each load walks the file against the schema."
     zh-CN: "写入即生效 · 每次加载都按 schema 校验"
@@ -156,10 +249,40 @@ settings:
       zh-CN: "键位"
     description:
       en: "The prefix and the chords that reach the shell, read from the command directory. Chords a plugin declares live in the plugin view."
-      zh-CN: "前缀键与到达壳的键位，读自命令目录。插件声明的键位在插件视图里。"
+      zh-CN: "前缀键与到达外壳的键位，读自命令目录。插件声明的键位在插件视图里。"
     prefix:
       en: "Prefix key"
       zh-CN: "前缀键"
+    prefix_card:
+      en: "Prefix"
+      zh-CN: "前缀"
+    prefix_note:
+      en: "Press it, then the chord; pressing it twice sends it on as ordinary input."
+      zh-CN: "先按前缀，再按命令键；连按两次则把它当普通按键送出。"
+    commands_card:
+      en: "Command directory"
+      zh-CN: "命令目录"
+    commands_card_note:
+      en: "One directory drives the palette, the chords and this list."
+      zh-CN: "同一份目录驱动命令面板、快捷键与这一页。"
+    plugin_card:
+      en: "Plugin chords"
+      zh-CN: "插件键位"
+    plugin_card_note:
+      en: "A bare key follows the prefix; a chord with its own modifier is claimed outright."
+      zh-CN: "裸键排在前缀之后；自带修饰键的组合直接认领。"
+    none:
+      en: "No plugin declares a chord"
+      zh-CN: "没有插件声明键位"
+    palette_only:
+      en: "palette only"
+      zh-CN: "仅命令面板"
+    directory:
+      en: "Directory"
+      zh-CN: "目录"
+    directory_note:
+      en: "Counted from the table this page lists."
+      zh-CN: "按本页所列的目录计数。"
   plugins:
     title:
       en: "Plugins"
@@ -194,6 +317,33 @@ settings:
     sandbox_value:
       en: "a plugin runs with the daemon's permissions; the review is the only gate"
       zh-CN: "插件与 daemon 同权限运行；审查面是唯一的闸门"
+    installed:
+      en: "Installed / enabled"
+      zh-CN: "已安装 / 已启用"
+    contract:
+      en: "UI contract"
+      zh-CN: "UI 合同"
+    contract_value:
+      en: "zenix-ui.toml · v%{version}"
+      zh-CN: "zenix-ui.toml · v%{version}"
+    list_card:
+      en: "Installed plugins"
+      zh-CN: "已安装插件"
+    list_card_note:
+      en: "Declarations are read from each plugin's own zenix-ui.toml."
+      zh-CN: "声明读自每个插件自己的 zenix-ui.toml。"
+    entry:
+      en: "v%{version} · %{actions} actions · %{slots} declared slots"
+      zh-CN: "v%{version} · %{actions} 个 action · %{slots} 个声明槽位"
+    enabled:
+      en: "enabled"
+      zh-CN: "启用"
+    disabled:
+      en: "disabled"
+      zh-CN: "停用"
+    none:
+      en: "No plugins are installed"
+      zh-CN: "没有安装插件"
   mcp:
     title:
       en: "MCP"
@@ -216,6 +366,109 @@ settings:
     bridge_value:
       en: "zenix mcp-agent · one tool: agent_send · windowless stdio"
       zh-CN: "zenix mcp-agent · 单工具 agent_send · 无窗口 stdio"
+    status:
+      en: "Status"
+      zh-CN: "状态"
+    listening:
+      en: "listening"
+      zh-CN: "运行中"
+    not_listening:
+      en: "not started"
+      zh-CN: "未启动"
+    orchestrator_tools:
+      en: "Orchestrator tools"
+      zh-CN: "编排器工具"
+    plugin_tools:
+      en: "Plugin tools"
+      zh-CN: "插件工具"
+    plugin_tools_value:
+      en: "one per plugin action the daemon reports"
+      zh-CN: "每个 daemon 报告的插件 action 一个"
+    bridge_command:
+      en: "Command"
+      zh-CN: "命令"
+    bridge_tool:
+      en: "Tool"
+      zh-CN: "工具"
+    service_card:
+      en: "Orchestrator service"
+      zh-CN: "编排服务"
+    tool_list_card:
+      en: "Tool list"
+      zh-CN: "工具清单"
+  ai:
+    title:
+      en: "AI"
+      zh-CN: "AI"
+    description:
+      en: "The orchestrator's provider, model and reasoning effort."
+      zh-CN: "编排器的提供方、模型与推理强度。"
+    model_card:
+      en: "Model"
+      zh-CN: "模型"
+    model_card_note:
+      en: "An OpenAI-compatible endpoint; the key stays in the provider file."
+      zh-CN: "OpenAI 兼容端点；密钥只存在提供方文件里。"
+    provider:
+      en: "Provider"
+      zh-CN: "提供方"
+    format:
+      en: "Format"
+      zh-CN: "格式"
+    endpoint:
+      en: "Endpoint"
+      zh-CN: "端点"
+    model:
+      en: "Model"
+      zh-CN: "模型"
+    model_none:
+      en: "not set"
+      zh-CN: "未设置"
+    key:
+      en: "API key"
+      zh-CN: "API 密钥"
+    key_set:
+      en: "Configured"
+      zh-CN: "已配置"
+    key_missing:
+      en: "Not set"
+      zh-CN: "未配置"
+    none:
+      en: "No provider is configured"
+      zh-CN: "尚未配置提供方"
+    none_hint:
+      en: "Add one to %{path}; the chat panel reads the same file."
+      zh-CN: "请在 %{path} 中添加；对话面板读同一个文件。"
+    save_failed:
+      en: "The change could not be written: %{error}"
+      zh-CN: "写入失败：%{error}"
+    level:
+      en: "Reasoning effort"
+      zh-CN: "推理强度"
+    level_note:
+      en: "The level the chat panel's picker opens on."
+      zh-CN: "对话面板的力度选择打开时使用的档位。"
+    context_card:
+      en: "Context"
+      zh-CN: "上下文"
+    context_card_note:
+      en: "Compaction runs before the window is full, not after."
+      zh-CN: "上下文将满时先压缩，再继续。"
+    context_window:
+      en: "Context window"
+      zh-CN: "上下文窗口"
+    reserve:
+      en: "Reserve"
+      zh-CN: "预留"
+    keep_recent:
+      en: "Keep recent"
+      zh-CN: "保留最近"
+    file_card:
+      en: "Config file"
+      zh-CN: "配置文件"
+    file:
+      en: "File"
+      zh-CN: "文件"
   config:
     title:
       en: "Config file"
@@ -265,7 +518,7 @@ settings:
       zh-CN: "主题族"
     family_description:
       en: "One palette for the chrome; light and dark stay inside the family."
-      zh-CN: "壳的调色板，明暗不离开该族。"
+      zh-CN: "外壳的调色板，明暗不离开该族。"
     family_default:
       en: "Zenix"
       zh-CN: "Zenix"
@@ -286,7 +539,7 @@ settings:
       zh-CN: "明暗"
     theme_description:
       en: "The chrome, the terminal and every plugin panel switch together."
-      zh-CN: "壳、终端与所有插件面板同时切换。"
+      zh-CN: "外壳、终端与所有插件面板同时切换。"
     theme_light:
       en: "Light"
       zh-CN: "浅色"
@@ -311,6 +564,30 @@ settings:
     density_compact:
       en: "Compact"
       zh-CN: "紧凑"
+    accent:
+      en: "Accent"
+      zh-CN: "强调色"
+    accent_description:
+      en: "Only the accent changes; the default is the palette's own."
+      zh-CN: "只改强调色；默认沿用调色板自身的强调色。"
+    syntax:
+      en: "Code theme"
+      zh-CN: "代码主题"
+    syntax_description:
+      en: "Affects code and markdown code blocks only."
+      zh-CN: "只影响代码与 markdown 代码块。"
+    theme_card:
+      en: "Theme"
+      zh-CN: "主题"
+    theme_card_note:
+      en: "Four layers; colors and code only, the components never change."
+      zh-CN: "四层配置只改颜色与代码语法，组件不重建。"
+    interface_card:
+      en: "Interface"
+      zh-CN: "界面"
+    interface_card_note:
+      en: "The client's language and density; nothing here is written to the daemon."
+      zh-CN: "客户端的语言与密度，不写回 daemon。"
   terminal:
     title:
       en: "Terminal"
@@ -337,8 +614,8 @@ settings:
       en: "The family ships with the app; it is the face the grid's metrics are measured in."
       zh-CN: "字体族随应用分发；单元格的度量以它为准。"
     font_value:
-      en: "Lilex"
-      zh-CN: "Lilex"
+      en: "JetBrains Mono"
+      zh-CN: "JetBrains Mono"
     font_size:
       en: "Font size"
       zh-CN: "字号"
@@ -372,6 +649,91 @@ settings:
     scrollback_description:
       en: "Held by the daemon, read-only here; the file it lives in is named below."
       zh-CN: "由 daemon 持有，客户端只读；所在文件见下方路径。"
+    preview_row:
+      en: "Preview"
+      zh-CN: "预览"
+    preview:
+      en: "%{face} %{size} px · line height %{height}×"
+      zh-CN: "%{face} %{size}px · 行高 %{height}×"
+    palette:
+      en: "Palette"
+      zh-CN: "调色板"
+    palette_value:
+      en: "The chrome's built-in ANSI 16; the accent never reaches it"
+      zh-CN: "外壳内置的 ANSI 16 色；强调色不进入终端"
+    colors_card:
+      en: "Colors"
+      zh-CN: "配色"
+    colors_card_note:
+      en: "The terminal takes the chrome's palette; nothing is maintained separately."
+      zh-CN: "终端直接使用外壳的调色板，不单独维护。"
+    type_card:
+      en: "Typography"
+      zh-CN: "排版"
+    type_card_note:
+      en: "Cells are measured from the shaped glyphs every frame."
+      zh-CN: "单元格尺寸每帧按字形度量。"
+    scrollback_card:
+      en: "Scrollback"
+      zh-CN: "回滚"
+    scrollback_value:
+      en: "Held by the daemon; read-only here"
+      zh-CN: "由 daemon 持有，客户端只读"
+    scrollback_file:
+      en: "Daemon config"
+      zh-CN: "daemon 配置"
+  about:
+    title:
+      en: "About"
+      zh-CN: "关于"
+    description:
+      en: "Version, licenses and where this client keeps its files."
+      zh-CN: "版本、许可与客户端文件的位置。"
+    version_card:
+      en: "Version"
+      zh-CN: "版本"
+    herdr:
+      en: "herdr (pinned)"
+      zh-CN: "herdr（固定版本）"
+    herdr_note:
+      en: "The release vendor/herdr-pins.tsv pins, checked by SHA-256 when packaged."
+      zh-CN: "vendor/herdr-pins.tsv 固定的版本；打包时以 SHA-256 校验。"
+    daemon:
+      en: "Running daemon"
+      zh-CN: "运行中的 daemon"
+    ui:
+      en: "UI stack"
+      zh-CN: "UI 栈"
+    ui_value:
+      en: "gpui-pre 0.3.10 · component library 0.2.0"
+      zh-CN: "gpui-pre 0.3.10 · 组件库 0.2.0"
+    mismatch:
+      en: "Version mismatch"
+      zh-CN: "版本不一致"
+    mismatch_daemon:
+      en: "The daemon must be updated; run `herdr update`, then reconnect."
+      zh-CN: "daemon 需要更新：执行 `herdr update` 后重连。"
+    mismatch_client:
+      en: "This client must be updated to speak the daemon's protocol."
+      zh-CN: "本客户端需要更新才能与 daemon 通信。"
+    component_library:
+      en: "Component library"
+      zh-CN: "组件库"
+    licenses_card:
+      en: "Licenses"
+      zh-CN: "许可"
+    licenses_note:
+      en: "The full texts ship with the package."
+      zh-CN: "完整文本随包分发。"
+    license_texts:
+      en: "License texts"
+      zh-CN: "许可文本"
+    license_texts_note:
+      en: "Inside an installed package."
+      zh-CN: "安装包内。"
+    files_card:
+      en: "Files"
+      zh-CN: "文件"
 
 general:
   refresh:
@@ -385,7 +747,7 @@ general:
     zh-CN: "取消"
 
 # The confirmation a destructive request asks for before it runs: a worktree
-# removal or a plugin unlink. Read by `src/shell/confirm.rs`.
+# removal or a plugin unlink. Read by `src/ui/confirm.rs`.
 confirm:
   remove:
     en: "Remove"
@@ -535,9 +897,9 @@ ai:
     new_session:
       en: "+ New"
       zh-CN: "+ 新建"
-    stop:
-      en: "Stop"
-      zh-CN: "停止"
+    new_chat:
+      en: "New chat"
+      zh-CN: "新建对话"
     model:
       en: "Model"
       zh-CN: "模型"
@@ -550,9 +912,6 @@ ai:
     effort:
       en: "Reasoning effort"
       zh-CN: "推理力度"
-    self:
-      en: "Me"
-      zh-CN: "我"
     role_you:
       en: "You"
       zh-CN: "你"
@@ -571,24 +930,72 @@ ai:
     delete:
       en: "Delete"
       zh-CN: "删除"
+    delete_cancel:
+      en: "Cancel"
+      zh-CN: "取消"
     delete_confirm:
       en: "Sure?"
       zh-CN: "确认？"
     retry:
       en: "Retry"
       zh-CN: "重试"
-    copy_code:
-      en: "Copy"
-      zh-CN: "复制"
     approval_wants:
       en: "Wants to run: %{name}"
       zh-CN: "请求执行：%{name}"
     approval_allow:
       en: "Allow"
       zh-CN: "允许"
+    approval_always:
+      en: "Always allow"
+      zh-CN: "总是允许"
     approval_deny:
       en: "Deny"
       zh-CN: "拒绝"
+    error_title:
+      en: "The turn failed"
+      zh-CN: "本轮失败"
+    copy:
+      en: "Copy"
+      zh-CN: "复制"
+    tool_arguments:
+      en: "Arguments"
+      zh-CN: "参数"
+    tool_result:
+      en: "Result"
+      zh-CN: "结果"
+    tool_error:
+      en: "Error"
+      zh-CN: "错误"
+    compacted:
+      en: "Compacted %{original} messages to %{kept} (%{before} → %{after} tokens)"
+      zh-CN: "已压缩 %{original} 条消息至 %{kept} 条（%{before} → %{after} tokens）"
+    conversations:
+      en: "Conversations"
+      zh-CN: "会话"
+    clear:
+      en: "Clear"
+      zh-CN: "清空"
+    delete_ask:
+      en: "Delete “%{title}”? Its messages go too."
+      zh-CN: "删除「%{title}」？消息会一并删除。"
+    welcome_title:
+      en: "How can I help?"
+      zh-CN: "需要我做什么？"
+    thought_moment:
+      en: "Thought for a moment"
+      zh-CN: "思考了片刻"
+    thought_seconds:
+      en: "Thought for %{seconds}s"
+      zh-CN: "思考了 %{seconds} 秒"
+    starter_pane:
+      en: "Summarize the focused pane"
+      zh-CN: "总结聚焦窗格"
+    starter_fleet:
+      en: "Review the running agents"
+      zh-CN: "检查运行中的 Agent"
+    starter_layout:
+      en: "Review the workspace layout"
+      zh-CN: "检查工作区布局"
   # The composer's reasoning-effort picker: one label per `ThinkingLevel`, keyed
   # by the level's wire spelling.
   effort:
@@ -618,6 +1025,97 @@ shell:
     search:
       en: "Search workspaces, commands, plugin actions…"
       zh-CN: "搜索工作区、命令、插件 action…"
+    # While the handshake has not completed there is no snapshot to search,
+    # and the trigger says which thing is missing instead of promising both.
+    search_waiting:
+      en: "Search commands (daemon is not connected)…"
+      zh-CN: "搜索命令（daemon 未连接）…"
+  # The first-run block over the grid (U3-5): one sentence, four entries and —
+  # while the daemon is down — the card that starts it in place.
+  first_run:
+    title:
+      en: "Start with a workspace"
+      zh-CN: "从第一个工作区开始"
+    body:
+      en: "No workspaces yet. Create one, or open a project's .zenix/layout.toml; once the daemon answers, the sidebar lists what it already has."
+      zh-CN: "还没有工作区。新建一个，或打开项目里的 .zenix/layout.toml；daemon 连上后侧栏会自动列出已有的。"
+    workspace:
+      title:
+        en: "New Workspace"
+        zh-CN: "新建工作区"
+      detail:
+        en: "Start a session in the daemon's working directory"
+        zh-CN: "在 daemon 的工作目录里开一个会话"
+    layout:
+      title:
+        en: "Open Layout"
+        zh-CN: "打开布局"
+      detail:
+        en: "Read a project's .zenix/layout.toml"
+        zh-CN: "查看项目里的 .zenix/layout.toml"
+    trust:
+      title:
+        en: "Link a Plugin"
+        zh-CN: "链接插件"
+      detail:
+        en: "Review what it would run before it runs"
+        zh-CN: "先看清它会执行什么"
+    settings:
+      title:
+        en: "Open Settings"
+        zh-CN: "打开设置"
+      detail:
+        en: "Appearance, terminal, AI, keys and plugins"
+        zh-CN: "外观、终端、AI、键位与插件"
+    daemon:
+      title:
+        en: "daemon is not connected"
+        zh-CN: "daemon 未连接"
+      body:
+        en: "zenix seeds res/herdr to ~/.local/bin/herdr on first run; the daemon can also be started by hand."
+        zh-CN: "zenix 首次运行会把 res/herdr 播种到 ~/.local/bin/herdr；也可手动启动。"
+      start:
+        en: "Start daemon"
+        zh-CN: "启动 daemon"
+      starting:
+        en: "Starting the daemon…"
+        zh-CN: "正在启动 daemon…"
+      started:
+        en: "The daemon was started; waiting for the handshake."
+        zh-CN: "daemon 已启动，等待握手。"
+      failed:
+        en: "The daemon could not be started. Its last output is below."
+        zh-CN: "daemon 启动失败，见下方最后的输出。"
+      logs:
+        en: "View logs"
+        zh-CN: "查看日志"
+      hide_log:
+        en: "Hide logs"
+        zh-CN: "收起日志"
+      no_log:
+        en: "No output has been written yet."
+        zh-CN: "还没有写入任何输出。"
+      copy_command:
+        en: "Copy command"
+        zh-CN: "复制命令"
+  # The window's short-lived messages (U3-5). The title is this client's; a
+  # reason in the body is the daemon's own sentence, passed through.
+  toast:
+    refused:
+      en: "The daemon refused the request"
+      zh-CN: "daemon 拒绝了请求"
+    not_sent:
+      en: "Not sent: %{what}"
+      zh-CN: "未发送：%{what}"
+    not_sent_body:
+      en: "The connection is not up yet. Once the daemon answers, try again."
+      zh-CN: "连接尚未建立。等 daemon 应答后再试一次。"
+    worktree_failed:
+      en: "Worktree request failed"
+      zh-CN: "工作树请求失败"
+    plugin_failed:
+      en: "Plugin request failed"
+      zh-CN: "插件请求失败"
   # The sidebar views' own names, for the head strip above their blocks.
   view:
     workspaces:
@@ -627,8 +1125,8 @@ shell:
       en: "Agents"
       zh-CN: "智能体"
     fleet:
-      en: "Cockpit"
-      zh-CN: "驾驶舱"
+      en: "Fleet"
+      zh-CN: "舰队"
     plugins:
       en: "Plugins"
       zh-CN: "插件"
@@ -649,14 +1147,45 @@ shell:
     plugins:
       en: "%{plugins} · %{enabled} enabled"
       zh-CN: "%{plugins} 个 · %{enabled} 启用"
+    fleet:
+      en: "%{agents} · %{active} active"
+      zh-CN: "%{agents} 个 · %{active} 运行中"
+    events:
+      en: "%{count} events"
+      zh-CN: "%{count} 条"
     events_live:
       en: "subscribed"
       zh-CN: "订阅中"
     events_down:
       en: "stream down"
       zh-CN: "已断开"
-  # Where each view's rows come from, as the foot's one line.
+  # The sidebar's section labels, above the rows they group. Short because
+  # they sit in a 260px column and never wrap.
+  section:
+    active:
+      en: "Running"
+      zh-CN: "运行中"
+    rest:
+      en: "Waiting / done"
+      zh-CN: "等待 / 完成"
+    events:
+      en: "Event stream"
+      zh-CN: "事件流"
+  # Relative times, shared by the event ring and the fleet's held ages. Only
+  # the "just now" word needs a language; the numeric units read the same.
+  age:
+    now:
+      en: "now"
+      zh-CN: "现在"
+  # Where each view's rows come from, as the foot's one line. A snapshot-backed
+  # view with no snapshot says what it waits on instead (U3-5).
   foot:
+    waiting:
+      en: "waiting for daemon"
+      zh-CN: "等待 daemon"
+    stale:
+      en: "last snapshot · daemon disconnected"
+      zh-CN: "最后一次快照 · daemon 已断开"
     workspaces:
       en: "snapshot push · no polling"
       zh-CN: "snapshot 推送 · 无轮询"
@@ -695,6 +1224,15 @@ shell:
   workspaces:
     en: "Workspaces"
     zh-CN: "工作区"
+  # A tab sub-row's pane count, in the workspace tree. rust-i18n has no plural
+  # forms, so the singular is a key of its own.
+  sidebar:
+    tab_pane_one:
+      en: "%{count} pane"
+      zh-CN: "%{count} 个窗格"
+    tab_panes:
+      en: "%{count} panes"
+      zh-CN: "%{count} 个窗格"
   # The worktrees of the repo the focused workspace belongs to: the sidebar
   # section's title, its new-worktree affordance, and its empty line.
   worktrees:
@@ -710,6 +1248,41 @@ shell:
     remove:
       en: "Remove worktree %{name}"
       zh-CN: "删除工作树 %{name}"
+    # The new-worktree form: the branch and base the daemon's `worktree.create`
+    # takes, and the checkout path it names itself.
+    form_title:
+      en: "New worktree"
+      zh-CN: "新建工作树"
+    form_repo:
+      en: "From %{repo}, the repository the focused workspace belongs to."
+      zh-CN: "从 %{repo} 创建 —— 聚焦工作区所属的仓库。"
+    form_no_repo:
+      en: "No repository is focused, so there is nothing to cut a worktree from."
+      zh-CN: "没有聚焦的仓库，无法创建工作树。"
+    form_branch:
+      en: "Branch"
+      zh-CN: "分支名"
+    form_branch_placeholder:
+      en: "feat/pane-cards"
+      zh-CN: "feat/pane-cards"
+    form_base:
+      en: "Base branch"
+      zh-CN: "基准分支"
+    form_path:
+      en: "The daemon names the checkout directory."
+      zh-CN: "检出目录由 daemon 命名。"
+    form_note:
+      en: "The worktree appears in the sidebar's WORKTREES block and opens focused."
+      zh-CN: "工作树会出现在侧栏 WORKTREES 块，并聚焦打开。"
+    form_create:
+      en: "Create"
+      zh-CN: "创建"
+    form_need_branch:
+      en: "Type a branch name."
+      zh-CN: "请输入分支名。"
+    form_creating:
+      en: "creating %{branch}…"
+      zh-CN: "正在创建 %{branch}…"
   palette:
     prompt:
       en: "type a command"
@@ -753,6 +1326,15 @@ shell:
     commands:
       en: "commands"
       zh-CN: "命令"
+    # The plugins view's badge: what a row's own declaration says it contributes.
+    # `daemon` is a registry entry with no `zenix-ui.toml`; `local` is the file
+    # this client drew the plugin's row, chord and panel from.
+    source_daemon:
+      en: "daemon"
+      zh-CN: "daemon"
+    source_local:
+      en: "local"
+      zh-CN: "local"
     # The event stream's contract page: what the stream is, stated as facts
     # beside the stream it describes. Read by `src/plugins/panels.rs`.
     events_contract:
@@ -787,6 +1369,20 @@ shell:
     title:
       en: "Plugins"
       zh-CN: "插件"
+    # The manager drawer's four pages, in strip order.
+    tab:
+      overview:
+        en: "Overview"
+        zh-CN: "概览"
+      actions:
+        en: "Actions"
+        zh-CN: "动作"
+      panes:
+        en: "Panes"
+        zh-CN: "面板"
+      logs:
+        en: "Logs"
+        zh-CN: "日志"
     review:
       en: "Review & link…"
       zh-CN: "审查并链接…"
@@ -923,9 +1519,21 @@ shell:
     # A rail view with nothing to show still names itself: an empty column
     # would read as a broken view rather than an empty one.
     empty:
+      workspaces:
+        en: "No workspaces"
+        zh-CN: "没有工作区"
+      workspaces_hint:
+        en: "A new one shows up here."
+        zh-CN: "新建后会出现在这里。"
+      workspaces_waiting:
+        en: "Waiting for the daemon to answer."
+        zh-CN: "等待 daemon 应答。"
       agents:
         en: "No agents running"
         zh-CN: "没有运行中的智能体"
+      fleet:
+        en: "No agents in flight"
+        zh-CN: "当前没有在运行的智能体"
       plugins:
         en: "No plugins linked"
         zh-CN: "尚未链接插件"
@@ -940,10 +1548,81 @@ shell:
       zh-CN: "对话"
     fleet:
       en: "Fleet"
-      zh-CN: "驾驶舱"
+      zh-CN: "舰队"
     panels:
       en: "Panels"
       zh-CN: "插件面板"
+    close:
+      en: "Close the panel"
+      zh-CN: "收起面板"
+  # The aside's fleet tab (U3-3): the roster of cards, the transitions this
+  # client watched, and the two-column TAIL comparison. The status words and
+  # the no-agents line are the cockpit's (`fleet.status.*`, `fleet.empty`) and
+  # are reused rather than duplicated.
+  fleet:
+    mode_roster:
+      en: "Roster"
+      zh-CN: "花名册"
+    mode_compare:
+      en: "TAIL"
+      zh-CN: "TAIL"
+    running:
+      en: "%{count} running"
+      zh-CN: "%{count} 运行中"
+    recent:
+      en: "Recent transitions"
+      zh-CN: "最近转场"
+    source_prefix:
+      en: "Status from "
+      zh-CN: "状态来自 "
+    source_suffix:
+      en: "; no polling."
+      zh-CN: "；不轮询。"
+    stale:
+      en: "Event stream down: %{error}"
+      zh-CN: "事件流断开：%{error}"
+    pick_hint:
+      en: "Pick two agents to compare their tails."
+      zh-CN: "选两个智能体对比它们的尾部输出。"
+    pick_more:
+      en: "Pick one more (%{count}/2)"
+      zh-CN: "再选一个（%{count}/2）"
+    picked:
+      en: "%{count}/2 picked"
+      zh-CN: "已选 %{count}/2"
+    reselect:
+      en: "Re-pick"
+      zh-CN: "重选"
+    refresh:
+      en: "Read the tails again"
+      zh-CN: "重新读取尾部"
+    reading:
+      en: "reading…"
+      zh-CN: "读取中…"
+    read_at:
+      en: "read %{age}"
+      zh-CN: "读于 %{age}"
+    failed:
+      en: "Read failed: %{error}"
+      zh-CN: "读取失败：%{error}"
+    diff:
+      en: "%{count} differences · last %{rows} lines"
+      zh-CN: "%{count} 处差异 · 尾部 %{rows} 行"
+    no_diff:
+      en: "The tails agree · last %{rows} lines"
+      zh-CN: "尾部一致 · 尾部 %{rows} 行"
+    focus:
+      en: "Focus the pane"
+      zh-CN: "聚焦窗格"
+    tail:
+      en: "Read the tail"
+      zh-CN: "读 TAIL"
+    selected:
+      en: "Picked for the comparison"
+      zh-CN: "已选入对比"
+    not_running:
+      en: "no longer running"
+      zh-CN: "已不在运行"
   # The grid with no pane to paint (PLAN.md §M11c). Every entry is a command from
   # the directory, so nothing here is decoration standing in for an action.
   empty:
@@ -994,12 +1673,28 @@ shell:
     title:
       en: "Link a plugin — what it would run"
       zh-CN: "链接插件 — 它会运行什么"
+    # The sentence above the field: the review's premise in one line.
+    intro:
+      en: "Before linking, zenix reads every argv in the plugin's directory and grades it; a linked plugin can still be disabled later."
+      zh-CN: "链接前，zenix 读取插件目录里的每一个 argv 并标注风险；链接后仍可随时停用。"
+    # The sidebar's way into the review: a directory that is not linked yet
+    # cannot be a row, so the list offers the review itself.
+    open:
+      en: "Review and link a plugin"
+      zh-CN: "审查并链接插件"
+    placeholder:
+      en: "/path/to/plugin"
+      zh-CN: "/插件/所在/目录"
     review:
       en: "Review"
       zh-CN: "查看"
     link:
       en: "Link"
       zh-CN: "链接"
+    # The acknowledgement the link button waits for.
+    read:
+      en: "I have read and understand the commands above"
+      zh-CN: "我已阅读并理解上述命令"
     type_directory:
       en: "Type the directory a plugin lives in."
       zh-CN: "请输入插件所在的目录。"
@@ -1026,6 +1721,193 @@ shell:
     linking:
       en: "linking %{path}…"
       zh-CN: "正在链接 %{path}…"
+    # The footer's one fact about the paths the review shows: they are the
+    # daemon's own algorithm, so they match what a plugin's command sees.
+    paths:
+      en: "Paths follow the daemon's own algorithm"
+      zh-CN: "路径按 daemon 的算法计算"
+    all_clear:
+      en: "no command leaves the plugin"
+      zh-CN: "没有命令离开插件目录"
+    hazard_count:
+      en: "%{high} high-risk · %{caution} caution"
+      zh-CN: "%{high} 条高危 · %{caution} 条注意"
+    # The six rules' sentences. The rules themselves keep a stable English
+    # sentence (tests compare it); `trust::reason_label` maps it here.
+    hazard_absolute_program:
+      en: "runs a program at an absolute path outside the plugin"
+      zh-CN: "运行插件目录之外的绝对路径程序"
+    hazard_elevation:
+      en: "asks for elevated privileges"
+      zh-CN: "请求提权"
+    hazard_inline_shell:
+      en: "runs inline shell code that is not in the manifest"
+      zh-CN: "运行清单未展示的内联 shell 代码"
+    hazard_inline_interpreter:
+      en: "runs inline interpreter code that is not in the manifest"
+      zh-CN: "运行清单未展示的内联解释器代码"
+    hazard_network:
+      en: "reaches the network or installs packages"
+      zh-CN: "访问网络或安装软件包"
+    hazard_system_path:
+      en: "touches a system path outside the plugin"
+      zh-CN: "触碰插件目录之外的系统路径"
+  # The event inspector and the 21-name contract (U3-4). The inspector's three
+  # tabs are views of the same line; every fact under them is something this
+  # client actually knows (arrival time, class, byte count) and nothing it does
+  # not (the daemon sends no sequence number or latency with a line).
+  inspector:
+    tab:
+      json:
+        en: "JSON"
+        zh-CN: "JSON"
+      raw:
+        en: "Raw"
+        zh-CN: "原始"
+      contract:
+        en: "Contract"
+        zh-CN: "契约"
+    contract:
+      en: "This kind"
+      zh-CN: "本事件"
+    kind_dotted:
+      en: "dotted"
+      zh-CN: "点号"
+    kind_wire:
+      en: "wire"
+      zh-CN: "wire"
+    class:
+      en: "Class"
+      zh-CN: "类别"
+    hooked:
+      en: "Hook"
+      zh-CN: "钩子"
+    hooked_yes:
+      en: "an installed plugin hooks it"
+      zh-CN: "有已安装插件挂钩"
+    hooked_no:
+      en: "no plugin hooks it"
+      zh-CN: "没有插件挂钩"
+    subscribed:
+      en: "one of %{count} subscribed kinds"
+      zh-CN: "属于 %{count} 个订阅事件之一"
+    unlisted:
+      en: "not one of the 21 subscribed kinds; the stream kept the daemon's own name"
+      zh-CN: "不在 21 个订阅事件之内；流保留 daemon 自己的名字"
+    metadata:
+      en: "Metadata"
+      zh-CN: "元数据"
+    source:
+      en: "Source"
+      zh-CN: "来源"
+    source_live:
+      en: "endpoint subscription · live"
+      zh-CN: "endpoint 订阅 · 在线"
+    source_down:
+      en: "endpoint subscription · down"
+      zh-CN: "endpoint 订阅 · 断开"
+    arrived:
+      en: "Arrived"
+      zh-CN: "到达"
+    size:
+      en: "Bytes"
+      zh-CN: "字节"
+    lane:
+      en: "State changes arrive only as pushes; the JSON lane is for on-demand plugin.* / worktree.* / layout.* reads."
+      zh-CN: "状态变化只来自推送；JSON lane 用于 plugin.* / worktree.* / layout.* 的按需读取。"
+    copy:
+      en: "Copy JSON"
+      zh-CN: "复制 JSON"
+    open_contract:
+      en: "Open the event contract"
+      zh-CN: "打开事件契约"
+    contract_foot:
+      en: "Contract"
+      zh-CN: "契约"
+    contract_title:
+      en: "Event contract"
+      zh-CN: "事件契约"
+    contract_badge:
+      en: "%{count} SUBSCRIBED"
+      zh-CN: "%{count} 个订阅事件"
+    contract_intro:
+      en: "One subscription carries every kind below. Each has a dotted name (what a manifest writes) and a wire name (what the stream stamps)."
+      zh-CN: "一条订阅承载下列全部事件：每个事件都有点号名（清单里写的）与 wire 名（流上标记的）。"
+    copy_list:
+      en: "Copy list"
+      zh-CN: "复制清单"
+  # The layout inspector (U3-4): the project's template as a file, its split
+  # tree, and the daemon's export/apply. The empty and broken states each say
+  # what the file is and what can be done next.
+  layout_sheet:
+    title:
+      en: "Layout"
+      zh-CN: "布局"
+    synced:
+      en: "in sync"
+      zh-CN: "已同步"
+    absent:
+      en: "no file"
+      zh-CN: "无文件"
+    broken:
+      en: "will not parse"
+      zh-CN: "解析失败"
+    no_project:
+      en: "no focused pane directory"
+      zh-CN: "没有聚焦窗格的目录"
+    apply:
+      en: "Apply"
+      zh-CN: "应用"
+    export:
+      en: "Export"
+      zh-CN: "导出"
+    copy_path:
+      en: "Copy path"
+      zh-CN: "复制路径"
+    diagram:
+      en: "Split preview"
+      zh-CN: "split 预览"
+    empty:
+      en: "No template in this project"
+      zh-CN: "此项目没有模板"
+    no_template:
+      en: "Export the focused tab to create the project's template."
+      zh-CN: "导出聚焦标签，即可创建此项目的模板。"
+    not_idempotent:
+      en: "Apply always creates a new tab; existing panes are not replaced."
+      zh-CN: "应用总是新建标签页；已有窗格不会被替换。"
+    # The first-run sheet has no project to read yet: the field points it at
+    # one, and Apply says why it waits when there is still no workspace.
+    pick:
+      en: "Project directory"
+      zh-CN: "项目目录"
+    placeholder:
+      en: "/path/to/project"
+      zh-CN: "/项目/所在/目录"
+    needs_workspace:
+      en: "Create a workspace to apply this template."
+      zh-CN: "新建工作区后可应用此模板。"
+    walk:
+      en: "The project is found by walking up from the pane's directory; one repository shares one template."
+      zh-CN: "从窗格目录向上查找项目；同一仓库共享一份模板。"
+    foot:
+      en: "Written to .zenix/layout.toml · commit it with the repository"
+      zh-CN: "写入 .zenix/layout.toml · 随仓库提交"
+    pane:
+      en: "pane"
+      zh-CN: "窗格"
+    panes:
+      en: "PANE"
+      zh-CN: "窗格"
+    splits:
+      en: "SPLIT"
+      zh-CN: "分屏"
+    schema:
+      en: "SCHEMA"
+      zh-CN: "SCHEMA"
+    gap:
+      en: "GAP"
+      zh-CN: "间距"
 
 # The project's layout template. The block names the project it found by walking up
 # from the focused pane, and the two lines below are what a save or a restore did.
@@ -1237,6 +2119,12 @@ command:
     manager:
       en: "Plugin Manager…"
       zh-CN: "插件管理器…"
+  # The directory's own id for the two U3-4 destinations: `plugin.link` opens
+  # the pre-link review, `layout.inspect` the project's template.
+  plugin:
+    link:
+      en: "Link a Plugin…"
+      zh-CN: "链接插件…"
   layout:
     save:
       en: "Save Layout"
@@ -1244,6 +2132,9 @@ command:
     restore:
       en: "Restore Layout"
       zh-CN: "恢复布局"
+    inspect:
+      en: "Inspect Layout"
+      zh-CN: "检查布局"
   fleet:
     compare:
       en: "Compare Agent Output"

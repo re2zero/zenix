@@ -13,7 +13,7 @@
 //! Config is persisted to `~/.config/zenix/api-providers.json`.
 //!
 //! Consumers: `src/ai/engine.rs` picks a provider for a session (and reads its
-//! `endpoint_url`) and `src/shell/chat.rs` lists them — both through `load_all`
+//! `endpoint_url`) and `src/ui/settings.rs` lists them — both through `load_all`
 //! and `ApiProviderConfig`. The per-agent sync path, the presets, model fetching
 //! and the connection test had no caller and are gone. The config-generation
 //! methods (`to_opencode_provider`, `to_claude_env`, `to_openai_env`) stay

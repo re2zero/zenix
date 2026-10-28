@@ -67,11 +67,14 @@ architecture, plus system monitoring and plugin support.
 # each ecosystem has its own convention for it:
 #   .deb  usr/share/doc/zenix/copyright   (cargo-deb)
 #   .rpm  %{_docdir}/zenix/LICENSE        (Fedora)
-# The Lilex faces are compiled into the binary, so no font files ship, but
-# OFL-1.1 still requires the license text to travel with the font.
+# zenix embeds no font of its own; the component library compiles Inter,
+# JetBrains Mono and IBM Plex Sans in, so their OFL texts travel beside it.
 %{__install} -Dm644 LICENSE                             %{buildroot}%{_docdir}/zenix/LICENSE
 %{__install} -Dm644 THIRD-PARTY.md                      %{buildroot}%{_docdir}/zenix/THIRD-PARTY.md
-%{__install} -Dm644 assets/fonts/OFL.txt                %{buildroot}%{_docdir}/zenix/Lilex-OFL.txt
+%{__install} -Dm644 licenses/ely/LICENSE                %{buildroot}%{_docdir}/zenix/ely/LICENSE
+%{__install} -Dm644 licenses/ely/Inter-OFL.txt          %{buildroot}%{_docdir}/zenix/ely/Inter-OFL.txt
+%{__install} -Dm644 licenses/ely/JetBrainsMono-OFL.txt  %{buildroot}%{_docdir}/zenix/ely/JetBrainsMono-OFL.txt
+%{__install} -Dm644 licenses/ely/IBMPlexSans-OFL.txt    %{buildroot}%{_docdir}/zenix/ely/IBMPlexSans-OFL.txt
 %{__install} -Dm644 licenses/herdr/LICENSE                       %{buildroot}%{_docdir}/zenix/herdr/LICENSE
 %{__install} -Dm644 vendor/herdr-client/LICENSE-APACHE  %{buildroot}%{_docdir}/zenix/herdr-client/LICENSE-APACHE
 %{__install} -Dm644 vendor/herdr-client/NOTICE.md       %{buildroot}%{_docdir}/zenix/herdr-client/NOTICE.md
@@ -90,7 +93,10 @@ architecture, plus system monitoring and plugin support.
 %dir %{_docdir}/zenix/
 %doc %{_docdir}/zenix/LICENSE
 %doc %{_docdir}/zenix/THIRD-PARTY.md
-%doc %{_docdir}/zenix/Lilex-OFL.txt
+%doc %{_docdir}/zenix/ely/Inter-OFL.txt
+%doc %{_docdir}/zenix/ely/JetBrainsMono-OFL.txt
+%doc %{_docdir}/zenix/ely/IBMPlexSans-OFL.txt
+%doc %{_docdir}/zenix/ely/LICENSE
 %doc %{_docdir}/zenix/herdr/LICENSE
 %doc %{_docdir}/zenix/herdr-client/LICENSE-APACHE
 %doc %{_docdir}/zenix/herdr-client/NOTICE.md

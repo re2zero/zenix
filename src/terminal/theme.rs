@@ -1,30 +1,39 @@
-//! Terminal colors: built-in palettes as packed 24-bit RGB.
+//! Terminal colors: the chrome's sixteen ANSI entries, packed for the grid,
+//! plus the xterm cube and ramp a terminal derives from them.
 //!
-//! Ported from herdr-gpui (Apache-2.0) `crates/herdr-gpui/src/config/theme.rs`.
-//! Theme *file* loading (Ghostty themes, `light:`/`dark:` pairs, `available_themes`)
-//! stays upstream. The chrome's theme families live in `crate::config::theme`;
-//! the entries named after them pair a terminal palette with a family by hand.
+//! The terminal has no palette of its own (PLAN §3, decision 06): the entries
+//! are the component palette's, chosen from the chrome's mode by
+//! [`crate::ui::theme`], and this module only packs them into the 24-bit
+//! values the daemon's cells carry and the painter paints. Entries 16..=255
+//! are the standard xterm cube and grayscale ramp, which no theme names.
 
 /// Colors are packed 24-bit RGB, without an alpha channel.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Theme {
+    /// The ground a cell with no background of its own is drawn on.
     pub background: u32,
+    /// The ink a cell with no foreground of its own is drawn in.
     pub foreground: u32,
+    /// The cursor, and the stronger tint a search's current hit takes.
     pub cursor: u32,
+    /// What bold text is drawn in when it asks for the default foreground;
+    /// `None` keeps the foreground itself.
     pub bold: Option<u32>,
-    pub surface: u32,
-    pub active: u32,
+    /// The tone the grid's own chrome — the scrollbar thumb, a popup's
+    /// outline — is drawn in.
     pub muted: u32,
+    /// The sixteen ANSI entries, then the xterm cube and ramp.
     pub palette: [u32; 256],
 }
 
-impl Default for Theme {
-    fn default() -> Self {
+impl Theme {
+    /// A grid in the chrome's colors: `ansi` is the sixteen entries, in the
+    /// order the daemon's named colors address them; `background`, `ink` and
+    /// `muted` are the tones the grid draws around the cells. The cursor takes
+    /// the ink, as it has since the grid was first drawn.
+    pub(crate) fn from_ansi(ansi: [u32; 16], background: u32, ink: u32, muted: u32) -> Self {
         let mut palette = [0; 256];
-        palette[..16].copy_from_slice(&[
-            0x000000, 0x800000, 0x008000, 0x808000, 0x000080, 0x800080, 0x008080, 0xc0c0c0,
-            0x808080, 0xff0000, 0x00ff00, 0xffff00, 0x0000ff, 0xff00ff, 0x00ffff, 0xffffff,
-        ]);
+        palette[..16].copy_from_slice(&ansi);
         for (index, color) in palette.iter_mut().enumerate().skip(16) {
             let n = index as u32;
             *color = if n < 232 {
@@ -36,13 +45,11 @@ impl Default for Theme {
             };
         }
         Self {
-            background: 0x101419,
-            foreground: 0xd8dee9,
-            cursor: 0xd8dee9,
+            background,
+            foreground: ink,
+            cursor: ink,
             bold: None,
-            surface: 0x1c1c22,
-            active: 0x2b2933,
-            muted: 0x827e91,
+            muted,
             palette,
         }
     }
@@ -58,159 +65,42 @@ pub(crate) fn mix(base: u32, over: u32, percent: u32) -> u32 {
     (channel(16) << 16) | (channel(8) << 8) | channel(0)
 }
 
-impl Theme {
-    pub(crate) const BUILTIN_NAMES: &'static [&'static str] = &[
-        "Default",
-        "Nord",
-        "Dracula",
-        "Catppuccin Mocha",
-        "Catppuccin Latte",
-        "Gruvbox",
-        "Gruvbox Light",
-        "Solarized",
-        "Solarized Light",
-        "Tokyo Night",
-        "Matrix",
-    ];
-
-    fn derive_chrome(&mut self) {
-        let blend = |percent| mix(self.background, self.foreground, percent);
-        self.surface = blend(5);
-        self.active = blend(12);
-        self.muted = blend(55);
-    }
-
-    pub(crate) fn builtin(name: &str) -> Option<Self> {
-        // Small hand-authored palettes; no external theme assets are bundled.
-        let (background, foreground, ansi) = match name {
-            "Default" => return Some(Self::default()),
-            "Nord" => (
-                0x2e3440,
-                0xd8dee9,
-                [
-                    0x3b4252, 0xbf616a, 0xa3be8c, 0xebcb8b, 0x81a1c1, 0xb48ead, 0x88c0d0, 0xe5e9f0,
-                    0x4c566a, 0xbf616a, 0xa3be8c, 0xebcb8b, 0x81a1c1, 0xb48ead, 0x8fbcbb, 0xeceff4,
-                ],
-            ),
-            "Dracula" => (
-                0x282a36,
-                0xf8f8f2,
-                [
-                    0x21222c, 0xff5555, 0x50fa7b, 0xf1fa8c, 0xbd93f9, 0xff79c6, 0x8be9fd, 0xf8f8f2,
-                    0x6272a4, 0xff6e6e, 0x69ff94, 0xffffa5, 0xd6acff, 0xff92df, 0xa4ffff, 0xffffff,
-                ],
-            ),
-            "Catppuccin Mocha" => (
-                0x1e1e2e,
-                0xcdd6f4,
-                [
-                    0x45475a, 0xf38ba8, 0xa6e3a1, 0xf9e2af, 0x89b4fa, 0xf5c2e7, 0x94e2d5, 0xbac2de,
-                    0x585b70, 0xf38ba8, 0xa6e3a1, 0xf9e2af, 0x89b4fa, 0xf5c2e7, 0x94e2d5, 0xa6adc8,
-                ],
-            ),
-            "Catppuccin Latte" => (
-                0xeff1f5,
-                0x4c4f69,
-                [
-                    0x5c5f77, 0xd20f39, 0x40a02b, 0xdf8e1d, 0x1e66f5, 0xea76cb, 0x179299, 0xacb0be,
-                    0x6c6f85, 0xd20f39, 0x40a02b, 0xdf8e1d, 0x1e66f5, 0xea76cb, 0x179299, 0xbcc0cc,
-                ],
-            ),
-            "Gruvbox" => (
-                0x282828,
-                0xebdbb2,
-                [
-                    0x3c3836, 0xcc241d, 0x98971a, 0xd79921, 0x458588, 0xb16286, 0x689d6a, 0xa89984,
-                    0x928374, 0xfb4934, 0xb8bb26, 0xfabd2f, 0x83a598, 0xd3869b, 0x8ec07c, 0xfbf1c7,
-                ],
-            ),
-            "Gruvbox Light" => (
-                0xfbf1c7,
-                0x3c3836,
-                [
-                    0x3c3836, 0xcc241d, 0x98971a, 0xd79921, 0x458588, 0xb16286, 0x689d6a, 0xa89984,
-                    0x928374, 0x9d0006, 0x79740e, 0xb57614, 0x076678, 0x8f3f71, 0x427b58, 0xd5c4a1,
-                ],
-            ),
-            // Solarized runs one accent set over both appearances; only the
-            // background and foreground swap.
-            "Solarized" => (
-                0x002b36,
-                0x839496,
-                [
-                    0x073642, 0xdc322f, 0x859900, 0xb58900, 0x268bd2, 0xd33682, 0x2aa198, 0xeee8d5,
-                    0x002b36, 0xcb4b16, 0x586e75, 0x657b83, 0x839496, 0x6c71c4, 0x93a1a1, 0xfdf6e3,
-                ],
-            ),
-            "Solarized Light" => (
-                0xfdf6e3,
-                0x657b83,
-                [
-                    0x073642, 0xdc322f, 0x859900, 0xb58900, 0x268bd2, 0xd33682, 0x2aa198, 0xeee8d5,
-                    0x002b36, 0xcb4b16, 0x586e75, 0x657b83, 0x839496, 0x6c71c4, 0x93a1a1, 0xfdf6e3,
-                ],
-            ),
-            "Tokyo Night" => (
-                0x1a1b26,
-                0xc0caf5,
-                [
-                    0x15161e, 0xf7768e, 0x9ece6a, 0xe0af68, 0x7aa2f7, 0xbb9af7, 0x7dcfff, 0xa9b1d6,
-                    0x414868, 0xf7768e, 0x9ece6a, 0xe0af68, 0x7aa2f7, 0xbb9af7, 0x7dcfff, 0xc0caf5,
-                ],
-            ),
-            // The chrome's Matrix set in terminal form: a green ramp all the
-            // way through, matching the family's fiction.
-            "Matrix" => (
-                0x020d02,
-                0x88ff88,
-                [
-                    0x113311, 0x00b32d, 0x00ff41, 0x7dff9a, 0x00cc41, 0x00ff99, 0x99ffcc, 0x88ff88,
-                    0x1a4d1a, 0x66ff66, 0xaaffaa, 0xd2ffd2, 0x4dff7d, 0x66ffbf, 0xccffee, 0xccffcc,
-                ],
-            ),
-            _ => return None,
-        };
-        let mut theme = Self {
-            background,
-            foreground,
-            cursor: foreground,
-            ..Self::default()
-        };
-        theme.palette[..16].copy_from_slice(&ansi);
-        theme.derive_chrome();
-        Some(theme)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A name the config's Choice field offers must resolve, and a light
-    /// palette must actually be light — the mode picker hands it the light
-    /// mode's panes, and a dark canvas there would break the pair. Latte is
-    /// the one light entry the set's naming does not mark.
+    /// The light set, as `ui::theme` packs it — the order the daemon's named
+    /// colors address: black, red, green, yellow, blue, magenta, cyan, white,
+    /// then the eight bright ones.
+    const LIGHT: [u32; 16] = [
+        0x181613, 0xa34942, 0x287c42, 0x8c5f00, 0x346aac, 0x875093, 0x007c84, 0xacaaa8, 0x605d5a,
+        0xbd6158, 0x439458, 0xa57710, 0x4c82c6, 0xa067ac, 0x00959c, 0xcccac8,
+    ];
+
     #[test]
-    fn every_builtin_name_resolves_and_light_means_light() {
-        let light_names = ["Gruvbox Light", "Solarized Light", "Catppuccin Latte"];
-        for name in Theme::BUILTIN_NAMES {
-            let theme = Theme::builtin(name).unwrap_or_else(|| panic!("{name} must resolve"));
-            let channel = |shift: u32| (theme.background >> shift) & 255;
-            let light = channel(16) + channel(8) + channel(0);
-            let expected_light = light_names.contains(name);
-            assert_eq!(
-                light > 384,
-                expected_light,
-                "{name}: background 0x{:06x} {}",
-                theme.background,
-                if expected_light {
-                    "is not light"
-                } else {
-                    "is not dark"
-                }
-            );
-            assert_ne!(theme.surface, theme.background);
-            assert_ne!(theme.muted, theme.foreground);
-        }
+    fn the_sixteen_entries_are_taken_in_order() {
+        let theme = Theme::from_ansi(LIGHT, 0xfcfaf7, 0x181613, 0x696764);
+        assert_eq!(theme.palette[..16], LIGHT);
+        assert_eq!(theme.background, 0xfcfaf7);
+        assert_eq!(theme.foreground, 0x181613);
+        assert_eq!(theme.cursor, theme.foreground);
+        assert_eq!(theme.bold, None);
+        assert_eq!(theme.muted, 0x696764);
+    }
+
+    /// 16..=255 is the xterm cube and ramp: each channel of the six-by-six-by-
+    /// six cube steps 55 + 40n, and the ramp adds 8 + 10n of gray. Every
+    /// terminal derives these from the first sixteen, so they are not a
+    /// theme's to name.
+    #[test]
+    fn the_rest_of_the_palette_is_the_xterm_cube_and_ramp() {
+        let theme = Theme::from_ansi([0; 16], 0, 0, 0);
+        assert_eq!(theme.palette[16], 0x000000);
+        assert_eq!(theme.palette[17], 0x00005f);
+        assert_eq!(theme.palette[21], 0x0000ff);
+        assert_eq!(theme.palette[196], 0xff0000);
+        assert_eq!(theme.palette[231], 0xffffff);
+        assert_eq!(theme.palette[232], 0x080808);
+        assert_eq!(theme.palette[255], 0xeeeeee);
     }
 }
