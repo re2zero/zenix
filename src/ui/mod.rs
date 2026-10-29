@@ -118,6 +118,7 @@ mod keymap;
 mod layout_sheet;
 mod manager;
 mod palette;
+mod review;
 mod settings;
 mod shell;
 mod sidebar;

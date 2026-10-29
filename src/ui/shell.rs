@@ -33,7 +33,7 @@ use herdr_client::ConnectTarget;
 
 use super::{
     aside, chat, chrome, commands, confirm, empty, fleet, inspector, keymap, layout_sheet, manager,
-    palette, settings, sidebar, theme, toast, trust, worktree,
+    palette, review, settings, sidebar, theme, toast, trust, worktree,
 };
 use crate::api_provider::ApiFormat;
 use crate::config;
@@ -45,6 +45,7 @@ use crate::layout::LayoutState;
 use crate::plugins::actions::Catalog;
 use crate::plugins::host::{PluginHost, PluginState};
 use crate::plugins::model::Availability;
+use crate::review::{DiffState, ReviewHost, ReviewState};
 use crate::terminal::view::TerminalView;
 use crate::worktrees::{WorktreeHost, WorktreeState, WorktreeTarget};
 
@@ -130,6 +131,12 @@ pub struct Root {
     trust: trust::State,
     inspector: inspector::State,
     layout_sheet: layout_sheet::State,
+    /// The review sheet: whether it is open, and the file the right column
+    /// shows. What it draws comes from the two caches below it.
+    review: review::State,
+    review_state: ReviewState,
+    review_diff: DiffState,
+    review_host: ReviewHost,
     /// The two drawers hold the keyboard through these handles while they are
     /// open; the modal surfaces take their own. Focusing and handing back are
     /// the shell's because it owns the grid's handle.
@@ -189,6 +196,7 @@ pub struct Root {
     _worktree_pulses: Task<()>,
     _event_pulses: Task<()>,
     _fleet_pulses: Task<()>,
+    _review_pulses: Task<()>,
     /// A config write can change the mode, locale or metrics the chrome reads.
     _config: Subscription,
     /// A system appearance change has to move a `mode: system` chrome.
@@ -239,6 +247,8 @@ impl Root {
         let event_pulses = Self::follow(cx, event_pulses, Self::read_events);
         let (fleet_stream, fleet_pulses) = crate::fleet::Stream::start();
         let fleet_pulses = Self::follow(cx, fleet_pulses, Self::read_fleet);
+        let (review_host, review_pulses) = ReviewHost::start();
+        let review_pulses = Self::follow(cx, review_pulses, Self::read_review);
 
         // The pane grid shares this connection; it owns no reader of its own.
         // It starts dressed for the config's mode and metrics, and the keyboard
@@ -344,6 +354,10 @@ impl Root {
             trust: trust::State::default(),
             inspector: inspector::State::default(),
             layout_sheet: layout_sheet::State::default(),
+            review: review::State::default(),
+            review_state: ReviewState::default(),
+            review_diff: DiffState::default(),
+            review_host,
             manager_focus,
             inspector_focus,
             confirm: None,
@@ -366,6 +380,7 @@ impl Root {
             _worktree_pulses: worktree_pulses,
             _event_pulses: event_pulses,
             _fleet_pulses: fleet_pulses,
+            _review_pulses: review_pulses,
             _config: config,
             _appearance: appearance,
             _fleet_read: None,
@@ -449,6 +464,64 @@ impl Root {
 
     fn read_fleet(&mut self, cx: &mut Context<Self>) {
         self.fleet = self.fleet_stream.state();
+        cx.notify();
+    }
+
+    fn read_review(&mut self, cx: &mut Context<Self>) {
+        self.review_state = self.review_host.state();
+        self.review_diff = self.review_host.diff();
+        cx.notify();
+    }
+
+    /// The repository the focused workspace sits in, as the worktree host last
+    /// reported it. Empty until a `worktree.list` has answered.
+    fn review_root(&self) -> Option<String> {
+        self.worktrees
+            .source
+            .as_ref()
+            .map(|source| source.repo_root.clone())
+            .filter(|root| !root.is_empty())
+    }
+
+    /// The focused repository's changes. With no repository to read the sheet
+    /// still opens and says so, rather than refusing silently.
+    pub(crate) fn open_review(&mut self, cx: &mut Context<Self>) {
+        match self.review_root() {
+            Some(root) => {
+                self.review.open(None);
+                self.review_host.refresh(root);
+            }
+            None => self.review.open(Some(t("shell.review.no_repo"))),
+        }
+        cx.notify();
+    }
+
+    pub(crate) fn close_review(&mut self, cx: &mut Context<Self>) {
+        self.review.close();
+        cx.notify();
+    }
+
+    pub(crate) fn refresh_review(&mut self, cx: &mut Context<Self>) {
+        if let Some(root) = self.review_root() {
+            self.review_host.refresh(root);
+        }
+        cx.notify();
+    }
+
+    /// Pick a file: the diff is read off the UI thread and lands on the
+    /// generation this select advanced to.
+    pub(crate) fn select_review_file(
+        &mut self,
+        path: String,
+        staged: bool,
+        untracked: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let generation = self.review.select(path.clone(), staged, untracked);
+        if let Some(root) = self.review_root() {
+            self.review_host
+                .read_diff(root, path, staged, untracked, generation);
+        }
         cx.notify();
     }
 
@@ -680,6 +753,7 @@ impl Root {
             commands::Command::ToggleAside => self.toggle_aside(window, cx),
             commands::Command::LinkPlugin => self.open_trust_at(None, window, cx),
             commands::Command::InspectLayout => self.open_layout(window, cx),
+            commands::Command::OpenReview => self.open_review(cx),
             command => {
                 if let Some((method, params)) = self
                     .live
@@ -1661,6 +1735,7 @@ impl Root {
             || self.palette.open
             || self.trust.is_open()
             || self.layout_sheet.is_open()
+            || self.review.is_open()
             || self.inspector.is_open()
             || self.inspector.contract_open()
             || self.worktree_form.is_open()
@@ -2029,6 +2104,17 @@ impl Render for Root {
             &self.layout_state,
             workspace.as_deref(),
             tab.as_deref(),
+            root,
+            window,
+            cx,
+        ) {
+            Some(overlay) => frame.child(overlay),
+            None => frame,
+        };
+        let frame = match review::overlay(
+            &self.review,
+            &self.review_state,
+            &self.review_diff,
             root,
             window,
             cx,

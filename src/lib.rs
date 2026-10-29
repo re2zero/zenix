@@ -46,6 +46,7 @@ pub mod mcp;
 pub mod platform;
 pub mod plugins;
 pub mod provider;
+pub mod review;
 pub mod single_instance;
 pub mod sys;
 pub mod terminal;

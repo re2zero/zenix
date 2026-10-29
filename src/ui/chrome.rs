@@ -577,7 +577,7 @@ pub(crate) fn main_area(main: Main<'_>, cx: &App) -> AnyElement {
     }
     column
         .child(grid)
-        .child(status_bar(live, keymap, prefix_armed, cx))
+        .child(status_bar(live, keymap, prefix_armed, root, cx))
         .into_any_element()
 }
 
@@ -663,6 +663,7 @@ pub(crate) fn status_bar(
     live: &LiveState,
     keymap: &Keymap,
     prefix_armed: bool,
+    root: &Entity<Root>,
     cx: &App,
 ) -> AnyElement {
     let theme = cx.theme();
@@ -702,10 +703,17 @@ pub(crate) fn status_bar(
     }
 
     if let Some(branch) = focused_workspace(live).and_then(|workspace| workspace.branch.clone()) {
+        // The branch is also the way into the working tree it names: a press
+        // opens the review sheet on the same repository (U7).
+        let open = root.clone();
         bar = bar.right(
             StatusBarItem::new("status-branch")
                 .icon(IconName::GitBranch)
-                .label(branch),
+                .label(branch)
+                .tooltip(t("command.view.review"))
+                .on_click(move |_, _, cx| {
+                    open.update(cx, |root, cx| root.open_review(cx));
+                }),
         );
     }
 
