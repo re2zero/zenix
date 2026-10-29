@@ -38,7 +38,10 @@
 //! model's words are the full column, and a tool call is one flat step row —
 //! no avatar, no name, no role label. The library still draws the frame and the
 //! text: `ChatContainer`, `MessageList`, `StreamingMarkdown`, `StreamingText`,
-//! `SuggestionChips`, `ThinkingIndicator`, `step_mark` and `InlineEdit`.
+//! `SuggestionChips`, `ThinkingIndicator` and `step_mark`. The history rows'
+//! rename field is the library's `Editing` driven from a pencil press, not its
+//! click-to-edit `InlineEdit`: a row press must stay the way into a
+//! conversation.
 //!
 //! The composer is the one place where the library's own composite was set
 //! aside: `PromptInput` draws its frame and its send button, and the design
@@ -66,8 +69,8 @@ use ely_chat::{
 };
 use ely_core::buttons::{Button, ButtonVariant, IconButton, SegmentedControl};
 use ely_core::forms::{
-    Choice, Enter, InlineEdit, InputEvent, OnValue, Pick, Suggestions, TextInput, active_trigger,
-    float, replace_trigger,
+    Choice, Editing, Enter, Input, InputEvent, OnValue, Pick, Suggestions, TextInput,
+    active_trigger, float, replace_trigger,
 };
 use ely_core::primitives::{Disclosure, Icon, IconName, Tooltip};
 use ely_core::theme::{ActiveTheme, ControlSize, IconSize, Radius, TextSize};
@@ -688,6 +691,7 @@ impl ChatView {
             sessions: read_sessions(),
             error: None,
             confirm: None,
+            renaming: None,
         });
         cx.notify();
     }
@@ -757,8 +761,60 @@ impl ChatView {
         self.provider = Some(provider);
     }
 
-    /// The store's title for a row, written through `InlineEdit`.
+    /// Start editing a row's title: the library's `Editing` opens a field over
+    /// the current one, all of it selected and focused. A row press stays the
+    /// way into the conversation — renaming is the pencil's job, not the
+    /// title's, so a single click never lands the reader in an editor.
+    fn begin_rename(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(history) = self.history.as_mut() else {
+            return;
+        };
+        let Some(title) = history
+            .sessions
+            .iter()
+            .find(|session| session.id == id)
+            .map(|session| session.title.clone())
+        else {
+            return;
+        };
+        let editing = cx.new(|_| Editing::default());
+        let weak = cx.entity().downgrade();
+        let session_id = id.to_owned();
+        editing.update(cx, |owner, _| {
+            owner.on_commit = Some(Rc::new(move |text: &SharedString, _, cx| {
+                if let Some(panel) = weak.upgrade() {
+                    let session_id = session_id.clone();
+                    let title = text.to_string();
+                    panel.update(cx, |panel, cx| panel.rename_session(&session_id, title, cx));
+                }
+            }));
+        });
+        Editing::begin(&editing, title, window, cx);
+        history.renaming = Some((id.to_owned(), editing));
+        cx.notify();
+    }
+
+    /// The edit's Escape: the field closes and the title stays as it was.
+    fn cancel_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some((_, editing)) = self
+            .history
+            .as_mut()
+            .and_then(|history| history.renaming.take())
+        else {
+            return;
+        };
+        editing.update(cx, |editing, cx| {
+            editing.finish(true, window, cx);
+            editing.give_back(window, cx);
+        });
+        cx.notify();
+    }
+
+    /// The store's title for a row, kept through the library's `Editing`.
     fn rename_session(&mut self, id: &str, title: String, cx: &mut Context<Self>) {
+        if let Some(history) = self.history.as_mut() {
+            history.renaming = None;
+        }
         let title = title.trim().to_owned();
         if title.is_empty() {
             return;
@@ -1224,6 +1280,10 @@ struct History {
     /// The row whose delete button has been pressed once and is waiting for
     /// the confirm bar's answer.
     confirm: Option<String>,
+    /// The row whose title is being edited, with the library's `Editing`
+    /// running its field. A press on the pencil opens it; Enter or a blur
+    /// keeps, Escape reverts.
+    renaming: Option<(String, Entity<Editing>)>,
 }
 
 impl Render for ChatView {
@@ -1350,7 +1410,8 @@ impl ChatView {
     }
 
     /// The session history: the store's rows, newest first. A row loads its
-    /// session; its title edits in place, its bin asks once before it deletes.
+    /// session; its pencil renames in place, its bin asks once before it
+    /// deletes.
     fn history_view(&self, _window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         // The rows below take the context mutably, so the tokens this frame
         // draws with are copied out first: the theme itself is borrowed, and a
@@ -3458,14 +3519,13 @@ fn history_row(
             }
         }
     };
-    let rename = {
+    let begin = {
         let weak = weak.clone();
         let session_id = session.id.clone();
-        move |title: &SharedString, _window: &mut Window, cx: &mut App| {
+        move |_: &gpui::ClickEvent, window: &mut Window, cx: &mut App| {
+            cx.stop_propagation();
             if let Some(panel) = weak.upgrade() {
-                let session_id = session_id.clone();
-                let title = title.to_string();
-                panel.update(cx, |panel, cx| panel.rename_session(&session_id, title, cx));
+                panel.update(cx, |panel, cx| panel.begin_rename(&session_id, window, cx));
             }
         }
     };
@@ -3481,6 +3541,44 @@ fn history_row(
         }
     };
     let stamp = timestamp_of(&session.updated_at).map(|at| relative_label(at, cx));
+    // While this row's title is being edited, the cell carries the library's
+    // field instead of the text.
+    let editing = chat
+        .history
+        .as_ref()
+        .and_then(|history| history.renaming.as_ref())
+        .filter(|(renaming, _)| renaming == &session.id)
+        .map(|(_, editing)| editing.clone());
+    let title_cell: AnyElement = if let Some(editing) = editing {
+        let escape = {
+            let weak = weak.clone();
+            move |event: &gpui::KeyDownEvent, window: &mut Window, cx: &mut App| {
+                if event.keystroke.key == "escape" {
+                    cx.stop_propagation();
+                    if let Some(panel) = weak.upgrade() {
+                        panel.update(cx, |panel, cx| panel.cancel_rename(window, cx));
+                    }
+                }
+            }
+        };
+        div()
+            .id((id.clone(), "edit-cell"))
+            .flex_1()
+            .min_w_0()
+            // The open field must not let a press reach the row: the row's
+            // select would load the session and unmount the field under the
+            // caret.
+            .on_click(|_, _, cx| cx.stop_propagation())
+            .on_key_down(escape)
+            .children(editing.read(cx).field().map(|field| Input::new(&field)))
+            .into_any_element()
+    } else {
+        div()
+            .flex_1()
+            .min_w_0()
+            .child(Ellipsis::new(SharedString::from(session.title.clone())))
+            .into_any_element()
+    };
     div()
         .id(id.clone())
         .h(px(row_height))
@@ -3501,25 +3599,20 @@ fn history_row(
                 .rounded_full()
                 .when(loaded, |bar| bar.bg(colors.accent)),
         )
-        .child(
-            // A press on the title starts the edit, so it must not also reach
-            // the row: the row's select would load the session and unmount the
-            // list under the field that just took focus.
-            div()
-                .id((id.clone(), "title-cell"))
-                .flex_1()
-                .min_w_0()
-                .on_click(|_, _, cx| cx.stop_propagation())
-                .child(
-                    InlineEdit::new((id.clone(), "title"), session.title.clone()).on_commit(rename),
-                ),
-        )
+        .child(title_cell)
         .child(
             div()
                 .flex_none()
                 .text_size(theme.text_size(TextSize::Xs))
                 .text_color(colors.fg_subtle)
                 .children(stamp),
+        )
+        .child(
+            IconButton::new((id.clone(), "rename"), IconName::Pencil)
+                .variant(ButtonVariant::Ghost)
+                .size(ControlSize::Sm)
+                .tooltip(t("ai.chat.rename"))
+                .on_click(begin),
         )
         .child(
             IconButton::new((id.clone(), "delete"), IconName::Trash2)
