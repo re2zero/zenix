@@ -1858,6 +1858,7 @@ mod tests {
             thinking_level: crate::api_provider::ThinkingLevel::Medium,
             url_suffix: "/v1/chat/completions".into(),
             enabled_agents: Vec::new(),
+            models: Vec::new(),
         }
     }
 

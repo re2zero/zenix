@@ -19,7 +19,7 @@
 //! |---|---|---|
 //! | appearance | the chrome's four layers, language, density | `appearance.*` |
 //! | terminal | the grid's metrics and cursor, whether it follows a light chrome | `terminal.*`, `appearance.terminal_follows_mode` |
-//! | ai | the orchestrator's provider and reasoning effort | `api-providers.json` (the chat's own file, not this client's config) |
+//! | ai (模型) | the chat's providers, their models, the default model, the reasoning effort | `api-providers.json` (the chat's own file, not this client's config) |
 //! | keys | the command directory | nothing: the rows are read off [`commands::COMMANDS`] and the keymap |
 //! | plugins | the daemon's plugin registry | nothing: host facts and the registry summary |
 //! | mcp | the tools this window offers an agent | nothing: the socket, the tool list, the reverse bridge |
@@ -59,7 +59,7 @@ use std::sync::OnceLock;
 
 use ely_core::{
     buttons::{Button, ButtonVariant, IconButton, SegmentedControl},
-    forms::{Choice, Select, Stepper, Switch},
+    forms::{Choice, Input, Select, Stepper, Switch, TextInput},
     layout::ScrollArea,
     primitives::{Backdrop, FocusRing, FocusScope, Icon, IconName, give_back, take_focus},
     theme::{ActiveTheme, ControlSize, Elevation, IconSize, Mode, Radius, TextSize},
@@ -69,15 +69,15 @@ use ely_settings::{
     AccentColorPicker, Appearance as PickedAppearance, SettingsRow, SettingsSection, ThemeSelector,
 };
 use gpui::{
-    AnyElement, App, Entity, Hsla, IntoElement, ParentElement, Role, SharedString, Styled, Window,
-    div, prelude::*, px,
+    AnyElement, App, ElementId, Entity, Hsla, IntoElement, ParentElement, Role, SharedString,
+    Styled, Window, div, prelude::*, px,
 };
 
 use super::commands;
 use super::keymap::Keymap;
 use super::shell::Root;
 use super::theme::{Accent, CodeTheme, ThemeSettings, tone_palette};
-use crate::api_provider::{self, ApiProviderConfig, ThinkingLevel};
+use crate::api_provider::{self, ApiFormat, ApiProviderConfig, ModelConfig, ThinkingLevel};
 use crate::config;
 use crate::herdr::LiveState;
 use crate::i18n::t;
@@ -189,6 +189,106 @@ pub(crate) struct State {
     /// The last provider write that failed, shown on the AI page until one
     /// succeeds. `save_all` is a file operation with a real failure mode.
     error: Option<String>,
+    /// The provider form on the AI page, when one is open; at most one of the
+    /// two forms is.
+    provider_form: Option<ProviderForm>,
+    /// The model form inside the shown provider.
+    model_form: Option<ModelForm>,
+    /// The provider whose × was pressed once; the row asks before it deletes.
+    provider_delete: Option<String>,
+    /// The model whose × was pressed once.
+    model_delete: Option<String>,
+}
+
+/// The provider form's fields: the row it replaces (`None` adds one), and the
+/// two picker values the inputs do not carry.
+pub(crate) struct ProviderForm {
+    index: Option<usize>,
+    name: Entity<TextInput>,
+    base_url: Entity<TextInput>,
+    api_key: Entity<TextInput>,
+    format: ApiFormat,
+    suffix: String,
+}
+
+impl ProviderForm {
+    pub(crate) fn new(
+        index: Option<usize>,
+        name: Entity<TextInput>,
+        base_url: Entity<TextInput>,
+        api_key: Entity<TextInput>,
+        format: ApiFormat,
+        suffix: String,
+    ) -> Self {
+        Self {
+            index,
+            name,
+            base_url,
+            api_key,
+            format,
+            suffix,
+        }
+    }
+
+    /// The field that takes the caret when the form opens.
+    pub(crate) fn first(&self) -> Entity<TextInput> {
+        self.name.clone()
+    }
+}
+
+/// The model form inside one provider. `provider` is the provider's name, so
+/// a form opened for one provider can never land on another.
+pub(crate) struct ModelForm {
+    provider: String,
+    index: Option<usize>,
+    id: Entity<TextInput>,
+    label: Entity<TextInput>,
+    vision: bool,
+}
+
+impl ModelForm {
+    pub(crate) fn new(
+        provider: String,
+        index: Option<usize>,
+        id: Entity<TextInput>,
+        label: Entity<TextInput>,
+        vision: bool,
+    ) -> Self {
+        Self {
+            provider,
+            index,
+            id,
+            label,
+            vision,
+        }
+    }
+
+    /// The field that takes the caret when the form opens.
+    pub(crate) fn first(&self) -> Entity<TextInput> {
+        self.id.clone()
+    }
+}
+
+/// A form field holding `value`. `masked` hides a key's characters on screen
+/// and keeps them off the clipboard.
+pub(crate) fn text_field(
+    window: &mut Window,
+    cx: &mut App,
+    value: &str,
+    placeholder: String,
+    masked: bool,
+) -> Entity<TextInput> {
+    let input = cx.new(|cx| {
+        let mut input = TextInput::new(window, cx).placeholder(placeholder);
+        if masked {
+            input = input.masked();
+        }
+        input
+    });
+    if !value.is_empty() {
+        input.update(cx, |input, cx| input.set_text(value, cx));
+    }
+    input
 }
 
 impl State {
@@ -197,20 +297,36 @@ impl State {
     pub(crate) fn reload(&mut self) {
         self.providers = api_provider::load_all();
         self.error = None;
+        self.provider_form = None;
+        self.model_form = None;
+        self.provider_delete = None;
+        self.model_delete = None;
     }
 
-    /// The provider the AI page shows: the one picked, else the first usable
-    /// one (the rule the chat panel applies), else the first configured.
+    /// The row the AI page shows a model list for: the one picked, else the
+    /// first usable one (the rule the chat panel applies), else the first
+    /// configured.
+    pub(crate) fn selected_index(&self) -> Option<usize> {
+        if let Some(index) = self.provider.as_deref().and_then(|name| {
+            self.providers
+                .iter()
+                .position(|provider| provider.name == name)
+        }) {
+            return Some(index);
+        }
+        self.providers
+            .iter()
+            .position(|provider| !provider.api_key.trim().is_empty())
+            .or_else(|| (!self.providers.is_empty()).then_some(0))
+    }
+
     pub(crate) fn selected(&self) -> Option<&ApiProviderConfig> {
-        self.provider
-            .as_deref()
-            .and_then(|name| self.providers.iter().find(|provider| provider.name == name))
-            .or_else(|| {
-                self.providers
-                    .iter()
-                    .find(|provider| !provider.api_key.trim().is_empty())
-            })
-            .or_else(|| self.providers.first())
+        self.selected_index().map(|index| &self.providers[index])
+    }
+
+    /// The provider at a row, for the form the shell builds from it.
+    pub(crate) fn provider_at(&self, index: usize) -> Option<&ApiProviderConfig> {
+        self.providers.get(index)
     }
 
     /// Show `name` on the AI page. A name the file no longer carries falls
@@ -219,6 +335,8 @@ impl State {
         if self.providers.iter().any(|provider| provider.name == name) {
             self.provider = Some(name.to_owned());
             self.error = None;
+            self.model_form = None;
+            self.model_delete = None;
         }
     }
 
@@ -236,15 +354,299 @@ impl State {
             return;
         };
         provider.thinking_level = level;
+        self.persist();
+    }
+
+    /// Write the list out. A failure puts the file's own content back — the
+    /// file is the truth — and keeps the sentence the write refused with.
+    fn persist(&mut self) -> bool {
         match api_provider::save_all(&self.providers) {
-            Ok(()) => self.error = None,
+            Ok(()) => {
+                self.error = None;
+                true
+            }
             Err(error) => {
-                // The file is the truth: show what it now holds, not what the
-                // press tried to write.
                 self.error = Some(error);
                 self.providers = api_provider::load_all();
+                self.provider_form = None;
+                self.model_form = None;
+                false
             }
         }
+    }
+
+    /// Open the provider form; the model form yields to it.
+    pub(crate) fn begin_provider(&mut self, form: ProviderForm) {
+        self.provider_form = Some(form);
+        self.provider_delete = None;
+        self.model_form = None;
+        self.model_delete = None;
+        self.error = None;
+    }
+
+    pub(crate) fn cancel_provider(&mut self) {
+        self.provider_form = None;
+        self.error = None;
+    }
+
+    /// The form's format picker: a base URL still holding the previous
+    /// format's default follows the new one, and a suffix the new format does
+    /// not offer becomes its default.
+    pub(crate) fn set_form_format(&mut self, token: &str, cx: &mut App) {
+        let Some(format) = ApiFormat::from_token(token) else {
+            return;
+        };
+        let Some(form) = self.provider_form.as_mut() else {
+            return;
+        };
+        if form.format == format {
+            return;
+        }
+        let typed = form.base_url.read(cx).text().trim().to_owned();
+        if typed.is_empty() || typed == form.format.default_base_url() {
+            let next = format.default_base_url().to_owned();
+            form.base_url
+                .update(cx, |input, cx| input.set_text(next, cx));
+        }
+        if !format.suffix_options().contains(&form.suffix.as_str()) {
+            form.suffix = format.default_suffix().to_owned();
+        }
+        form.format = format;
+    }
+
+    pub(crate) fn set_form_suffix(&mut self, suffix: &str) {
+        if let Some(form) = self.provider_form.as_mut() {
+            form.suffix = suffix.to_owned();
+        }
+    }
+
+    /// Write the open provider form into the list. An empty or duplicated
+    /// name, and an empty base URL, stay in the form with a sentence instead
+    /// of reaching the file.
+    pub(crate) fn save_provider(&mut self, cx: &App) -> bool {
+        let Some(form) = self.provider_form.as_ref() else {
+            return false;
+        };
+        let name = form.name.read(cx).text().trim().to_owned();
+        let base_url = form.base_url.read(cx).text().trim().to_owned();
+        let api_key = form.api_key.read(cx).text().trim().to_owned();
+        let (format, suffix, index) = (form.format, form.suffix.clone(), form.index);
+        if name.is_empty() {
+            self.error = Some(t("settings.ai.name_required"));
+            return false;
+        }
+        if self
+            .providers
+            .iter()
+            .enumerate()
+            .any(|(row, provider)| Some(row) != index && provider.name == name)
+        {
+            self.error =
+                Some(rust_i18n::t!("settings.ai.name_taken", name = name.as_str()).to_string());
+            return false;
+        }
+        if base_url.is_empty() {
+            self.error = Some(t("settings.ai.url_required"));
+            return false;
+        }
+        match index.filter(|index| *index < self.providers.len()) {
+            Some(index) => {
+                let old = self.providers[index].name.clone();
+                let provider = &mut self.providers[index];
+                provider.name = name.clone();
+                provider.format = format;
+                provider.base_url = base_url;
+                provider.api_key = api_key;
+                provider.url_suffix = suffix;
+                provider.sync_models();
+                if self.provider.as_deref() == Some(old.as_str()) {
+                    self.provider = Some(name);
+                }
+            }
+            None => {
+                let mut provider = ApiProviderConfig {
+                    name: name.clone(),
+                    format,
+                    base_url,
+                    api_key,
+                    model: String::new(),
+                    thinking_level: ThinkingLevel::default(),
+                    url_suffix: suffix,
+                    enabled_agents: Vec::new(),
+                    models: Vec::new(),
+                };
+                provider.sync_models();
+                self.providers.push(provider);
+                self.provider = Some(name);
+            }
+        }
+        if !self.persist() {
+            return false;
+        }
+        self.provider_form = None;
+        true
+    }
+
+    pub(crate) fn arm_provider_delete(&mut self, name: &str) {
+        self.provider_delete = Some(name.to_owned());
+        self.provider_form = None;
+        self.error = None;
+    }
+
+    pub(crate) fn cancel_provider_delete(&mut self) {
+        self.provider_delete = None;
+    }
+
+    pub(crate) fn confirm_provider_delete(&mut self) -> bool {
+        let Some(name) = self.provider_delete.take() else {
+            return false;
+        };
+        let Some(index) = self
+            .providers
+            .iter()
+            .position(|provider| provider.name == name)
+        else {
+            return false;
+        };
+        self.providers.remove(index);
+        if self.provider.as_deref() == Some(name.as_str()) {
+            self.provider = None;
+        }
+        self.model_form = None;
+        self.model_delete = None;
+        self.persist()
+    }
+
+    /// Open the model form inside the shown provider; the provider form
+    /// yields to it.
+    pub(crate) fn begin_model(&mut self, form: ModelForm) {
+        self.model_form = Some(form);
+        self.model_delete = None;
+        self.provider_form = None;
+        self.provider_delete = None;
+        self.error = None;
+    }
+
+    pub(crate) fn cancel_model(&mut self) {
+        self.model_form = None;
+        self.error = None;
+    }
+
+    pub(crate) fn set_model_vision(&mut self, on: bool) {
+        if let Some(form) = self.model_form.as_mut() {
+            form.vision = on;
+        }
+    }
+
+    /// Write the open model form into its provider. The id must be there and
+    /// unique within the provider; renaming the selected model moves the
+    /// selection with it.
+    pub(crate) fn save_model(&mut self, cx: &App) -> bool {
+        let Some(form) = self.model_form.as_ref() else {
+            return false;
+        };
+        let id = form.id.read(cx).text().trim().to_owned();
+        let label = form.label.read(cx).text().trim().to_owned();
+        let (vision, index, provider) = (form.vision, form.index, form.provider.clone());
+        if id.is_empty() {
+            self.error = Some(t("settings.ai.model_id_required"));
+            return false;
+        }
+        let Some(provider_index) = self
+            .providers
+            .iter()
+            .position(|candidate| candidate.name == provider)
+        else {
+            self.error = Some(t("settings.ai.provider_gone"));
+            return false;
+        };
+        let provider = &mut self.providers[provider_index];
+        if provider
+            .models
+            .iter()
+            .enumerate()
+            .any(|(row, model)| Some(row) != index && model.id == id)
+        {
+            self.error =
+                Some(rust_i18n::t!("settings.ai.model_taken", id = id.as_str()).to_string());
+            return false;
+        }
+        match index.filter(|index| *index < provider.models.len()) {
+            Some(index) => {
+                let old = provider.models[index].id.clone();
+                provider.models[index] = ModelConfig {
+                    id: id.clone(),
+                    label,
+                    vision,
+                };
+                if provider.model == old {
+                    provider.model = id;
+                }
+            }
+            None => {
+                provider.models.push(ModelConfig {
+                    id: id.clone(),
+                    label,
+                    vision,
+                });
+                if provider.model.is_empty() {
+                    provider.model = id;
+                }
+            }
+        }
+        provider.sync_models();
+        if !self.persist() {
+            return false;
+        }
+        self.model_form = None;
+        true
+    }
+
+    /// Point the shown provider at `id`; the chat's next turn runs on it.
+    pub(crate) fn select_model(&mut self, id: &str) -> bool {
+        let Some(index) = self.selected_index() else {
+            return false;
+        };
+        if !self.providers[index].select_model(id) {
+            return false;
+        }
+        self.persist()
+    }
+
+    pub(crate) fn arm_model_delete(&mut self, id: &str) {
+        self.model_delete = Some(id.to_owned());
+        self.model_form = None;
+        self.error = None;
+    }
+
+    pub(crate) fn cancel_model_delete(&mut self) {
+        self.model_delete = None;
+    }
+
+    /// Remove a model from the shown provider. Deleting the selected one
+    /// moves the selection to the first model left, so the file never names a
+    /// model it no longer lists.
+    pub(crate) fn confirm_model_delete(&mut self) -> bool {
+        let Some(id) = self.model_delete.take() else {
+            return false;
+        };
+        let Some(index) = self.selected_index() else {
+            return false;
+        };
+        let provider = &mut self.providers[index];
+        let Some(position) = provider.models.iter().position(|model| model.id == id) else {
+            return false;
+        };
+        provider.models.remove(position);
+        if provider.model == id {
+            provider.model = provider
+                .models
+                .first()
+                .map(|model| model.id.clone())
+                .unwrap_or_default();
+        }
+        provider.sync_models();
+        self.persist()
     }
 }
 
@@ -1173,58 +1575,604 @@ fn measure(
 
 // ── ai ───────────────────────────────────────────────────────────────
 
+/// The page the design calls 模型: the provider list, the shown provider's
+/// models, the default model and the reasoning effort — every control writes
+/// `api-providers.json` the moment it changes, and the chat panel reads the
+/// same file.
 fn ai_cards(state: &State, root: &Entity<Root>, cx: &App) -> Vec<AnyElement> {
     let file = crate::platform::zenix_config_dir()
         .join("api-providers.json")
         .display()
         .to_string();
-    let Some(provider) = state.selected() else {
-        return vec![
-            card(
-                t("settings.ai.model_card"),
-                Some(t("settings.ai.model_card_note")),
-                vec![row(
-                    t("settings.ai.none"),
-                    Some(rust_i18n::t!("settings.ai.none_hint", path = file).to_string()),
-                    None,
-                )],
-                cx,
-            ),
-            card(
-                t("settings.ai.file_card"),
-                None,
-                vec![row(t("settings.ai.file"), None, Some(value(file, cx)))],
-                cx,
-            ),
-        ];
-    };
+    let mut cards = vec![provider_card(state, root, cx)];
+    cards.push(match state.selected() {
+        Some(_) => models_card(state, root, cx),
+        None => card(
+            t("settings.ai.models_card"),
+            Some(rust_i18n::t!("settings.ai.none_hint", path = file).to_string()),
+            vec![row(t("settings.ai.none"), None, None)],
+            cx,
+        ),
+    });
+    cards.push(context_card(cx));
+    cards.push(card(
+        t("settings.ai.file_card"),
+        None,
+        vec![row(t("settings.ai.file"), None, Some(value(file, cx)))],
+        cx,
+    ));
+    cards
+}
 
-    let choices: Vec<Choice> = state
-        .providers
-        .iter()
-        .map(|provider| {
-            let label = if provider.model.trim().is_empty() {
-                provider.name.clone()
-            } else {
-                format!("{} · {}", provider.name, provider.model)
-            };
-            Choice::new(provider.name.clone(), label)
-        })
-        .collect();
-    let provider_select = {
-        let name = provider.name.clone();
-        let root = root.clone();
-        Select::new("settings-ai-provider", choices)
-            .selected(name)
-            .label(t("settings.ai.provider"))
-            .on_change(move |picked, _, cx| {
-                let name = picked.to_string();
+/// The provider list: one row per provider (press it to show its models),
+/// the open form, and the add button. A delete asks in the row it would
+/// remove before it writes.
+fn provider_card(state: &State, root: &Entity<Root>, cx: &App) -> AnyElement {
+    let mut rows: Vec<AnyElement> = Vec::with_capacity(state.providers.len() + 2);
+    if state.providers.is_empty() {
+        rows.push(row(t("settings.ai.none"), None, None));
+    }
+    for (index, provider) in state.providers.iter().enumerate() {
+        rows.push(provider_row(state, index, provider, root, cx));
+    }
+    if let Some(form) = state.provider_form.as_ref() {
+        rows.push(provider_form_panel(form, root, cx));
+    } else {
+        let button = {
+            let root = root.clone();
+            Button::new("settings-ai-add-provider", t("settings.ai.add_provider"))
+                .variant(ButtonVariant::Ghost)
+                .size(ControlSize::Sm)
+                .icon(IconName::Plus)
+                .on_click(move |_, window, cx| {
+                    root.update(cx, |root, cx| root.open_ai_provider_form(None, window, cx));
+                })
+        };
+        rows.push(row(
+            t("settings.ai.add_provider"),
+            Some(t("settings.ai.add_provider_note")),
+            Some(button.into_any_element()),
+        ));
+    }
+    if let Some(error) = &state.error {
+        rows.push(notice(error.clone(), cx));
+    }
+    card(
+        t("settings.ai.providers_card"),
+        Some(t("settings.ai.providers_card_note")),
+        rows,
+        cx,
+    )
+}
+
+fn provider_row(
+    state: &State,
+    index: usize,
+    provider: &ApiProviderConfig,
+    root: &Entity<Root>,
+    cx: &App,
+) -> AnyElement {
+    let theme = cx.theme();
+    let colors = &theme.colors;
+    let selected = state.selected_index() == Some(index);
+    let hover = colors.hover;
+    let name = provider.name.clone();
+    let mut row = div()
+        .id(format!("settings-ai-provider-{index}"))
+        .flex()
+        .items_center()
+        .gap_3()
+        .px_2()
+        .py_2()
+        .rounded(theme.radius(Radius::Md))
+        .cursor_pointer()
+        .when(selected, |row| row.bg(colors.sunken))
+        .when(!selected, |row| row.hover(move |style| style.bg(hover)))
+        .on_click({
+            let root = root.clone();
+            let name = name.clone();
+            move |_, _, cx| {
+                let name = name.clone();
                 root.update(cx, move |root, cx| root.choose_ai_provider(&name, cx));
+            }
+        })
+        .child(
+            Icon::new(if selected {
+                IconName::CircleCheck
+            } else {
+                IconName::Circle
+            })
+            .size(IconSize::Sm)
+            .color(if selected {
+                colors.accent
+            } else {
+                colors.fg_subtle
+            }),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .child(
+                    div()
+                        .text_size(theme.text_size(TextSize::Sm))
+                        .text_color(colors.fg)
+                        .child(Ellipsis::new(SharedString::from(name))),
+                )
+                .child(
+                    div()
+                        .text_size(theme.text_size(TextSize::Xs))
+                        .text_color(colors.fg_muted)
+                        .child(Ellipsis::new(SharedString::from(format!(
+                            "{} · {}",
+                            provider.format.label(),
+                            provider.endpoint_url()
+                        )))),
+                ),
+        )
+        .child(badge(
+            if provider.api_key.trim().is_empty() {
+                t("settings.ai.key_missing")
+            } else {
+                t("settings.ai.key_set")
+            },
+            !provider.api_key.trim().is_empty(),
+            cx,
+        ));
+    if state.provider_delete.as_deref() == Some(provider.name.as_str()) {
+        let (cancel, confirm) = provider_delete_buttons(provider.name.clone(), root);
+        row = row
+            .child(
+                div()
+                    .flex_none()
+                    .text_size(theme.text_size(TextSize::Xs))
+                    .text_color(colors.fg_muted)
+                    .child(
+                        rust_i18n::t!("settings.ai.delete_ask", name = provider.name.as_str())
+                            .to_string(),
+                    ),
+            )
+            .child(cancel)
+            .child(confirm);
+    } else {
+        let deleting = provider.name.clone();
+        row = row
+            .child(icon_action(
+                format!("settings-ai-edit-provider-{index}"),
+                IconName::Pencil,
+                t("settings.ai.edit"),
+                root,
+                move |root, window, cx| root.open_ai_provider_form(Some(index), window, cx),
+            ))
+            .child(icon_action(
+                format!("settings-ai-delete-provider-{index}"),
+                IconName::Trash2,
+                t("settings.ai.delete"),
+                root,
+                move |root, _window, cx| root.arm_ai_provider_delete(&deleting, cx),
+            ));
+    }
+    row.into_any_element()
+}
+
+fn provider_delete_buttons(name: String, root: &Entity<Root>) -> (AnyElement, AnyElement) {
+    let cancel = {
+        let root = root.clone();
+        Button::new(
+            format!("settings-ai-provider-cancel-delete-{name}"),
+            t("settings.ai.cancel"),
+        )
+        .variant(ButtonVariant::Ghost)
+        .size(ControlSize::Sm)
+        .on_click(move |_, _, cx| {
+            cx.stop_propagation();
+            root.update(cx, |root, cx| root.cancel_ai_provider_delete(cx));
+        })
+    };
+    let confirm = {
+        let root = root.clone();
+        Button::new(
+            format!("settings-ai-provider-confirm-delete-{name}"),
+            t("settings.ai.delete"),
+        )
+        .variant(ButtonVariant::Danger)
+        .size(ControlSize::Sm)
+        .on_click(move |_, _, cx| {
+            cx.stop_propagation();
+            root.update(cx, |root, cx| root.confirm_ai_provider_delete(cx));
+        })
+    };
+    (cancel.into_any_element(), confirm.into_any_element())
+}
+
+/// The add/edit form over the list: name, format, URL suffix, base URL and
+/// key, then Save. The key's field is masked; the form's own validation keeps
+/// an empty or duplicated name and an empty base URL out of the file.
+fn provider_form_panel(form: &ProviderForm, root: &Entity<Root>, cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    let colors = &theme.colors;
+    let formats = [ApiFormat::OpenAI, ApiFormat::Anthropic];
+    let format_select = Select::new(
+        "settings-ai-form-format",
+        formats
+            .iter()
+            .map(|format| Choice::new(format.token(), format.label())),
+    )
+    .selected(form.format.token())
+    .on_change({
+        let root = root.clone();
+        move |picked, _, cx| {
+            let token = picked.to_string();
+            root.update(cx, move |root, cx| root.set_ai_form_format(&token, cx));
+        }
+    });
+    let suffix_select = Select::new(
+        "settings-ai-form-suffix",
+        form.format
+            .suffix_options()
+            .iter()
+            .map(|suffix| Choice::new(*suffix, *suffix)),
+    )
+    .selected(form.suffix.clone())
+    .on_change({
+        let root = root.clone();
+        move |picked, _, cx| {
+            let suffix = picked.to_string();
+            root.update(cx, move |root, cx| root.set_ai_form_suffix(&suffix, cx));
+        }
+    });
+    let cancel = {
+        let root = root.clone();
+        Button::new("settings-ai-provider-form-cancel", t("settings.ai.cancel"))
+            .variant(ButtonVariant::Ghost)
+            .size(ControlSize::Sm)
+            .on_click(move |_, _, cx| {
+                root.update(cx, |root, cx| root.cancel_ai_provider_form(cx));
             })
     };
+    let save = {
+        let root = root.clone();
+        Button::new("settings-ai-provider-form-save", t("settings.ai.save"))
+            .variant(ButtonVariant::Primary)
+            .size(ControlSize::Sm)
+            .on_click(move |_, _, cx| {
+                root.update(cx, |root, cx| root.save_ai_provider_form(cx));
+            })
+    };
+    let pickers = div()
+        .flex()
+        .gap_2()
+        .child(field(
+            t("settings.ai.provider_format"),
+            format_select.into_any_element(),
+            cx,
+        ))
+        .child(field(
+            t("settings.ai.provider_suffix"),
+            suffix_select.into_any_element(),
+            cx,
+        ));
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .p_3()
+        .mt_1()
+        .rounded(theme.radius(Radius::Md))
+        .border_1()
+        .border_color(colors.border_strong)
+        .bg(colors.sunken)
+        .child(field(
+            t("settings.ai.provider_name"),
+            Input::new(&form.name)
+                .size(ControlSize::Sm)
+                .into_any_element(),
+            cx,
+        ))
+        .child(pickers)
+        .child(field(
+            t("settings.ai.provider_base_url"),
+            Input::new(&form.base_url)
+                .size(ControlSize::Sm)
+                .into_any_element(),
+            cx,
+        ))
+        .child(field(
+            t("settings.ai.provider_key"),
+            Input::new(&form.api_key)
+                .size(ControlSize::Sm)
+                .into_any_element(),
+            cx,
+        ))
+        .child(
+            div()
+                .flex()
+                .justify_end()
+                .gap_2()
+                .pt_1()
+                .child(cancel)
+                .child(save),
+        )
+        .into_any_element()
+}
 
+/// The shown provider's models: the default marked, the rest offering it,
+/// each row with edit and delete, the open form, and the reasoning effort of
+/// the provider the list belongs to.
+fn models_card(state: &State, root: &Entity<Root>, cx: &App) -> AnyElement {
+    let Some(provider) = state.selected() else {
+        return card(t("settings.ai.models_card"), None, Vec::new(), cx);
+    };
+    let mut rows: Vec<AnyElement> = Vec::with_capacity(provider.models.len() + 3);
+    if provider.models.is_empty() {
+        rows.push(row(t("settings.ai.no_models"), None, None));
+    }
+    for (index, model) in provider.models.iter().enumerate() {
+        rows.push(model_row(state, provider, index, model, root, cx));
+    }
+    if let Some(form) = state.model_form.as_ref() {
+        rows.push(model_form_panel(form, root, cx));
+    } else {
+        let button = {
+            let root = root.clone();
+            Button::new("settings-ai-add-model", t("settings.ai.add_model"))
+                .variant(ButtonVariant::Ghost)
+                .size(ControlSize::Sm)
+                .icon(IconName::Plus)
+                .on_click(move |_, window, cx| {
+                    root.update(cx, |root, cx| root.open_ai_model_form(None, window, cx));
+                })
+        };
+        rows.push(row(
+            t("settings.ai.add_model"),
+            Some(t("settings.ai.model_add_note")),
+            Some(button.into_any_element()),
+        ));
+    }
+    rows.push(level_row(provider, root));
+    card(
+        t("settings.ai.models_card"),
+        Some(
+            rust_i18n::t!(
+                "settings.ai.models_card_note",
+                name = provider.name.as_str()
+            )
+            .to_string(),
+        ),
+        rows,
+        cx,
+    )
+}
+
+fn model_row(
+    state: &State,
+    provider: &ApiProviderConfig,
+    index: usize,
+    model: &ModelConfig,
+    root: &Entity<Root>,
+    cx: &App,
+) -> AnyElement {
+    let theme = cx.theme();
+    let colors = &theme.colors;
+    let hover = colors.hover;
+    let is_default = provider.model == model.id;
+    let id = model.id.clone();
+    let mut row = div()
+        .id(format!("settings-ai-model-{index}"))
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_2()
+        .py_2()
+        .rounded(theme.radius(Radius::Md))
+        .when(!is_default, |row| row.hover(move |style| style.bg(hover)))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .child(
+                            div()
+                                .min_w_0()
+                                .text_size(theme.text_size(TextSize::Sm))
+                                .text_color(colors.fg)
+                                .child(Ellipsis::new(SharedString::from(
+                                    model.display_label().to_owned(),
+                                ))),
+                        )
+                        .when(model.vision, |line| {
+                            line.child(badge(t("settings.ai.model_vision_badge"), false, cx))
+                        })
+                        .when(is_default, |line| {
+                            line.child(badge(t("settings.ai.model_default"), true, cx))
+                        }),
+                )
+                .child(
+                    div()
+                        .text_size(theme.text_size(TextSize::Xs))
+                        .text_color(colors.fg_subtle)
+                        .child(Ellipsis::new(SharedString::from(id.clone()))),
+                ),
+        );
+    if state.model_delete.as_deref() == Some(model.id.as_str()) {
+        let cancel = {
+            let root = root.clone();
+            Button::new(
+                format!("settings-ai-model-cancel-delete-{index}"),
+                t("settings.ai.cancel"),
+            )
+            .variant(ButtonVariant::Ghost)
+            .size(ControlSize::Sm)
+            .on_click(move |_, _, cx| {
+                root.update(cx, |root, cx| root.cancel_ai_model_delete(cx));
+            })
+        };
+        let confirm = {
+            let root = root.clone();
+            Button::new(
+                format!("settings-ai-model-confirm-delete-{index}"),
+                t("settings.ai.delete"),
+            )
+            .variant(ButtonVariant::Danger)
+            .size(ControlSize::Sm)
+            .on_click(move |_, _, cx| {
+                root.update(cx, |root, cx| root.confirm_ai_model_delete(cx));
+            })
+        };
+        row = row
+            .child(
+                div()
+                    .flex_none()
+                    .text_size(theme.text_size(TextSize::Xs))
+                    .text_color(colors.fg_muted)
+                    .child(rust_i18n::t!("settings.ai.delete_ask", name = id.as_str()).to_string()),
+            )
+            .child(cancel)
+            .child(confirm);
+    } else {
+        if !is_default {
+            let root_default = root.clone();
+            let chosen = id.clone();
+            row = row.child(
+                Button::new(
+                    format!("settings-ai-model-default-{index}"),
+                    t("settings.ai.set_default"),
+                )
+                .variant(ButtonVariant::Ghost)
+                .size(ControlSize::Sm)
+                .on_click(move |_, _, cx| {
+                    let chosen = chosen.clone();
+                    root_default.update(cx, move |root, cx| {
+                        root.select_ai_model(&chosen, cx);
+                    });
+                }),
+            );
+        }
+        let deleting = id.clone();
+        row = row
+            .child(icon_action(
+                format!("settings-ai-edit-model-{index}"),
+                IconName::Pencil,
+                t("settings.ai.edit"),
+                root,
+                move |root, window, cx| root.open_ai_model_form(Some(index), window, cx),
+            ))
+            .child(icon_action(
+                format!("settings-ai-delete-model-{index}"),
+                IconName::Trash2,
+                t("settings.ai.delete"),
+                root,
+                move |root, _window, cx| root.arm_ai_model_delete(&deleting, cx),
+            ));
+    }
+    row.into_any_element()
+}
+
+/// The model form: id, display name, whether it reads images, then Save.
+fn model_form_panel(form: &ModelForm, root: &Entity<Root>, cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    let colors = &theme.colors;
+    let vision = Switch::new("settings-ai-form-vision", form.vision).on_change({
+        let root = root.clone();
+        move |on, _, cx| {
+            root.update(cx, move |root, cx| root.set_ai_model_vision(on, cx));
+        }
+    });
+    let cancel = {
+        let root = root.clone();
+        Button::new("settings-ai-model-form-cancel", t("settings.ai.cancel"))
+            .variant(ButtonVariant::Ghost)
+            .size(ControlSize::Sm)
+            .on_click(move |_, _, cx| {
+                root.update(cx, |root, cx| root.cancel_ai_model_form(cx));
+            })
+    };
+    let save = {
+        let root = root.clone();
+        Button::new("settings-ai-model-form-save", t("settings.ai.save"))
+            .variant(ButtonVariant::Primary)
+            .size(ControlSize::Sm)
+            .on_click(move |_, _, cx| {
+                root.update(cx, |root, cx| root.save_ai_model_form(cx));
+            })
+    };
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .p_3()
+        .mt_1()
+        .rounded(theme.radius(Radius::Md))
+        .border_1()
+        .border_color(colors.border_strong)
+        .bg(colors.sunken)
+        .child(field(
+            t("settings.ai.model_id"),
+            Input::new(&form.id)
+                .size(ControlSize::Sm)
+                .into_any_element(),
+            cx,
+        ))
+        .child(field(
+            t("settings.ai.model_label"),
+            Input::new(&form.label)
+                .size(ControlSize::Sm)
+                .into_any_element(),
+            cx,
+        ))
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_3()
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .child(
+                            div()
+                                .text_size(theme.text_size(TextSize::Sm))
+                                .text_color(colors.fg)
+                                .child(t("settings.ai.model_vision")),
+                        )
+                        .child(
+                            div()
+                                .text_size(theme.text_size(TextSize::Xs))
+                                .text_color(colors.fg_subtle)
+                                .child(t("settings.ai.model_vision_note")),
+                        ),
+                )
+                .child(vision),
+        )
+        .child(
+            div()
+                .flex()
+                .justify_end()
+                .gap_2()
+                .pt_1()
+                .child(cancel)
+                .child(save),
+        )
+        .into_any_element()
+}
+
+/// One provider's reasoning effort: the discrete levels the engine knows,
+/// persisted to the same file.
+fn level_row(provider: &ApiProviderConfig, root: &Entity<Root>) -> AnyElement {
     let level = provider.thinking_level;
-    let mut level_rows = Vec::new();
     let mut control = SegmentedControl::new("settings-ai-level", level.as_str());
     for each in ThinkingLevel::all() {
         control = control.segment(
@@ -1234,64 +2182,24 @@ fn ai_cards(state: &State, root: &Entity<Root>, cx: &App) -> Vec<AnyElement> {
         );
     }
     let root = root.clone();
-    let level_control = control
+    let control = control
         .size(ControlSize::Sm)
         .on_change(move |picked, _, cx| {
             let token = picked.to_string();
             root.update(cx, move |root, cx| root.set_ai_level(&token, cx));
         })
         .into_any_element();
-    level_rows.push(row(
+    row(
         t("settings.ai.level"),
         Some(t("settings.ai.level_note")),
-        Some(level_control),
-    ));
+        Some(control),
+    )
+}
 
-    let mut rows = vec![
-        row(
-            t("settings.ai.provider"),
-            None,
-            Some(provider_select.into_any_element()),
-        ),
-        row(
-            t("settings.ai.format"),
-            None,
-            Some(value(provider.format.label().to_owned(), cx)),
-        ),
-        row(
-            t("settings.ai.endpoint"),
-            None,
-            Some(value(provider.endpoint_url(), cx)),
-        ),
-        row(
-            t("settings.ai.model"),
-            None,
-            Some(value(
-                if provider.model.trim().is_empty() {
-                    t("settings.ai.model_none")
-                } else {
-                    provider.model.clone()
-                },
-                cx,
-            )),
-        ),
-        row(
-            t("settings.ai.key"),
-            None,
-            Some(badge(
-                if provider.api_key.trim().is_empty() {
-                    t("settings.ai.key_missing")
-                } else {
-                    t("settings.ai.key_set")
-                },
-                !provider.api_key.trim().is_empty(),
-                cx,
-            )),
-        ),
-    ];
-    rows.extend(level_rows);
-
-    let mut context_rows = vec![
+/// Compaction's numbers: constants the engine applies, stated where the model
+/// is chosen so the window is not a surprise later.
+fn context_card(cx: &App) -> AnyElement {
+    let rows = vec![
         row(
             t("settings.ai.context_window"),
             None,
@@ -1320,34 +2228,67 @@ fn ai_cards(state: &State, root: &Entity<Root>, cx: &App) -> Vec<AnyElement> {
             )),
         ),
     ];
-    if let Some(error) = &state.error {
-        context_rows.push(row(
-            rust_i18n::t!("settings.ai.save_failed", error = error.as_str()).to_string(),
-            None,
-            None,
-        ));
-    }
+    card(
+        t("settings.ai.context_card"),
+        Some(t("settings.ai.context_card_note")),
+        rows,
+        cx,
+    )
+}
 
-    vec![
-        card(
-            t("settings.ai.model_card"),
-            Some(t("settings.ai.model_card_note")),
-            rows,
-            cx,
-        ),
-        card(
-            t("settings.ai.context_card"),
-            Some(t("settings.ai.context_card_note")),
-            context_rows,
-            cx,
-        ),
-        card(
-            t("settings.ai.file_card"),
-            None,
-            vec![row(t("settings.ai.file"), None, Some(value(file, cx)))],
-            cx,
-        ),
-    ]
+/// A form field: its name above the control.
+fn field(label: String, control: impl IntoElement, cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    let colors = &theme.colors;
+    div()
+        .flex_1()
+        .min_w_0()
+        .flex()
+        .flex_col()
+        .gap_1()
+        .child(
+            div()
+                .text_size(theme.text_size(TextSize::Xs))
+                .text_color(colors.fg_subtle)
+                .child(label),
+        )
+        .child(control)
+        .into_any_element()
+}
+
+/// A failed write, in the card whose form it came from.
+fn notice(error: String, cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    div()
+        .w_full()
+        .py_2()
+        .text_size(theme.text_size(TextSize::Xs))
+        .text_color(theme.colors.danger)
+        .child(rust_i18n::t!("settings.ai.save_failed", error = error.as_str()).to_string())
+        .into_any_element()
+}
+
+/// An icon-only action inside a pressable row: the press belongs to the
+/// action, not to the row that would select a provider behind it.
+fn icon_action(
+    id: impl Into<ElementId>,
+    icon: IconName,
+    tooltip: String,
+    root: &Entity<Root>,
+    run: impl Fn(&mut Root, &mut Window, &mut Context<Root>) + 'static,
+) -> AnyElement {
+    let root = root.clone();
+    let run = std::rc::Rc::new(run);
+    IconButton::new(id, icon)
+        .variant(ButtonVariant::Ghost)
+        .size(ControlSize::Sm)
+        .tooltip(tooltip)
+        .on_click(move |_, window, cx| {
+            cx.stop_propagation();
+            let run = run.clone();
+            root.update(cx, |root, cx| run(root, window, cx));
+        })
+        .into_any_element()
 }
 
 // ── keys ─────────────────────────────────────────────────────────────

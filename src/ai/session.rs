@@ -407,6 +407,22 @@ impl SessionManager {
         Ok(())
     }
 
+    /// Drop every message at or after `sequence`. An edit replaces the message
+    /// it started from and every answer below it, and the store must forget
+    /// them too — a reload that brought them back would be a lie. The FTS rows
+    /// follow by trigger.
+    pub fn truncate_messages(&self, session_id: &str, sequence: i64) -> Result<()> {
+        self.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "DELETE FROM messages WHERE session_id = ?1 AND sequence >= ?2",
+                params![session_id, sequence],
+            )
+            .context("truncate messages")?;
+        Ok(())
+    }
+
     pub fn add_message(&self, msg: &ChatMessage) -> Result<()> {
         self.conn
             .lock()
@@ -724,6 +740,32 @@ mod tests {
         assert_eq!(msgs[1].content, "Hi there");
         assert_eq!(msgs[2].sequence, 3);
         assert_eq!(msgs[2].content, "How are you?");
+    }
+
+    #[test]
+    fn an_edit_forgets_the_turn_it_replaced() {
+        let mgr = SessionManager::open_in_memory().unwrap();
+
+        let session = make_session("edit-session", "Edit Test");
+        mgr.create_session(&session).unwrap();
+        mgr.add_message(&make_message("edit-session", "user", "first", 1))
+            .unwrap();
+        mgr.add_message(&make_message("edit-session", "orchestrator", "answer", 2))
+            .unwrap();
+        mgr.add_message(&make_message("edit-session", "user", "second", 3))
+            .unwrap();
+        mgr.add_message(&make_message("edit-session", "orchestrator", "answer 2", 4))
+            .unwrap();
+
+        // Re-sending the second user message drops it and its answer.
+        mgr.truncate_messages("edit-session", 3).unwrap();
+        let msgs = mgr.get_messages("edit-session").unwrap();
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[1].content, "answer");
+
+        // And the FTS index forgot it too.
+        let hits = mgr.search_messages("second", None).unwrap();
+        assert!(hits.is_empty(), "a replaced message is not searchable");
     }
 
     #[test]

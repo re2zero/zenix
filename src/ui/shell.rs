@@ -35,6 +35,7 @@ use super::{
     aside, chat, chrome, commands, confirm, empty, fleet, inspector, keymap, layout_sheet, manager,
     palette, settings, sidebar, theme, toast, trust, worktree,
 };
+use crate::api_provider::ApiFormat;
 use crate::config;
 use crate::events::{EventFilter, EventState};
 use crate::fleet::FleetState;
@@ -979,6 +980,156 @@ impl Root {
         {
             self.settings.set_level(token, &name);
         }
+        cx.notify();
+    }
+
+    /// The AI page's provider form, adding one (`None`) or editing a row.
+    /// Fields are built here because only a window can make a text input.
+    pub(crate) fn open_ai_provider_form(
+        &mut self,
+        index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let existing = index
+            .and_then(|index| self.settings.provider_at(index))
+            .map(|provider| {
+                (
+                    provider.name.clone(),
+                    provider.base_url.clone(),
+                    provider.api_key.clone(),
+                    provider.format,
+                    provider.url_suffix.clone(),
+                )
+            });
+        let (name, base_url, api_key, format, suffix) = existing.unwrap_or_else(|| {
+            (
+                String::new(),
+                ApiFormat::OpenAI.default_base_url().to_owned(),
+                String::new(),
+                ApiFormat::OpenAI,
+                ApiFormat::OpenAI.default_suffix().to_owned(),
+            )
+        });
+        let form = settings::ProviderForm::new(
+            index,
+            settings::text_field(
+                window,
+                cx,
+                &name,
+                t("settings.ai.provider_name_hint"),
+                false,
+            ),
+            settings::text_field(window, cx, &base_url, String::new(), false),
+            settings::text_field(window, cx, &api_key, "sk-…".to_owned(), true),
+            format,
+            suffix,
+        );
+        let focus = form.first();
+        self.settings.begin_provider(form);
+        let handle = focus.read(cx).focus().clone();
+        window.focus(&handle, cx);
+        cx.notify();
+    }
+
+    pub(crate) fn cancel_ai_provider_form(&mut self, cx: &mut Context<Self>) {
+        self.settings.cancel_provider();
+        cx.notify();
+    }
+
+    pub(crate) fn save_ai_provider_form(&mut self, cx: &mut Context<Self>) {
+        self.settings.save_provider(cx);
+        cx.notify();
+    }
+
+    pub(crate) fn set_ai_form_format(&mut self, token: &str, cx: &mut Context<Self>) {
+        self.settings.set_form_format(token, cx);
+        cx.notify();
+    }
+
+    pub(crate) fn set_ai_form_suffix(&mut self, suffix: &str, cx: &mut Context<Self>) {
+        self.settings.set_form_suffix(suffix);
+        cx.notify();
+    }
+
+    pub(crate) fn arm_ai_provider_delete(&mut self, name: &str, cx: &mut Context<Self>) {
+        self.settings.arm_provider_delete(name);
+        cx.notify();
+    }
+
+    pub(crate) fn cancel_ai_provider_delete(&mut self, cx: &mut Context<Self>) {
+        self.settings.cancel_provider_delete();
+        cx.notify();
+    }
+
+    pub(crate) fn confirm_ai_provider_delete(&mut self, cx: &mut Context<Self>) {
+        self.settings.confirm_provider_delete();
+        cx.notify();
+    }
+
+    /// The model form inside the shown provider, adding one (`None`) or
+    /// editing a row.
+    pub(crate) fn open_ai_model_form(
+        &mut self,
+        index: Option<usize>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(provider) = self.settings.selected().cloned() else {
+            return;
+        };
+        let (id, label, vision) = index
+            .and_then(|index| provider.models.get(index))
+            .map(|model| (model.id.clone(), model.label.clone(), model.vision))
+            .unwrap_or_else(|| (String::new(), String::new(), false));
+        let form = settings::ModelForm::new(
+            provider.name.clone(),
+            index,
+            settings::text_field(window, cx, &id, t("settings.ai.model_id_hint"), false),
+            settings::text_field(window, cx, &label, t("settings.ai.model_label_hint"), false),
+            vision,
+        );
+        let focus = form.first();
+        self.settings.begin_model(form);
+        let handle = focus.read(cx).focus().clone();
+        window.focus(&handle, cx);
+        cx.notify();
+    }
+
+    pub(crate) fn cancel_ai_model_form(&mut self, cx: &mut Context<Self>) {
+        self.settings.cancel_model();
+        cx.notify();
+    }
+
+    pub(crate) fn save_ai_model_form(&mut self, cx: &mut Context<Self>) {
+        self.settings.save_model(cx);
+        cx.notify();
+    }
+
+    pub(crate) fn set_ai_model_vision(&mut self, on: bool, cx: &mut Context<Self>) {
+        self.settings.set_model_vision(on);
+        cx.notify();
+    }
+
+    pub(crate) fn arm_ai_model_delete(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.settings.arm_model_delete(id);
+        cx.notify();
+    }
+
+    pub(crate) fn cancel_ai_model_delete(&mut self, cx: &mut Context<Self>) {
+        self.settings.cancel_model_delete();
+        cx.notify();
+    }
+
+    pub(crate) fn confirm_ai_model_delete(&mut self, cx: &mut Context<Self>) {
+        self.settings.confirm_model_delete();
+        cx.notify();
+    }
+
+    /// The model a turn runs on: written to the provider file, so the chat
+    /// panel's next turn picks it up.
+    pub(crate) fn select_ai_model(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.settings.select_model(id);
         cx.notify();
     }
 

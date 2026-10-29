@@ -398,47 +398,128 @@ settings:
       zh-CN: "工具清单"
   ai:
     title:
-      en: "AI"
-      zh-CN: "AI"
-    description:
-      en: "The orchestrator's provider, model and reasoning effort."
-      zh-CN: "编排器的提供方、模型与推理强度。"
-    model_card:
-      en: "Model"
+      en: "Models"
       zh-CN: "模型"
-    model_card_note:
-      en: "An OpenAI-compatible endpoint; the key stays in the provider file."
-      zh-CN: "OpenAI 兼容端点；密钥只存在提供方文件里。"
-    provider:
-      en: "Provider"
-      zh-CN: "提供方"
-    format:
+    description:
+      en: "The providers and models the chat runs on; every change is written to the provider file."
+      zh-CN: "对话使用的提供商与模型；改动即时写入提供商文件。"
+    providers_card:
+      en: "Providers"
+      zh-CN: "提供商"
+    providers_card_note:
+      en: "An OpenAI- or Anthropic-compatible endpoint. The key stays in the provider file."
+      zh-CN: "OpenAI 或 Anthropic 兼容端点；密钥只写入提供商文件。"
+    add_provider:
+      en: "Add provider"
+      zh-CN: "添加提供商"
+    add_provider_note:
+      en: "Name, endpoint and key; models are added under the provider."
+      zh-CN: "名称、地址与密钥；模型在提供商下添加。"
+    provider_name:
+      en: "Name"
+      zh-CN: "名称"
+    provider_name_hint:
+      en: "e.g. Work account"
+      zh-CN: "如：工作账号"
+    provider_format:
       en: "Format"
       zh-CN: "格式"
-    endpoint:
-      en: "Endpoint"
-      zh-CN: "端点"
-    model:
-      en: "Model"
-      zh-CN: "模型"
-    model_none:
-      en: "not set"
-      zh-CN: "未设置"
-    key:
+    provider_base_url:
+      en: "Base URL"
+      zh-CN: "地址"
+    provider_key:
       en: "API key"
       zh-CN: "API 密钥"
+    provider_suffix:
+      en: "Path"
+      zh-CN: "路径后缀"
+    edit:
+      en: "Edit"
+      zh-CN: "编辑"
+    delete:
+      en: "Delete"
+      zh-CN: "删除"
+    delete_ask:
+      en: "Delete %{name}?"
+      zh-CN: "删除「%{name}」？"
+    cancel:
+      en: "Cancel"
+      zh-CN: "取消"
+    save:
+      en: "Save"
+      zh-CN: "保存"
+    name_required:
+      en: "A provider needs a name."
+      zh-CN: "提供商需要一个名称。"
+    name_taken:
+      en: "Another provider is already called %{name}."
+      zh-CN: "已有同名提供商「%{name}」。"
+    url_required:
+      en: "A provider needs a base URL."
+      zh-CN: "提供商需要一个地址。"
     key_set:
-      en: "Configured"
-      zh-CN: "已配置"
+      en: "Key configured"
+      zh-CN: "密钥已配置"
     key_missing:
-      en: "Not set"
-      zh-CN: "未配置"
+      en: "No key"
+      zh-CN: "未配置密钥"
+    models_card:
+      en: "Models"
+      zh-CN: "模型"
+    models_card_note:
+      en: "What %{name} offers; the default model is the one a turn runs on."
+      zh-CN: "「%{name}」下可选的模型；默认模型是对话使用的那一个。"
+    add_model:
+      en: "Add model"
+      zh-CN: "添加模型"
+    model_add_note:
+      en: "An ID the endpoint accepts; a display name and whether it reads images."
+      zh-CN: "端点接受的模型 ID，以及显示名和是否支持图像输入。"
+    model_id:
+      en: "Model ID"
+      zh-CN: "模型 ID"
+    model_id_hint:
+      en: "e.g. gpt-4o"
+      zh-CN: "如：gpt-4o"
+    model_label:
+      en: "Display name"
+      zh-CN: "显示名"
+    model_label_hint:
+      en: "Empty means the ID"
+      zh-CN: "留空则显示模型 ID"
+    model_vision:
+      en: "Image input"
+      zh-CN: "视觉输入"
+    model_vision_note:
+      en: "Marked on the row; the chat's model picker reads it."
+      zh-CN: "在模型行上标记；对话的模型浮层会读它。"
+    model_vision_badge:
+      en: "Vision"
+      zh-CN: "视觉"
+    model_default:
+      en: "Default"
+      zh-CN: "默认"
+    set_default:
+      en: "Set as default"
+      zh-CN: "设为默认"
+    no_models:
+      en: "No models yet"
+      zh-CN: "尚未添加模型"
+    model_id_required:
+      en: "A model needs an ID."
+      zh-CN: "模型需要一个 ID。"
+    model_taken:
+      en: "This provider already offers %{id}."
+      zh-CN: "该提供商已有模型「%{id}」。"
+    provider_gone:
+      en: "That provider is no longer in the file."
+      zh-CN: "该提供商已不在文件中。"
     none:
       en: "No provider is configured"
-      zh-CN: "尚未配置提供方"
+      zh-CN: "尚未配置提供商"
     none_hint:
-      en: "Add one to %{path}; the chat panel reads the same file."
-      zh-CN: "请在 %{path} 中添加；对话面板读同一个文件。"
+      en: "Add one above; the chat panel reads the same file (%{path})."
+      zh-CN: "在上方添加一个；对话面板读同一个文件（%{path}）。"
     save_failed:
       en: "The change could not be written: %{error}"
       zh-CN: "写入失败：%{error}"
@@ -912,12 +993,6 @@ ai:
     effort:
       en: "Reasoning effort"
       zh-CN: "推理力度"
-    role_you:
-      en: "You"
-      zh-CN: "你"
-    role_assistant:
-      en: "zenix · orchestrator"
-      zh-CN: "zenix · 编排器"
     history:
       en: "History"
       zh-CN: "历史"
@@ -957,6 +1032,15 @@ ai:
     copy:
       en: "Copy"
       zh-CN: "复制"
+    edit:
+      en: "Edit"
+      zh-CN: "编辑"
+    editing:
+      en: "Editing — sending replaces this message and what followed"
+      zh-CN: "编辑中 · 发送将替换这条及其后的内容"
+    edit_cancel:
+      en: "Cancel edit"
+      zh-CN: "取消编辑"
     tool_arguments:
       en: "Arguments"
       zh-CN: "参数"
@@ -966,6 +1050,46 @@ ai:
     tool_error:
       en: "Error"
       zh-CN: "错误"
+    # One tool call reads as a step: a verb, what it acted on, and a quiet
+    # extra. A run of same-family steps folds behind one group line.
+    step:
+      send:
+        en: "Send"
+        zh-CN: "发送"
+      read:
+        en: "Read"
+        zh-CN: "读取"
+      wait:
+        en: "Wait for"
+        zh-CN: "等待"
+      list:
+        en: "List"
+        zh-CN: "列出"
+      start:
+        en: "Start"
+        zh-CN: "启动"
+      close:
+        en: "Close"
+        zh-CN: "关闭"
+      lines:
+        en: "%{count} lines"
+        zh-CN: "%{count} 行"
+    group:
+      terminal:
+        en: "Terminal"
+        zh-CN: "终端"
+      read:
+        en: "Reads"
+        zh-CN: "读取"
+      commands:
+        en: "%{count} commands"
+        zh-CN: "%{count} 个命令"
+      reads:
+        en: "%{count} calls"
+        zh-CN: "%{count} 项"
+      failed:
+        en: "%{count} failed"
+        zh-CN: "%{count} 失败"
     compacted:
       en: "Compacted %{original} messages to %{kept} (%{before} → %{after} tokens)"
       zh-CN: "已压缩 %{original} 条消息至 %{kept} 条（%{before} → %{after} tokens）"
@@ -981,12 +1105,16 @@ ai:
     welcome_title:
       en: "How can I help?"
       zh-CN: "需要我做什么？"
+    # The thinking row reads as a label plus its length: 「思考 · 12 秒」.
+    thought:
+      en: "Thinking"
+      zh-CN: "思考"
     thought_moment:
-      en: "Thought for a moment"
-      zh-CN: "思考了片刻"
-    thought_seconds:
-      en: "Thought for %{seconds}s"
-      zh-CN: "思考了 %{seconds} 秒"
+      en: "a moment"
+      zh-CN: "片刻"
+    thought_took:
+      en: "%{seconds}s"
+      zh-CN: "%{seconds} 秒"
     starter_pane:
       en: "Summarize the focused pane"
       zh-CN: "总结聚焦窗格"
