@@ -211,6 +211,7 @@ fn icon(command: Command) -> Option<IconName> {
         Command::OpenSettings => IconName::Settings,
         Command::LinkPlugin => IconName::Shield,
         Command::InspectLayout => IconName::FileCode,
+        Command::OpenReview => IconName::GitBranch,
     })
 }
 

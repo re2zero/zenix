@@ -59,6 +59,7 @@ pub(crate) enum Command {
     OpenSettings,
     LinkPlugin,
     InspectLayout,
+    OpenReview,
 }
 
 /// One command's entry: what it is called, and the keystrokes that reach it.
@@ -236,6 +237,14 @@ pub(crate) const COMMANDS: &[CommandInfo] = &[
         direct: &[],
         prefixed: &[],
     },
+    // The focused repository's changes. A direct chord beside the other three:
+    // reading a diff is a glance, not a trip through the palette.
+    CommandInfo {
+        command: Command::OpenReview,
+        id: "view.review",
+        direct: &["secondary-shift-g"],
+        prefixed: &[],
+    },
 ];
 
 impl Command {
@@ -338,7 +347,8 @@ pub(crate) fn request(command: Command, snapshot: &ClientShellSnapshot) -> Optio
         | Command::ToggleAside
         | Command::OpenSettings
         | Command::LinkPlugin
-        | Command::InspectLayout => {
+        | Command::InspectLayout
+        | Command::OpenReview => {
             return None;
         }
     })
@@ -409,6 +419,7 @@ mod tests {
                 | Command::OpenSettings
                 | Command::LinkPlugin
                 | Command::InspectLayout
+                | Command::OpenReview
         )
     }
 
@@ -487,7 +498,7 @@ mod tests {
         }
         // A variant with no entry would panic in `info`; this walks the table
         // once so the enum and the directory stay the same size.
-        assert_eq!(COMMANDS.len(), 22);
+        assert_eq!(COMMANDS.len(), 23);
     }
 
     /// A label is a key the locale file answers, not a string kept in the

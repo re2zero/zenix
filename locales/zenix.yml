@@ -2075,6 +2075,43 @@ shell:
       en: "GAP"
       zh-CN: "间距"
 
+  # The review sheet (U7): the focused repository's index and the selected
+  # file's diff. The two lists are the two sides git reports, not two views.
+  review:
+    title:
+      en: "Changes"
+      zh-CN: "变更"
+    refresh:
+      en: "Refresh"
+      zh-CN: "刷新"
+    staged:
+      en: "Staged"
+      zh-CN: "暂存"
+    unstaged:
+      en: "Unstaged"
+      zh-CN: "未暂存"
+    new_file:
+      en: "New file"
+      zh-CN: "新文件"
+    empty:
+      en: "No uncommitted changes"
+      zh-CN: "没有未提交的改动"
+    pick:
+      en: "Pick a file on the left"
+      zh-CN: "在左侧选一个文件"
+    reading:
+      en: "Reading…"
+      zh-CN: "正在读取…"
+    truncated:
+      en: "This diff was cut short"
+      zh-CN: "改动过长，已截断"
+    foot:
+      en: "%{count} files · read from git status and git diff"
+      zh-CN: "%{count} 个文件 · 读取自 git status 与 git diff"
+    no_repo:
+      en: "The focused workspace is not in a git repository"
+      zh-CN: "当前工作区不在 git 仓库里"
+
 # The project's layout template. The block names the project it found by walking up
 # from the focused pane, and the two lines below are what a save or a restore did.
 layout:
@@ -2272,6 +2309,9 @@ command:
     palette:
       en: "Command Palette"
       zh-CN: "命令面板"
+    review:
+      en: "Review Changes"
+      zh-CN: "变更审阅"
     close-popup:
       en: "Close Popup Pane"
       zh-CN: "关闭弹出窗格"
