@@ -8,9 +8,11 @@
 //! unified diff, one row per line, coloured by what the line is.
 //!
 //! Nothing here reads git: `crate::review` owns the worker thread and the two
-//! caches, and this module only turns what it found into rows. A select asks
-//! for one file's diff and carries the state's generation, so a slow read of
-//! the file the reader left cannot land on the one they are looking at.
+//! caches, and this module only turns what it found into rows. A select — a
+//! pressed row or an arrow key — asks for one file's diff and carries the
+//! state's generation, so a slow read of the file the reader left cannot land
+//! on the one they are looking at, and a refresh that dropped the picked file
+//! sends the sheet back to the pick hint.
 
 use ely_core::{
     buttons::{Button, ButtonVariant, IconButton},
@@ -92,6 +94,32 @@ impl State {
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }
+
+    /// Drops the selection when the listing no longer holds it: a refresh that
+    /// removed the file sends the right column back to the pick hint instead of
+    /// holding a diff of a file that is gone. The side is part of the match —
+    /// a file only in the worktree is not the staged row the reader picked.
+    /// The generation moves with the drop, so a read already in flight for the
+    /// vanished file cannot land on anything.
+    pub(crate) fn prune_selection(&mut self, files: &[ChangedFile]) -> bool {
+        let Some(selected) = self.selected.as_ref() else {
+            return false;
+        };
+        let kept = files.iter().any(|file| {
+            file.path == selected.path
+                && if selected.staged {
+                    file.staged()
+                } else {
+                    file.unstaged()
+                }
+        });
+        if kept {
+            return false;
+        }
+        self.selected = None;
+        self.generation = self.generation.wrapping_add(1);
+        true
+    }
 }
 
 /// What one diff line is, from its first character.
@@ -146,6 +174,26 @@ fn side<'a>(files: impl Iterator<Item = &'a ChangedFile>) -> Vec<&'a ChangedFile
     files.collect()
 }
 
+/// The file an arrow key lands on: one row down or up the drawn order (staged,
+/// then unstaged), clamped at the ends; with nothing picked, down takes the
+/// first row and up the last. Rows are told apart by path *and* side, so the
+/// same path on both index sides is two stops.
+pub(crate) fn step(files: &[Selected], current: Option<&Selected>, down: bool) -> Option<Selected> {
+    let at = |index: usize| files.get(index).cloned();
+    let position = current.and_then(|picked| {
+        files
+            .iter()
+            .position(|file| file.path == picked.path && file.staged == picked.staged)
+    });
+    match position {
+        None if down => files.first().cloned(),
+        None => files.last().cloned(),
+        Some(index) if down => at(index + 1).or_else(|| files.last().cloned()),
+        Some(0) => files.first().cloned(),
+        Some(index) => at(index - 1),
+    }
+}
+
 /// The modal over the shell, or nothing while it is closed.
 pub(crate) fn overlay(
     state: &State,
@@ -192,8 +240,22 @@ pub(crate) fn overlay(
     let staged = side(review.staged());
     let unstaged = side(review.unstaged());
     let total = staged.len() + unstaged.len();
+    // The rows an arrow walks, in the order they are drawn.
+    let order: Vec<Selected> = staged
+        .iter()
+        .map(|file| Selected {
+            path: file.path.clone(),
+            staged: true,
+            untracked: file.untracked,
+        })
+        .chain(unstaged.iter().map(|file| Selected {
+            path: file.path.clone(),
+            staged: false,
+            untracked: file.untracked,
+        }))
+        .collect();
 
-    let mut files = div().w(px(FILES)).flex_none().flex().flex_col().min_h_0();
+    let mut files = div().w_full().flex().flex_col();
     files = files.child(section_head(t("shell.review.staged"), staged.len(), cx));
     files = files.child(file_list(&staged, true, state, root, cx));
     files = files.child(section_head(t("shell.review.unstaged"), unstaged.len(), cx));
@@ -215,7 +277,14 @@ pub(crate) fn overlay(
         .flex()
         .border_t_1()
         .border_color(colors.border);
-    body = body.child(files);
+    body = body.child(
+        div().w(px(FILES)).flex_none().min_h_0().child(
+            ScrollArea::new("review-files")
+                .vertical()
+                .size_full()
+                .child(files),
+        ),
+    );
     body = body.child(
         div()
             .flex_1()
@@ -345,15 +414,39 @@ pub(crate) fn overlay(
         );
 
     let escaped = close.clone();
+    let picked = state.selected().cloned();
+    let arrow_root = root.clone();
     Some(
         Backdrop::new("review-scrim")
             .on_dismiss(move |window, cx| close(window, cx))
             .child(
                 div()
                     .on_key_down(move |event, window, cx| {
-                        if event.keystroke.key == "escape" {
-                            cx.stop_propagation();
-                            escaped(window, cx);
+                        match event.keystroke.key.as_str() {
+                            "escape" => {
+                                cx.stop_propagation();
+                                escaped(window, cx);
+                            }
+                            // The file column answers the keyboard too: the
+                            // next row is picked like a pressed one, so the
+                            // diff read carries the same generation guard.
+                            "up" | "down" => {
+                                cx.stop_propagation();
+                                let Some(next) =
+                                    step(&order, picked.as_ref(), event.keystroke.key == "down")
+                                else {
+                                    return;
+                                };
+                                arrow_root.update(cx, |root, cx| {
+                                    root.select_review_file(
+                                        next.path,
+                                        next.staged,
+                                        next.untracked,
+                                        cx,
+                                    )
+                                });
+                            }
+                            _ => {}
                         }
                     })
                     .child(
@@ -671,5 +764,102 @@ mod tests {
         assert_eq!(second, 2);
         assert_eq!(state.selected().map(|s| s.path.as_str()), Some("b.txt"));
         assert!(state.selected().unwrap().staged);
+    }
+
+    #[test]
+    fn a_selection_the_listing_still_holds_is_kept() {
+        let mut state = State::default();
+        state.select("a.txt".into(), false, false);
+        let worktree = ChangedFile {
+            path: "a.txt".into(),
+            worktree: 'M',
+            ..ChangedFile::default()
+        };
+        assert!(!state.prune_selection(&[worktree]));
+        assert_eq!(state.selected().map(|s| s.path.as_str()), Some("a.txt"));
+    }
+
+    #[test]
+    fn a_selection_vanished_from_the_listing_is_dropped() {
+        let mut state = State::default();
+        state.select("a.txt".into(), true, false);
+        let before = state.generation();
+        // The file is still there, but only on the worktree side: the staged
+        // row the reader picked is gone. (`index: ' '` is porcelain's "the
+        // index side is clean"; the struct's default is no letter at all.)
+        let only_worktree = ChangedFile {
+            path: "a.txt".into(),
+            index: ' ',
+            worktree: 'M',
+            ..ChangedFile::default()
+        };
+        assert!(state.prune_selection(&[only_worktree]));
+        assert!(state.selected().is_none());
+        assert_eq!(state.generation(), before + 1);
+    }
+
+    #[test]
+    fn the_arrows_walk_the_drawn_order_and_clamp() {
+        let files = vec![
+            Selected {
+                path: "s.txt".into(),
+                staged: true,
+                untracked: false,
+            },
+            Selected {
+                path: "u1.txt".into(),
+                staged: false,
+                untracked: true,
+            },
+            Selected {
+                path: "u2.txt".into(),
+                staged: false,
+                untracked: false,
+            },
+        ];
+        assert_eq!(
+            step(&files, None, true).map(|s| s.path),
+            Some("s.txt".to_string())
+        );
+        assert_eq!(
+            step(&files, None, false).map(|s| s.path),
+            Some("u2.txt".to_string())
+        );
+        let first = files[0].clone();
+        assert_eq!(
+            step(&files, Some(&first), true).map(|s| s.path),
+            Some("u1.txt".to_string())
+        );
+        let last = files[2].clone();
+        assert_eq!(
+            step(&files, Some(&last), true).map(|s| s.path),
+            Some("u2.txt".to_string())
+        );
+        assert_eq!(
+            step(&files, Some(&first), false).map(|s| s.path),
+            Some("s.txt".to_string())
+        );
+    }
+
+    #[test]
+    fn a_path_on_both_sides_is_two_stops() {
+        let files = vec![
+            Selected {
+                path: "a.txt".into(),
+                staged: true,
+                untracked: false,
+            },
+            Selected {
+                path: "a.txt".into(),
+                staged: false,
+                untracked: false,
+            },
+        ];
+        let staged = files[0].clone();
+        assert_eq!(
+            step(&files, Some(&staged), true),
+            Some(files[1].clone()),
+            "the next stop is the same path's other side",
+        );
     }
 }
