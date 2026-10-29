@@ -86,7 +86,7 @@ use crate::ai::engine::{
 };
 use crate::ai::roles::RoleRegistry;
 use crate::ai::session::{
-    ChatMessage, Session, SessionManager, ToolCallState, ToolCallStatus, UsageInfo,
+    ChatMessage, Entry, Session, SessionManager, ToolCallState, ToolCallStatus, UsageInfo,
 };
 use crate::ai::tools::{Tool, ToolCall, ToolExecutor, builtin_tools};
 use crate::api_provider::{self, ApiProviderConfig, ThinkingLevel};
@@ -514,9 +514,18 @@ impl ChatView {
     /// Fold one event into the streaming message.
     fn apply(&mut self, event: DispatchStreamEvent, cx: &mut Context<Self>) {
         let now = now_ms();
-        if matches!(event, DispatchStreamEvent::Thinking { .. }) && self.reasoning_started.is_none()
+        // A reasoning run is the stretch between its first thinking token and
+        // the next thing the model does. When that next thing arrives, the run
+        // closes with its measured duration.
+        if matches!(event, DispatchStreamEvent::Thinking { .. }) {
+            if self.reasoning_started.is_none() {
+                self.reasoning_started = Some(now);
+            }
+        } else if let Some(start) = self.reasoning_started.take()
+            && let Some(index) = self.streaming
+            && let Some(message) = self.messages.get_mut(index)
         {
-            self.reasoning_started = Some(now);
+            close_reasoning(message, now.saturating_sub(start));
         }
         // The two legs of a tool call, logged where the UI sees them: a card on
         // screen and a line in the log are evidence of the same thing.
@@ -560,21 +569,20 @@ impl ChatView {
         if let Some(index) = self.streaming.take()
             && let Some(message) = self.messages.get_mut(index)
         {
-            if thought_for.is_some() && message.reasoning_duration_ms.is_none() {
-                message.reasoning_duration_ms = thought_for;
+            if let Some(took) = thought_for {
+                close_reasoning(message, took);
             }
             tracing::info!(
                 target: "zenix-chat",
                 chars = message.content.chars().count(),
-                tools = message.tool_calls.len(),
+                entries = message.entries.len(),
                 "turn finished"
             );
             // An answer with nothing in it — a turn that failed before its
             // first token — is not a message anyone will want to read back:
             // the retry drops it rather than saving it.
             let said_something = !message.content.is_empty()
-                || !message.tool_calls.is_empty()
-                || message.reasoning_text.is_some()
+                || !message.entries.is_empty()
                 || message.usage.is_some();
             if said_something {
                 persist(message);
@@ -1009,25 +1017,18 @@ impl ChatView {
                 .pending_approval
                 .as_ref()
                 .map(|request| request.id.clone());
-            let tool_calls: Vec<ToolCallState> = message
-                .tool_calls
-                .iter()
-                .filter(|call| awaiting.as_deref() != Some(call.id.as_str()))
-                .cloned()
-                .collect();
+            let rows = transcript_rows(
+                message,
+                awaiting.as_deref(),
+                streaming,
+                self.reasoning_started,
+                now_ms(),
+            );
             return Some(RowModel::Message(MessageModel {
                 user,
                 streaming,
                 content: message.content.clone(),
-                reasoning: message.reasoning_text.clone(),
-                reasoning_took_ms: if streaming {
-                    self.reasoning_started
-                        .map(|start| now_ms().saturating_sub(start))
-                        .or(message.reasoning_duration_ms)
-                } else {
-                    message.reasoning_duration_ms
-                },
-                tool_calls,
+                rows,
                 usage: message.usage,
                 at: timestamp_of(&message.timestamp),
                 can_retry: !user && !streaming && index + 1 == self.messages.len(),
@@ -1068,14 +1069,86 @@ struct MessageModel {
     user: bool,
     streaming: bool,
     content: String,
-    reasoning: Option<String>,
-    reasoning_took_ms: Option<u64>,
-    tool_calls: Vec<ToolCallState>,
+    /// The turn's timeline in arrival order, ready to draw.
+    rows: Vec<TranscriptRow>,
     usage: Option<UsageInfo>,
     at: Option<jiff::Timestamp>,
     can_retry: bool,
     can_edit: bool,
     editing: bool,
+}
+
+/// One row of a turn's timeline: a thought, a run of consecutive steps, or a
+/// run of text. The rows are built in arrival order, so the reader sees the
+/// turn as it happened rather than three sorted piles.
+enum TranscriptRow {
+    Reasoning {
+        text: String,
+        took_ms: Option<u64>,
+        /// This is the run still being written.
+        live: bool,
+    },
+    /// Consecutive steps, before `step_runs` decides which of them fold.
+    Steps(Vec<ToolCallState>),
+    Text {
+        text: String,
+        live: bool,
+    },
+}
+
+/// Build the timeline to draw. The call the approval gate is asking about is
+/// taken out of its run — the gate's card is that call — and the rest keep
+/// their order. A text run breaks a step run: a group never spans a paragraph.
+fn transcript_rows(
+    message: &ChatMessage,
+    awaiting: Option<&str>,
+    streaming: bool,
+    reasoning_started: Option<u64>,
+    now_ms: u64,
+) -> Vec<TranscriptRow> {
+    let entries = &message.entries;
+    let mut rows = Vec::new();
+    let mut index = 0;
+    while index < entries.len() {
+        let live = streaming && index + 1 == entries.len();
+        match &entries[index] {
+            Entry::Reasoning { text, duration_ms } => {
+                let took_ms = duration_ms.or_else(|| {
+                    live.then(|| reasoning_started.map(|start| now_ms.saturating_sub(start)))
+                        .flatten()
+                });
+                rows.push(TranscriptRow::Reasoning {
+                    text: text.clone(),
+                    took_ms,
+                    live,
+                });
+                index += 1;
+            }
+            Entry::Text { text } => {
+                rows.push(TranscriptRow::Text {
+                    text: text.clone(),
+                    live,
+                });
+                index += 1;
+            }
+            Entry::Step { .. } => {
+                let mut calls = Vec::new();
+                while index < entries.len() {
+                    let Entry::Step { call } = &entries[index] else {
+                        break;
+                    };
+                    if awaiting != Some(call.id.as_str()) {
+                        calls.push(call.clone());
+                    }
+                    index += 1;
+                }
+                if !calls.is_empty() {
+                    rows.push(TranscriptRow::Steps(calls));
+                }
+            }
+        }
+    }
+    rows
 }
 
 struct ApprovalModel {
@@ -2485,37 +2558,42 @@ fn assistant_block(
 ) -> AnyElement {
     let streaming = message.streaming;
     let mut block = div().w_full().flex().flex_col().gap_3().pb_6();
-    if let Some(reasoning) = message.reasoning.as_deref() {
-        block = block.child(reasoning_block(
-            index,
-            reasoning,
-            streaming,
-            message.reasoning_took_ms,
-            window,
-            cx,
-        ));
-    }
-    for run in step_runs(&message.tool_calls) {
-        block = block.child(match run {
-            StepRun::One(call) => tool_call(index, call, window, cx),
-            StepRun::Group { family, calls } => step_group(index, family, calls, window, cx),
+    for (row_index, row) in message.rows.iter().enumerate() {
+        block = block.child(match row {
+            TranscriptRow::Reasoning {
+                text,
+                took_ms,
+                live,
+            } => reasoning_block(index, row_index, text, *live, *took_ms, window, cx),
+            TranscriptRow::Steps(calls) => {
+                let mut steps = div().w_full().flex().flex_col().gap_1();
+                for run in step_runs(calls) {
+                    steps = steps.child(match run {
+                        StepRun::One(call) => tool_call(index, call, window, cx),
+                        StepRun::Group { family, calls } => {
+                            step_group(index, family, calls, window, cx)
+                        }
+                    });
+                }
+                steps.into_any_element()
+            }
+            TranscriptRow::Text { text, live } => {
+                let theme = cx.theme();
+                div()
+                    .w_full()
+                    .text_size(theme.text_size(TextSize::Base))
+                    .line_height(relative(1.6))
+                    .text_color(theme.colors.fg)
+                    .child(StreamingMarkdown::new(
+                        SharedString::from(format!("chat-md-{index}-{row_index}")),
+                        text.clone(),
+                        *live,
+                    ))
+                    .into_any_element()
+            }
         });
     }
-    if !message.content.is_empty() {
-        let theme = cx.theme();
-        block = block.child(
-            div()
-                .w_full()
-                .text_size(theme.text_size(TextSize::Base))
-                .line_height(relative(1.6))
-                .text_color(theme.colors.fg)
-                .child(StreamingMarkdown::new(
-                    ("chat-md", index),
-                    message.content.clone(),
-                    streaming,
-                )),
-        );
-    } else if streaming && message.reasoning.is_none() {
+    if streaming && message.rows.is_empty() {
         block = block
             .child(ThinkingIndicator::new(("chat-waiting", index)).label(t("ai.chat.streaming")));
     }
@@ -2791,7 +2869,9 @@ fn tool_call(
     let status = match call.status {
         ToolCallStatus::Running => StepState::Working,
         ToolCallStatus::Completed => StepState::Done,
-        ToolCallStatus::Failed => StepState::Failed,
+        // An interrupted call never got an answer; it wears the failed mark
+        // rather than pretending to still be working.
+        ToolCallStatus::Failed | ToolCallStatus::Interrupted => StepState::Failed,
     };
     let id = gpui::ElementId::from(SharedString::from(format!(
         "chat-tool-{message_index}-{}",
@@ -3107,13 +3187,14 @@ fn thought_words(streaming: bool, took_ms: Option<u64>) -> (String, Option<Strin
 /// so its words follow the reader's locale; the library draws the text inside.
 fn reasoning_block(
     index: usize,
+    run: usize,
     reasoning: &str,
     streaming: bool,
     took_ms: Option<u64>,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let id = SharedString::from(format!("chat-thinking-{index}"));
+    let id = SharedString::from(format!("chat-thinking-{index}-{run}"));
     let key = gpui::ElementId::from(id.clone());
     let open = window.use_keyed_state((key.clone(), "open"), cx, |_, _| false);
     let opened = *open.read(cx);
@@ -3550,9 +3631,7 @@ fn message(session_id: &str, role: &str, content: String, sequence: i64) -> Chat
         role: role.to_owned(),
         content,
         agent_activities: None,
-        reasoning_text: None,
-        reasoning_duration_ms: None,
-        tool_calls: Vec::new(),
+        entries: Vec::new(),
         usage: None,
         timestamp: crate::util::timestamp_now(),
         sequence,
@@ -3696,24 +3775,24 @@ fn fold_event(message: &mut ChatMessage, event: &DispatchStreamEvent, now_ms: u6
     match event {
         DispatchStreamEvent::Token(text) => {
             message.content.push_str(text);
+            append_text(&mut message.entries, text);
             Folded::Message
         }
         DispatchStreamEvent::Thinking { text, .. } => {
-            message
-                .reasoning_text
-                .get_or_insert_with(String::new)
-                .push_str(text);
+            append_reasoning(&mut message.entries, text);
             Folded::Message
         }
         DispatchStreamEvent::ToolCall { id, name, args } => {
-            message.tool_calls.push(ToolCallState {
-                id: id.clone(),
-                name: name.clone(),
-                args: args.clone(),
-                status: ToolCallStatus::Running,
-                result_summary: None,
-                started_at: now_ms,
-                completed_at: None,
+            message.entries.push(Entry::Step {
+                call: ToolCallState {
+                    id: id.clone(),
+                    name: name.clone(),
+                    args: args.clone(),
+                    status: ToolCallStatus::Running,
+                    result_summary: None,
+                    started_at: now_ms,
+                    completed_at: None,
+                },
             });
             Folded::Message
         }
@@ -3725,19 +3804,19 @@ fn fold_event(message: &mut ChatMessage, event: &DispatchStreamEvent, now_ms: u6
         } => {
             // The last call with this id: a model that reuses an id gets a
             // second card rather than an answer landing on the wrong one.
-            if let Some(call) = message
-                .tool_calls
-                .iter_mut()
-                .rev()
-                .find(|call| &call.id == id)
-            {
-                call.status = if *is_error {
-                    ToolCallStatus::Failed
-                } else {
-                    ToolCallStatus::Completed
-                };
-                call.result_summary = Some(summarize(content, 160));
-                call.completed_at = Some(now_ms);
+            for entry in message.entries.iter_mut().rev() {
+                if let Entry::Step { call } = entry
+                    && &call.id == id
+                {
+                    call.status = if *is_error {
+                        ToolCallStatus::Failed
+                    } else {
+                        ToolCallStatus::Completed
+                    };
+                    call.result_summary = Some(summarize(content, 160));
+                    call.completed_at = Some(now_ms);
+                    break;
+                }
             }
             Folded::Message
         }
@@ -3747,7 +3826,8 @@ fn fold_event(message: &mut ChatMessage, event: &DispatchStreamEvent, now_ms: u6
             // which is where the clock is. A round that starts after a tool
             // result is a new block of text — the model's own first round may
             // have ended mid-line — so the join is a paragraph break rather
-            // than a run-on ("…now.## Heading").
+            // than a run-on ("…now.## Heading"). The timeline keeps the same
+            // rule: the text run after a step is its own entry.
             if !message.content.is_empty() && !message.content.ends_with('\n') {
                 message.content.push_str("\n\n");
             } else if !message.content.is_empty() && !message.content.ends_with("\n\n") {
@@ -3769,6 +3849,39 @@ fn fold_event(message: &mut ChatMessage, event: &DispatchStreamEvent, now_ms: u6
         DispatchStreamEvent::Dispatch(_)
         | DispatchStreamEvent::AgentOutput { .. }
         | DispatchStreamEvent::AgentComplete(_) => Folded::Message,
+    }
+}
+
+/// Text keeps extending the run it belongs to; anything else between two text
+/// tokens — a step, a thought — ends the run and starts a new one.
+fn append_text(entries: &mut Vec<Entry>, text: &str) {
+    if let Some(Entry::Text { text: current }) = entries.last_mut() {
+        current.push_str(text);
+        return;
+    }
+    entries.push(Entry::Text {
+        text: text.to_owned(),
+    });
+}
+
+fn append_reasoning(entries: &mut Vec<Entry>, text: &str) {
+    if let Some(Entry::Reasoning { text: current, .. }) = entries.last_mut() {
+        current.push_str(text);
+        return;
+    }
+    entries.push(Entry::Reasoning {
+        text: text.to_owned(),
+        duration_ms: None,
+    });
+}
+
+/// Stamp the reasoning run that just ended. The run is the last entry by
+/// construction: this is called on the first non-thinking event after it.
+fn close_reasoning(message: &mut ChatMessage, took_ms: u64) {
+    if let Some(Entry::Reasoning { duration_ms, .. }) = message.entries.last_mut()
+        && duration_ms.is_none()
+    {
+        *duration_ms = Some(took_ms);
     }
 }
 
@@ -3828,8 +3941,19 @@ mod tests {
         );
         fold_event(&mut message, &DispatchStreamEvent::Token("The ".into()), 12);
         fold_event(&mut message, &DispatchStreamEvent::Token("plan".into()), 13);
-        assert_eq!(message.reasoning_text.as_deref(), Some("check dates"));
         assert_eq!(message.content, "The plan");
+        assert_eq!(
+            message.entries,
+            vec![
+                Entry::Reasoning {
+                    text: "check dates".into(),
+                    duration_ms: None
+                },
+                Entry::Text {
+                    text: "The plan".into()
+                },
+            ]
+        );
     }
 
     #[test]
@@ -3854,7 +3978,9 @@ mod tests {
             },
             140,
         );
-        let call = &message.tool_calls[0];
+        let Entry::Step { call } = &message.entries[0] else {
+            panic!("the call is the turn's only entry");
+        };
         assert_eq!(call.status, ToolCallStatus::Completed);
         assert_eq!(call.result_summary.as_deref(), Some("line one line two"));
         assert_eq!(call.started_at, 100);
@@ -3883,7 +4009,248 @@ mod tests {
             },
             2,
         );
-        assert_eq!(message.tool_calls[0].status, ToolCallStatus::Failed);
+        let Entry::Step { call } = &message.entries[0] else {
+            panic!("the call is the turn's only entry");
+        };
+        assert_eq!(call.status, ToolCallStatus::Failed);
+    }
+
+    /// The timeline is the order things happened: a thought, the text that
+    /// followed it, the step it led to, then the next round's thought and
+    /// text. The old shape kept three piles (thoughts, steps, text) and could
+    /// not say where a step sat between two paragraphs.
+    #[test]
+    fn a_turn_keeps_its_entries_in_arrival_order() {
+        let mut message = a_placeholder();
+        fold_event(
+            &mut message,
+            &DispatchStreamEvent::Thinking {
+                round: 0,
+                text: "look".into(),
+            },
+            1,
+        );
+        close_reasoning(&mut message, 500);
+        fold_event(
+            &mut message,
+            &DispatchStreamEvent::Token("Reading.".into()),
+            600,
+        );
+        fold_event(
+            &mut message,
+            &DispatchStreamEvent::ToolCall {
+                id: "c1".into(),
+                name: "read_output".into(),
+                args: serde_json::json!({}),
+            },
+            700,
+        );
+        fold_event(
+            &mut message,
+            &DispatchStreamEvent::ToolResult {
+                id: "c1".into(),
+                tool_name: "read_output".into(),
+                content: "ok".into(),
+                is_error: false,
+            },
+            800,
+        );
+        fold_event(
+            &mut message,
+            &DispatchStreamEvent::Thinking {
+                round: 1,
+                text: "done".into(),
+            },
+            900,
+        );
+        fold_event(
+            &mut message,
+            &DispatchStreamEvent::Token("Done.".into()),
+            950,
+        );
+        let kinds: Vec<&str> = message
+            .entries
+            .iter()
+            .map(|entry| match entry {
+                Entry::Reasoning { .. } => "reasoning",
+                Entry::Step { .. } => "step",
+                Entry::Text { .. } => "text",
+            })
+            .collect();
+        assert_eq!(
+            kinds,
+            vec!["reasoning", "text", "step", "reasoning", "text"]
+        );
+        assert_eq!(
+            message.entries[0],
+            Entry::Reasoning {
+                text: "look".into(),
+                duration_ms: Some(500),
+            }
+        );
+        // A run that already has its duration keeps it.
+        close_reasoning(&mut message, 99);
+        let Entry::Reasoning { duration_ms, .. } = &message.entries[0] else {
+            panic!("the first entry is the thought");
+        };
+        assert_eq!(*duration_ms, Some(500));
+    }
+
+    /// Rows follow the entries: text ends a step run, so the steps on either
+    /// side of a paragraph are drawn as separate runs.
+    #[test]
+    fn the_rows_follow_the_entries_and_text_breaks_a_run() {
+        let mut message = a_placeholder();
+        message.entries = vec![
+            Entry::Reasoning {
+                text: "think".into(),
+                duration_ms: Some(900),
+            },
+            Entry::Text {
+                text: "Reading.".into(),
+            },
+            Entry::Step {
+                call: a_call(
+                    "c1",
+                    "send_text",
+                    serde_json::json!({ "text": "ls" }),
+                    ToolCallStatus::Completed,
+                ),
+            },
+            Entry::Step {
+                call: a_call(
+                    "c2",
+                    "send_text",
+                    serde_json::json!({ "text": "pwd" }),
+                    ToolCallStatus::Completed,
+                ),
+            },
+            Entry::Text {
+                text: "Done.".into(),
+            },
+            Entry::Step {
+                call: a_call(
+                    "c3",
+                    "send_text",
+                    serde_json::json!({ "text": "git status" }),
+                    ToolCallStatus::Completed,
+                ),
+            },
+        ];
+        let rows = transcript_rows(&message, None, false, None, 0);
+        assert_eq!(rows.len(), 5, "six entries, two of them one step run");
+        match &rows[0] {
+            TranscriptRow::Reasoning { took_ms, .. } => assert_eq!(*took_ms, Some(900)),
+            _ => panic!("the thought comes first"),
+        }
+        match &rows[1] {
+            TranscriptRow::Text { text, live } => {
+                assert_eq!(text, "Reading.");
+                assert!(!live);
+            }
+            _ => panic!("then the text"),
+        }
+        match &rows[2] {
+            TranscriptRow::Steps(calls) => {
+                assert_eq!(calls.len(), 2, "consecutive steps are one run");
+            }
+            _ => panic!("then the run"),
+        }
+        match &rows[3] {
+            TranscriptRow::Text { text, .. } => assert_eq!(text, "Done."),
+            _ => panic!("text ends the run"),
+        }
+        match &rows[4] {
+            TranscriptRow::Steps(calls) => assert_eq!(calls.len(), 1),
+            _ => panic!("a step after a paragraph is its own run"),
+        }
+    }
+
+    /// The call the gate is asking about is drawn by the gate; the timeline
+    /// leaves it out and keeps the rest of the run together.
+    #[test]
+    fn the_gate_s_call_leaves_its_run() {
+        let mut message = a_placeholder();
+        message.entries = vec![
+            Entry::Step {
+                call: a_call(
+                    "c1",
+                    "send_text",
+                    serde_json::json!({}),
+                    ToolCallStatus::Completed,
+                ),
+            },
+            Entry::Step {
+                call: a_call(
+                    "c2",
+                    "send_text",
+                    serde_json::json!({}),
+                    ToolCallStatus::Running,
+                ),
+            },
+            Entry::Step {
+                call: a_call(
+                    "c3",
+                    "send_text",
+                    serde_json::json!({}),
+                    ToolCallStatus::Completed,
+                ),
+            },
+        ];
+        let rows = transcript_rows(&message, Some("c2"), false, None, 0);
+        match &rows[0] {
+            TranscriptRow::Steps(calls) => {
+                let ids: Vec<&str> = calls.iter().map(|call| call.id.as_str()).collect();
+                assert_eq!(ids, vec!["c1", "c3"]);
+            }
+            _ => panic!("one run remains"),
+        }
+        // A run that was only the asked call leaves nothing to draw.
+        let mut alone = a_placeholder();
+        alone.entries = vec![Entry::Step {
+            call: a_call(
+                "c1",
+                "send_text",
+                serde_json::json!({}),
+                ToolCallStatus::Running,
+            ),
+        }];
+        assert!(transcript_rows(&alone, Some("c1"), false, None, 0).is_empty());
+    }
+
+    /// Only the last entry is still being written; an open thought shows the
+    /// view's clock, and an older run keeps the duration it was stamped with.
+    #[test]
+    fn only_the_last_entry_is_live() {
+        let mut message = a_placeholder();
+        message.entries = vec![
+            Entry::Text { text: "hi".into() },
+            Entry::Reasoning {
+                text: "late".into(),
+                duration_ms: None,
+            },
+        ];
+        let rows = transcript_rows(&message, None, true, Some(1_000), 4_500);
+        match &rows[0] {
+            TranscriptRow::Text { live, .. } => assert!(!live),
+            _ => panic!("text first"),
+        }
+        match &rows[1] {
+            TranscriptRow::Reasoning { live, took_ms, .. } => {
+                assert!(*live);
+                assert_eq!(*took_ms, Some(3_500));
+            }
+            _ => panic!("the open thought is last"),
+        }
+        // Once the turn is over the same rows are frozen, clock and all.
+        let after = transcript_rows(&message, None, false, Some(1_000), 9_000);
+        match &after[1] {
+            TranscriptRow::Reasoning { live, took_ms, .. } => {
+                assert!(!live);
+                assert_eq!(*took_ms, None);
+            }
+            _ => panic!("the thought is still last"),
+        }
     }
 
     /// A round that begins after a tool result is a new block: the join is a

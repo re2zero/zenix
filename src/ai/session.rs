@@ -6,6 +6,7 @@ use std::sync::Mutex;
 
 use anyhow::{Context, Result};
 use rusqlite::{Connection, params};
+use serde::{Deserialize, Serialize};
 
 use crate::platform;
 
@@ -21,15 +22,19 @@ pub struct Session {
 }
 
 /// Status of a streaming tool call.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ToolCallStatus {
     Running,
     Completed,
     Failed,
+    /// The app stopped before the call answered — a reload, not the tool's
+    /// own failure. Only ever produced when a stored turn is read back.
+    Interrupted,
 }
 
 /// State for a single tool call during streaming.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ToolCallState {
     pub id: String,
     pub name: String,
@@ -38,6 +43,25 @@ pub struct ToolCallState {
     pub result_summary: Option<String>,
     pub started_at: u64,
     pub completed_at: Option<u64>,
+}
+
+/// One piece of a turn, in the order it arrived: what the model thought, the
+/// tools it used, and what it said. The store keeps this as JSON beside the
+/// message's plain text, so a reloaded conversation has the timeline the live
+/// one had — the text alone cannot say where a step sat between two
+/// paragraphs.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Entry {
+    /// A run of thinking; `duration_ms` is filled in when the run ends.
+    Reasoning {
+        text: String,
+        duration_ms: Option<u64>,
+    },
+    /// A tool call and its outcome.
+    Step { call: ToolCallState },
+    /// A run of visible text.
+    Text { text: String },
 }
 
 /// The token bill an API reported for one turn: what went in, what came out.
@@ -60,17 +84,15 @@ pub struct ChatMessage {
     pub id: i64,
     pub session_id: String,
     pub role: String,
+    /// The turn's plain text: what the model wrote, what the API is sent back,
+    /// and what full-text search indexes. The ordered timeline lives in
+    /// `entries`.
     pub content: String,
     pub agent_activities: Option<String>,
-    /// Reasoning/thinking content shown as a collapsible block above the
-    /// main text. Set during streaming via `DispatchStreamEvent::Thinking`.
-    /// Not persisted to SQLite — ephemeral display-only field.
-    pub reasoning_text: Option<String>,
-    /// Elapsed time for reasoning in milliseconds, set on stream completion.
-    /// Displayed in the collapsed reasoning block header as "Thought: Xms".
-    pub reasoning_duration_ms: Option<u64>,
-    /// Tool calls made during this message (ephemeral, not persisted).
-    pub tool_calls: Vec<ToolCallState>,
+    /// The turn's timeline in arrival order. Reasoning runs and steps are not
+    /// in `content`, so a reloaded turn that kept only the text would lose
+    /// them; the store keeps this JSON beside the text.
+    pub entries: Vec<Entry>,
     /// The token bill the API reported for this turn, if it reported one
     /// (ephemeral, not persisted).
     pub usage: Option<UsageInfo>,
@@ -167,6 +189,7 @@ CREATE TABLE IF NOT EXISTS messages (
     role TEXT NOT NULL CHECK (role IN ('user', 'orchestrator')),
     content TEXT NOT NULL,
     agent_activities TEXT,
+    entries TEXT,
     timestamp TEXT NOT NULL DEFAULT (datetime('now')),
     sequence INTEGER NOT NULL
 );
@@ -290,6 +313,29 @@ impl SessionManager {
         conn.execute_batch("PRAGMA foreign_keys=ON;")
             .context("enable foreign_keys")?;
         conn.execute_batch(SCHEMA_SQL).context("apply schema")?;
+        Self::migrate(conn)?;
+        Ok(())
+    }
+
+    /// Bring a store written before the timeline existed up to date: the
+    /// `entries` column arrives empty, and reads fill it from `content`.
+    fn migrate(conn: &Connection) -> Result<()> {
+        let mut stmt = conn
+            .prepare("PRAGMA table_info(messages)")
+            .context("inspect messages columns")?;
+        let columns = stmt
+            .query_map([], |row| row.get::<_, String>(1))
+            .context("read messages columns")?;
+        let mut has_entries = false;
+        for column in columns {
+            if column.context("read messages column")? == "entries" {
+                has_entries = true;
+            }
+        }
+        if !has_entries {
+            conn.execute_batch("ALTER TABLE messages ADD COLUMN entries TEXT")
+                .context("add the entries column")?;
+        }
         Ok(())
     }
 
@@ -424,18 +470,20 @@ impl SessionManager {
     }
 
     pub fn add_message(&self, msg: &ChatMessage) -> Result<()> {
+        let entries = serde_json::to_string(&msg.entries).context("serialize message entries")?;
         self.conn
             .lock()
             .unwrap()
             .execute(
                 "INSERT INTO messages
-                    (session_id, role, content, agent_activities, timestamp, sequence)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                    (session_id, role, content, agent_activities, entries, timestamp, sequence)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     msg.session_id,
                     msg.role,
                     msg.content,
                     msg.agent_activities,
+                    entries,
                     msg.timestamp,
                     msg.sequence,
                 ],
@@ -450,7 +498,7 @@ impl SessionManager {
         let mut stmt = conn
             .prepare(
                 "SELECT id, session_id, role, content, agent_activities,
-                        timestamp, sequence
+                        entries, timestamp, sequence
                  FROM messages WHERE session_id = ?1 ORDER BY sequence ASC",
             )
             .context("prepare get_messages")?;
@@ -609,18 +657,19 @@ fn map_session_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Session> {
 }
 
 fn map_message_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<ChatMessage> {
+    let role: String = row.get(2)?;
+    let content: String = row.get(3)?;
+    let raw: Option<String> = row.get(5)?;
     Ok(ChatMessage {
         id: row.get(0)?,
         session_id: row.get(1)?,
-        role: row.get(2)?,
-        content: row.get(3)?,
+        entries: read_entries(&role, &content, raw.as_deref()),
+        role,
+        content,
         agent_activities: row.get(4)?,
-        reasoning_text: None,
-        reasoning_duration_ms: None,
-        tool_calls: Vec::new(),
         usage: None,
-        timestamp: row.get(5)?,
-        sequence: row.get(6)?,
+        timestamp: row.get(6)?,
+        sequence: row.get(7)?,
     })
 }
 
@@ -633,9 +682,7 @@ fn map_search_hit_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SearchHit> {
             role: row.get(2)?,
             content: row.get(3)?,
             agent_activities: row.get(4)?,
-            reasoning_text: None,
-            reasoning_duration_ms: None,
-            tool_calls: Vec::new(),
+            entries: Vec::new(),
             usage: None,
             timestamp: row.get(5)?,
             sequence: row.get(6)?,
@@ -643,6 +690,29 @@ fn map_search_hit_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<SearchHit> {
         session_title: row.get(7)?,
         snippet: row.get(8)?,
     })
+}
+
+/// A stored turn's timeline. A row written before `entries` existed has none —
+/// its text is the whole of what can still be shown. A step that was still
+/// running when the app stopped is reported as interrupted rather than left to
+/// spin forever: nothing will ever answer it now.
+fn read_entries(role: &str, content: &str, raw: Option<&str>) -> Vec<Entry> {
+    let mut entries: Vec<Entry> = raw
+        .and_then(|text| serde_json::from_str(text).ok())
+        .unwrap_or_default();
+    if entries.is_empty() && role != "user" && !content.is_empty() {
+        entries.push(Entry::Text {
+            text: content.to_owned(),
+        });
+    }
+    for entry in &mut entries {
+        if let Entry::Step { call } = entry
+            && call.status == ToolCallStatus::Running
+        {
+            call.status = ToolCallStatus::Interrupted;
+        }
+    }
+    entries
 }
 
 /// Sanitize a raw user query into a safe FTS5 MATCH expression.
@@ -693,13 +763,122 @@ mod tests {
             role: role.to_string(),
             content: content.to_string(),
             agent_activities: None,
-            reasoning_text: None,
-            reasoning_duration_ms: None,
-            tool_calls: Vec::new(),
+            entries: Vec::new(),
             usage: None,
             timestamp: "2024-01-01T00:00:00".to_string(),
             sequence: seq,
         }
+    }
+
+    /// A step that has already answered, so a round trip cannot mistake it for
+    /// one the app left behind.
+    fn a_completed_step(id: &str) -> ToolCallState {
+        ToolCallState {
+            id: id.to_string(),
+            name: "read_output".to_string(),
+            args: serde_json::json!({ "pane_id": "w1:p1" }),
+            status: ToolCallStatus::Completed,
+            result_summary: Some("20 lines".to_string()),
+            started_at: 1_000,
+            completed_at: Some(1_040),
+        }
+    }
+
+    #[test]
+    fn a_turn_keeps_its_timeline_across_a_reload() {
+        let mgr = SessionManager::open_in_memory().unwrap();
+        mgr.create_session(&make_session("timeline", "Timeline"))
+            .unwrap();
+        let mut message = make_message("timeline", "orchestrator", "Read it. Done.", 1);
+        message.entries = vec![
+            Entry::Reasoning {
+                text: "Let me look.".to_string(),
+                duration_ms: Some(900),
+            },
+            Entry::Text {
+                text: "Reading it now.".to_string(),
+            },
+            Entry::Step {
+                call: a_completed_step("call_1"),
+            },
+            Entry::Text {
+                text: "Done.".to_string(),
+            },
+        ];
+        mgr.add_message(&message).unwrap();
+
+        let loaded = mgr.get_messages("timeline").unwrap();
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].content, "Read it. Done.");
+        assert_eq!(loaded[0].entries, message.entries);
+    }
+
+    #[test]
+    fn a_row_written_before_the_timeline_reads_back_as_its_text() {
+        let conn = Connection::open_in_memory().unwrap();
+        // The store as it was before `entries`: no column, one assistant row.
+        conn.execute_batch(
+            "CREATE TABLE sessions (
+                id TEXT PRIMARY KEY, title TEXT NOT NULL DEFAULT 'New Chat',
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+                workspace TEXT, provider_id TEXT NOT NULL, model TEXT NOT NULL,
+                thinking_level TEXT NOT NULL DEFAULT 'medium'
+            );
+            CREATE TABLE messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+                role TEXT NOT NULL, content TEXT NOT NULL, agent_activities TEXT,
+                timestamp TEXT NOT NULL DEFAULT (datetime('now')),
+                sequence INTEGER NOT NULL
+            );",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO sessions (id, provider_id, model) VALUES ('old', 'p', 'm')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO messages (session_id, role, content, sequence)
+             VALUES ('old', 'orchestrator', 'The old answer.', 1)",
+            [],
+        )
+        .unwrap();
+        SessionManager::init(&conn).unwrap();
+        let mgr = SessionManager {
+            conn: Mutex::new(conn),
+        };
+
+        let loaded = mgr.get_messages("old").unwrap();
+        assert_eq!(
+            loaded[0].entries,
+            vec![Entry::Text {
+                text: "The old answer.".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn a_step_still_running_when_the_app_stopped_reads_back_interrupted() {
+        let mgr = SessionManager::open_in_memory().unwrap();
+        mgr.create_session(&make_session("cut", "Cut")).unwrap();
+        let mut message = make_message("cut", "orchestrator", "", 1);
+        message.entries = vec![Entry::Step {
+            call: ToolCallState {
+                status: ToolCallStatus::Running,
+                result_summary: None,
+                completed_at: None,
+                ..a_completed_step("call_1")
+            },
+        }];
+        mgr.add_message(&message).unwrap();
+
+        let loaded = mgr.get_messages("cut").unwrap();
+        let Entry::Step { call } = &loaded[0].entries[0] else {
+            panic!("expected a step");
+        };
+        assert_eq!(call.status, ToolCallStatus::Interrupted);
     }
 
     #[test]
