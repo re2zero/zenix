@@ -470,6 +470,9 @@ impl Root {
     fn read_review(&mut self, cx: &mut Context<Self>) {
         self.review_state = self.review_host.state();
         self.review_diff = self.review_host.diff();
+        // A refresh can take the picked file out of the listing; the sheet
+        // goes back to the pick hint rather than holding a stale diff.
+        self.review.prune_selection(&self.review_state.files);
         cx.notify();
     }
 
