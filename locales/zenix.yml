@@ -993,6 +993,44 @@ ai:
     effort:
       en: "Reasoning effort"
       zh-CN: "推理力度"
+    # The composer's own row: its command menu, the gate's two modes, its
+    # round send, and the model chip's popup.
+    commands:
+      en: "Commands"
+      zh-CN: "命令"
+    permission_ask:
+      en: "Ask each time"
+      zh-CN: "每次询问"
+    permission_full:
+      en: "Full access"
+      zh-CN: "完全访问"
+    permission_ask_hint:
+      en: "Every tool call waits for your answer."
+      zh-CN: "每次工具调用都等你确认。"
+    permission_full_hint:
+      en: "Tools run without asking; this sitting only."
+      zh-CN: "工具调用不再询问；仅本次会话有效。"
+    menu_providers:
+      en: "Provider"
+      zh-CN: "提供商"
+    menu_models:
+      en: "Model"
+      zh-CN: "模型"
+    vision:
+      en: "Vision"
+      zh-CN: "视觉"
+    no_models:
+      en: "This provider lists no models; add them on the models page."
+      zh-CN: "该提供商没有模型；请在模型页添加。"
+    send:
+      en: "Send"
+      zh-CN: "发送"
+    save_failed:
+      en: "The choice could not be written: %{error}"
+      zh-CN: "写入失败：%{error}"
+    provider_gone:
+      en: "That provider is no longer in the file."
+      zh-CN: "该提供商已不在文件中。"
     history:
       en: "History"
       zh-CN: "历史"
