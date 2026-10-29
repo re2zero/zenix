@@ -33,10 +33,12 @@
 //! (`ToolCallCard` labels its folds "Arguments" / "Result" / "Error"), the
 //! error card (`ErrorMessage` says "Try again"), the approval gate
 //! (`PermissionPrompt`'s three answers are English) and the message footer's
-//! actions (`MessageActions` tooltips). The library still draws the frames:
-//! `ChatContainer`, `MessageList`, `MessageBubble`, `StreamingMarkdown`,
-//! `StreamingText`, `SuggestionChips`, `ThinkingIndicator`, `CodeBlock`,
-//! `step_mark` and `InlineEdit`.
+//! actions (`MessageActions` tooltips). Since U5 the conversation is drawn as
+//! blocks rather than bubbles: a user turn is a narrow strip on the right, the
+//! model's words are the full column, and a tool call is one flat step row —
+//! no avatar, no name, no role label. The library still draws the frame and the
+//! text: `ChatContainer`, `MessageList`, `StreamingMarkdown`, `StreamingText`,
+//! `SuggestionChips`, `ThinkingIndicator`, `step_mark` and `InlineEdit`.
 //!
 //! Deliberately not here yet: `@` workspace mentions, attachments and session
 //! pinning. The store has no pinned flag, and a pin the file forgets would be
@@ -47,9 +49,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ely_chat::{
-    ChatContainer, MessageAvatar, MessageBubble, MessageFooter, MessageHeader, MessageList,
-    PromptInput, Role, StepState, StreamingMarkdown, StreamingText, SuggestionChips,
-    ThinkingIndicator, step_mark,
+    ChatContainer, MessageList, PromptInput, StepState, StreamingMarkdown, StreamingText,
+    SuggestionChips, ThinkingIndicator, step_mark,
 };
 use ely_core::buttons::{Button, ButtonVariant, IconButton};
 use ely_core::forms::{Choice, InlineEdit, InputEvent, TextInput};
@@ -59,6 +60,7 @@ use ely_core::typography::{Ellipsis, relative_text};
 use gpui::{
     AnyElement, App, ClipboardItem, Context, Entity, FocusHandle, IntoElement, ParentElement,
     Render, SharedString, Styled, Subscription, Task, WeakEntity, Window, div, prelude::*, px,
+    relative,
 };
 
 use crate::ai::compactor::Compactor;
@@ -111,6 +113,9 @@ pub(crate) struct ChatView {
     /// The tool call waiting for the user's yes, if one is. The turn is
     /// blocked on the answer.
     pending_approval: Option<ApprovalRequest>,
+    /// The user message being edited: its words sit in the composer, and the
+    /// next send replaces it and everything below it.
+    editing: Option<usize>,
     /// The running turn's engine task, so Stop can end it.
     turn: Option<tokio::task::JoinHandle<()>>,
     /// The task draining the turn's events.
@@ -158,6 +163,7 @@ impl ChatView {
             session_id: None,
             history: None,
             pending_approval: None,
+            editing: None,
             turn: None,
             drain: None,
             always_allow: Arc::new(Mutex::new(HashSet::new())),
@@ -237,11 +243,46 @@ impl ChatView {
         self.history = None;
 
         let session_id = self.ensure_session(&text, &provider);
+        // An edit replaces the message it started from and every answer after
+        // it, in the store as well as on screen: a reload that brought the old
+        // turn back would be a lie.
+        if let Some(index) = self.editing.take() {
+            if let Some(replaced) = self.messages.get(index) {
+                truncate_store(&replaced.session_id, replaced.sequence);
+            }
+            cut_before(&mut self.messages, index);
+        }
         let sequence = self.messages.last().map_or(1, |last| last.sequence + 1);
         let user = message(&session_id, "user", text.clone(), sequence);
         persist(&user);
         self.messages.push(user);
         self.run_turn(&session_id, &provider, engine, cx);
+    }
+
+    /// Load one of the user's own messages back into the composer and enter
+    /// the edit state. Sending then replaces that message and its answer. A
+    /// turn in progress is not editable: the message it is answering would be
+    /// cut while it streams.
+    fn start_edit(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.is_streaming() {
+            return;
+        }
+        let Some(text) = edit_target(&self.messages, index) else {
+            return;
+        };
+        self.editing = Some(index);
+        self.input.update(cx, |input, cx| input.set_text(text, cx));
+        let focus = self.input.read(cx).focus().clone();
+        window.focus(&focus, cx);
+        cx.notify();
+    }
+
+    /// Leave the edit state and empty the box the edited words came into.
+    fn cancel_edit(&mut self, cx: &mut Context<Self>) {
+        if self.editing.take().is_some() {
+            self.input.update(cx, |input, cx| input.set_text("", cx));
+            cx.notify();
+        }
     }
 
     /// Run the last user message again: whatever the failed turn left below
@@ -258,6 +299,7 @@ impl ChatView {
         let Some((provider, engine)) = self.prepare_turn(&text, cx) else {
             return;
         };
+        self.editing = None;
         self.messages.truncate(user_index + 1);
         self.stand_down();
         let session_id = self.session_id.clone().unwrap_or_default();
@@ -553,6 +595,7 @@ impl ChatView {
             self.stop(cx);
         }
         self.pending_approval = None;
+        self.editing = None;
         self.messages.clear();
         self.error = None;
         self.compacted = None;
@@ -641,6 +684,7 @@ impl ChatView {
         self.messages = messages;
         self.streaming = None;
         self.session_id = Some(id.to_owned());
+        self.editing = None;
         self.error = None;
         self.compacted = None;
         self.reasoning_started = None;
@@ -776,6 +820,7 @@ impl ChatView {
         let Some((text, _)) = starter_prompts().into_iter().nth(index) else {
             return;
         };
+        self.editing = None;
         self.input.update(cx, |input, cx| input.set_text(text, cx));
         let focus = self.input.read(cx).focus().clone();
         window.focus(&focus, cx);
@@ -837,6 +882,8 @@ impl ChatView {
                 usage: message.usage,
                 at: timestamp_of(&message.timestamp),
                 can_retry: !user && !streaming && index + 1 == self.messages.len(),
+                can_edit: user && !message.content.is_empty() && self.streaming.is_none(),
+                editing: user && self.editing == Some(index),
             }));
         }
         let trailing = self.trailing();
@@ -878,6 +925,8 @@ struct MessageModel {
     usage: Option<UsageInfo>,
     at: Option<jiff::Timestamp>,
     can_retry: bool,
+    can_edit: bool,
+    editing: bool,
 }
 
 struct ApprovalModel {
@@ -1282,16 +1331,22 @@ impl ChatView {
     fn context_line(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let colors = &theme.colors;
-        let detail = match self.provider.as_ref() {
-            Some(provider) if self.is_streaming() => {
-                format!("{} · {}", provider.name, t("ai.chat.streaming"))
+        let detail = if self.editing.is_some() {
+            // The mode matters more than the model while a message is being
+            // revised: sending will replace the turn it came from.
+            t("ai.chat.editing")
+        } else {
+            match self.provider.as_ref() {
+                Some(provider) if self.is_streaming() => {
+                    format!("{} · {}", provider.name, t("ai.chat.streaming"))
+                }
+                Some(provider) => [provider.name.clone(), provider.model.clone()]
+                    .into_iter()
+                    .filter(|part| !part.is_empty())
+                    .collect::<Vec<String>>()
+                    .join(" · "),
+                None => t("ai.config_empty"),
             }
-            Some(provider) => [provider.name.clone(), provider.model.clone()]
-                .into_iter()
-                .filter(|part| !part.is_empty())
-                .collect::<Vec<String>>()
-                .join(" · "),
-            None => t("ai.config_empty"),
         };
         let turns = rust_i18n::t!("ai.chat.turns", count = self.messages.len()).to_string();
         let tokens: u64 = self
@@ -1302,7 +1357,7 @@ impl ChatView {
             .sum();
         let tone = if self.error.is_some() {
             colors.danger
-        } else if self.is_streaming() {
+        } else if self.editing.is_some() || self.is_streaming() {
             colors.accent
         } else {
             colors.success
@@ -1323,8 +1378,22 @@ impl ChatView {
                     .min_w_0()
                     .flex_1()
                     .child(Ellipsis::new(SharedString::from(detail))),
-            )
-            .child(div().flex_none().child(turns));
+            );
+        if self.editing.is_some() {
+            let weak = cx.entity().downgrade();
+            line = line.child(
+                IconButton::new("chat-edit-cancel", IconName::X)
+                    .variant(ButtonVariant::Ghost)
+                    .size(ControlSize::Sm)
+                    .tooltip(t("ai.chat.edit_cancel"))
+                    .on_click(move |_, _, cx| {
+                        if let Some(panel) = weak.upgrade() {
+                            panel.update(cx, |panel, cx| panel.cancel_edit(cx));
+                        }
+                    }),
+            );
+        }
+        line = line.child(div().flex_none().child(turns));
         if tokens > 0 {
             line = line.child(div().flex_none().child(format!("{tokens} tok")));
         }
@@ -1411,10 +1480,11 @@ fn row_element(
     }
 }
 
-/// A message in the library's bubble: the reasoning it thought with above, one
-/// card per tool call in the middle, what was said last, and the actions that
-/// can be taken on it. What the model says is markdown; what the user typed is
-/// their own text, shown as they wrote it.
+/// A message as a block. The user's words are a narrow strip set to the right;
+/// the model's are the column itself — no bubble, no avatar, no name — with
+/// what it thought and the tools it used above them, and the turn's own line
+/// last. What the model says is markdown; what the user typed is their own
+/// text, shown as they wrote it.
 fn message_row(
     message: MessageModel,
     weak: &WeakEntity<ChatView>,
@@ -1422,24 +1492,100 @@ fn message_row(
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let streaming = message.streaming;
-    let user = message.user;
-    let role = if user { Role::User } else { Role::Assistant };
-    let name = SharedString::from(role_label(if user { "user" } else { "orchestrator" }));
-    let avatar = MessageAvatar::new(("chat-avatar", index), role, name.clone());
-    // The library's `MessageHeader.at(...)` embeds a self-ticking
-    // `RelativeTime`, whose repaint leaves the previous string's pixels beside
-    // the new one when the row does not re-lay out. The time is folded into
-    // the name instead: one string, laid out once per paint.
-    let header_name = match message.at {
-        Some(at) => SharedString::from(format!("{} · {}", name, relative_label(at, cx))),
-        None => name,
-    };
-    let header = MessageHeader::new(("chat-header", index), header_name);
-    let mut bubble = MessageBubble::new(role).avatar(avatar).header(header);
+    if message.user {
+        user_block(message, weak, index, cx)
+    } else {
+        assistant_block(message, weak, index, window, cx)
+    }
+}
 
+/// A user turn: a strip that never fills the column, wearing no name, avatar
+/// or time. Only the words, and the two actions that repeat or revise them.
+fn user_block(
+    message: MessageModel,
+    weak: &WeakEntity<ChatView>,
+    index: usize,
+    cx: &App,
+) -> AnyElement {
+    let theme = cx.theme();
+    let colors = &theme.colors;
+    let mut block = div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .items_end()
+        .gap_1()
+        .pb_6()
+        .child(
+            div()
+                .id(("chat-user", index))
+                .max_w(px(520.))
+                .px_4()
+                .py_3()
+                .rounded(theme.radius(Radius::Md))
+                .border_1()
+                .border_color(if message.editing {
+                    colors.accent
+                } else {
+                    colors.border
+                })
+                .bg(colors.surface)
+                .text_size(theme.text_size(TextSize::Base))
+                .line_height(relative(1.6))
+                .text_color(colors.fg)
+                .child(plain_lines(message.content.clone())),
+        );
+    if !message.content.is_empty() {
+        let mut actions = div()
+            .flex()
+            .items_center()
+            .gap_1()
+            .child(copy_button(("chat-copy", index), &message.content));
+        if message.can_edit {
+            let weak = weak.clone();
+            actions = actions.child(if message.editing {
+                // A different id from the pencil: the library caches a
+                // tooltip by element id, and the words change with the state.
+                IconButton::new(("chat-edit-cancel", index), IconName::X)
+                    .variant(ButtonVariant::Ghost)
+                    .size(ControlSize::Sm)
+                    .tooltip(t("ai.chat.edit_cancel"))
+                    .on_click(move |_, _, cx| {
+                        if let Some(panel) = weak.upgrade() {
+                            panel.update(cx, |panel, cx| panel.cancel_edit(cx));
+                        }
+                    })
+            } else {
+                IconButton::new(("chat-edit", index), IconName::Pencil)
+                    .variant(ButtonVariant::Ghost)
+                    .size(ControlSize::Sm)
+                    .tooltip(t("ai.chat.edit"))
+                    .on_click(move |_, window, cx| {
+                        if let Some(panel) = weak.upgrade() {
+                            panel.update(cx, |panel, cx| panel.start_edit(index, window, cx));
+                        }
+                    })
+            });
+        }
+        block = block.child(actions);
+    }
+    block.into_any_element()
+}
+
+/// The model's turn: the reasoning it thought with, one quiet row per tool it
+/// used, what it said in full, and the turn's own line. Flat by design — none
+/// of it wears a card.
+fn assistant_block(
+    message: MessageModel,
+    weak: &WeakEntity<ChatView>,
+    index: usize,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let streaming = message.streaming;
+    let mut block = div().w_full().flex().flex_col().gap_3().pb_6();
     if let Some(reasoning) = message.reasoning.as_deref() {
-        bubble = bubble.child(reasoning_block(
+        block = block.child(reasoning_block(
             index,
             reasoning,
             streaming,
@@ -1448,69 +1594,295 @@ fn message_row(
             cx,
         ));
     }
-    for (call_index, call) in message.tool_calls.iter().enumerate() {
-        bubble = bubble.child(tool_call(index, call_index, call, window, cx));
+    for run in step_runs(&message.tool_calls) {
+        block = block.child(match run {
+            StepRun::One(call) => tool_call(index, call, window, cx),
+            StepRun::Group { family, calls } => step_group(index, family, calls, window, cx),
+        });
     }
     if !message.content.is_empty() {
-        if user {
-            let mut lines = div().w_full().flex().flex_col().gap_0p5();
-            for line in message.content.split('\n') {
-                lines = lines.child(div().child(line.to_owned()));
-            }
-            bubble = bubble.child(lines);
-        } else {
-            bubble = bubble.child(StreamingMarkdown::new(
-                ("chat-md", index),
-                message.content.clone(),
-                streaming,
-            ));
-        }
+        let theme = cx.theme();
+        block = block.child(
+            div()
+                .w_full()
+                .text_size(theme.text_size(TextSize::Base))
+                .line_height(relative(1.6))
+                .text_color(theme.colors.fg)
+                .child(StreamingMarkdown::new(
+                    ("chat-md", index),
+                    message.content.clone(),
+                    streaming,
+                )),
+        );
     } else if streaming && message.reasoning.is_none() {
-        bubble = bubble
+        block = block
             .child(ThinkingIndicator::new(("chat-waiting", index)).label(t("ai.chat.streaming")));
     }
-
     if !streaming && !message.content.is_empty() {
-        let mut footer = MessageFooter::new();
-        if let Some(usage) = message.usage {
-            footer = footer.fact(format!("{} tok", usage.total_tokens()));
-        }
-        let mut actions = div().flex().items_center().gap_1();
-        let copy_text = message.content.clone();
-        actions = actions.child(
-            IconButton::new(("chat-copy", index), IconName::Copy)
-                .variant(ButtonVariant::Ghost)
-                .size(ControlSize::Sm)
-                .tooltip(t("ai.chat.copy"))
-                .on_click(move |_, _, cx| {
-                    cx.write_to_clipboard(ClipboardItem::new_string(copy_text.clone()));
-                }),
-        );
-        if message.can_retry {
-            let weak = weak.clone();
-            actions = actions.child(
-                IconButton::new(("chat-retry", index), IconName::RefreshCw)
-                    .variant(ButtonVariant::Ghost)
-                    .size(ControlSize::Sm)
-                    .tooltip(t("ai.chat.retry"))
-                    .on_click(move |_, _, cx| {
-                        if let Some(panel) = weak.upgrade() {
-                            panel.update(cx, |panel, cx| panel.retry(cx));
-                        }
-                    }),
-            );
-        }
-        bubble = bubble.footer(footer.child(actions));
+        block = block.child(tail_row(&message, weak, index, cx));
     }
-    bubble.into_any_element()
+    block.into_any_element()
 }
 
-/// One tool call. The card carries the wire's own name and status, the
-/// arguments the model filled in, and the answer that came back. The labels
-/// are the reader's; the fold is the library's `Disclosure`.
+/// The user's words, line for line: what they typed, not what a markdown
+/// renderer would make of it.
+fn plain_lines(text: String) -> AnyElement {
+    let mut lines = div().w_full().flex().flex_col().gap_0p5();
+    for line in text.split('\n') {
+        lines = lines.child(div().child(line.to_owned()));
+    }
+    lines.into_any_element()
+}
+
+/// The copy affordance both roles carry: the words as they stand on screen.
+fn copy_button(id: (&'static str, usize), text: &str) -> IconButton {
+    let text = text.to_owned();
+    IconButton::new(id, IconName::Copy)
+        .variant(ButtonVariant::Ghost)
+        .size(ControlSize::Sm)
+        .tooltip(t("ai.chat.copy"))
+        .on_click(move |_, _, cx| {
+            cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+        })
+}
+
+/// The turn's own line: what it cost, the actions that can be taken on it, and
+/// when it was said. Quiet by design; the words above it are the point.
+fn tail_row(
+    message: &MessageModel,
+    weak: &WeakEntity<ChatView>,
+    index: usize,
+    cx: &App,
+) -> AnyElement {
+    let theme = cx.theme();
+    let colors = &theme.colors;
+    let mut row = div()
+        .id(("chat-tail", index))
+        .w_full()
+        .flex()
+        .items_center()
+        .gap_1()
+        .py_1();
+    if let Some(usage) = message.usage {
+        row = row.child(
+            div()
+                .text_size(theme.text_size(TextSize::Xs))
+                .text_color(colors.fg_subtle)
+                .child(format!("{} tok", usage.total_tokens())),
+        );
+    }
+    row = row.child(div().flex_1());
+    row = row.child(copy_button(("chat-copy", index), &message.content));
+    if message.can_retry {
+        let weak = weak.clone();
+        row = row.child(
+            IconButton::new(("chat-retry", index), IconName::RefreshCw)
+                .variant(ButtonVariant::Ghost)
+                .size(ControlSize::Sm)
+                .tooltip(t("ai.chat.retry"))
+                .on_click(move |_, _, cx| {
+                    if let Some(panel) = weak.upgrade() {
+                        panel.update(cx, |panel, cx| panel.retry(cx));
+                    }
+                }),
+        );
+    }
+    if let Some(at) = message.at {
+        row = row.child(
+            div()
+                .text_size(theme.text_size(TextSize::Xs))
+                .text_color(colors.fg_subtle)
+                .child(relative_label(at, cx)),
+        );
+    }
+    row.into_any_element()
+}
+
+/// The family a tool call belongs to. The family decides two things: the words
+/// a row reads with, and whether a run of them folds into one line.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StepFamily {
+    /// The model driving a pane's terminal (`send_text`). Always foldable.
+    Terminal,
+    /// Looking at what a pane or the fleet is doing. Foldable once every call
+    /// in the run has finished — a running or failed read stays visible.
+    Read,
+    /// Calls with consequences of their own (`spawn_worker`, `close_worker`)
+    /// and anything the client does not know. Never folded away.
+    Manage,
+}
+
+impl StepFamily {
+    fn groupable(self) -> bool {
+        self != StepFamily::Manage
+    }
+
+    fn label(self) -> String {
+        match self {
+            StepFamily::Terminal => t("ai.chat.group.terminal"),
+            StepFamily::Read => t("ai.chat.group.read"),
+            StepFamily::Manage => String::new(),
+        }
+    }
+}
+
+/// What a call did, in the reader's words: the verb, what it acted on, and the
+/// quiet extra. A tool the client does not know keeps its wire name and falls
+/// back to its arguments, so a new tool reads as itself rather than vanishing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StepVerb {
+    Send,
+    Read,
+    Wait,
+    List,
+    Start,
+    Close,
+}
+
+impl StepVerb {
+    fn label(self) -> String {
+        t(match self {
+            StepVerb::Send => "ai.chat.step.send",
+            StepVerb::Read => "ai.chat.step.read",
+            StepVerb::Wait => "ai.chat.step.wait",
+            StepVerb::List => "ai.chat.step.list",
+            StepVerb::Start => "ai.chat.step.start",
+            StepVerb::Close => "ai.chat.step.close",
+        })
+    }
+}
+
+/// One tool call as a step row.
+#[derive(Clone, Debug, PartialEq)]
+struct StepFacts {
+    family: StepFamily,
+    /// `None` for a tool this client has no verb for; the row then shows the
+    /// name the wire used.
+    verb: Option<StepVerb>,
+    target: String,
+    meta: Option<String>,
+}
+
+/// One entry of the conversation's step list: a call on its own, or a run of
+/// same-family calls behind one line.
+#[derive(Debug)]
+enum StepRun<'a> {
+    One(&'a ToolCallState),
+    Group {
+        family: StepFamily,
+        calls: &'a [ToolCallState],
+    },
+}
+
+/// Derive what a call acted on. The wire's argument names are the only thing
+/// that can be trusted here: a call that has not run yet has no result, and its
+/// arguments are already in hand.
+fn step_facts(call: &ToolCallState) -> StepFacts {
+    let arg = |key: &str| {
+        call.args
+            .get(key)
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_owned()
+    };
+    let non_empty = |text: String| Some(text).filter(|text| !text.is_empty());
+    match call.name.as_str() {
+        "send_text" => StepFacts {
+            family: StepFamily::Terminal,
+            verb: Some(StepVerb::Send),
+            target: summarize(&arg("text"), 60),
+            meta: non_empty(arg("pane_id")),
+        },
+        "read_output" => StepFacts {
+            family: StepFamily::Read,
+            verb: Some(StepVerb::Read),
+            target: arg("pane_id"),
+            meta: call
+                .args
+                .get("lines")
+                .and_then(|value| value.as_u64())
+                .map(|lines| rust_i18n::t!("ai.chat.step.lines", count = lines).to_string()),
+        },
+        "wait_for_output" => StepFacts {
+            family: StepFamily::Read,
+            verb: Some(StepVerb::Wait),
+            target: arg("pane_id"),
+            meta: non_empty(summarize(&arg("pattern"), 40)),
+        },
+        "list_workers" => StepFacts {
+            family: StepFamily::Read,
+            verb: Some(StepVerb::List),
+            target: String::new(),
+            meta: None,
+        },
+        "spawn_worker" => StepFacts {
+            family: StepFamily::Manage,
+            verb: Some(StepVerb::Start),
+            target: arg("agent"),
+            meta: non_empty(arg("worker_name")),
+        },
+        "close_worker" => StepFacts {
+            family: StepFamily::Manage,
+            verb: Some(StepVerb::Close),
+            target: arg("pane_id"),
+            meta: None,
+        },
+        _ => StepFacts {
+            family: StepFamily::Manage,
+            verb: None,
+            target: arguments_summary(&call.args),
+            meta: None,
+        },
+    }
+}
+
+/// How one turn's calls read: consecutive calls of a groupable family become a
+/// run; a run folds only when the whole run may be folded away. The rules are
+/// the design's (§3.2, ported from BitFun's policy, not its code):
+///
+/// - the terminal family always folds, failures included;
+/// - reads fold only when every call in the run finished and none failed;
+/// - management calls and unknown tools stand on their own;
+/// - a run of one is not a group — it keeps its own step row.
+fn step_runs(calls: &[ToolCallState]) -> Vec<StepRun<'_>> {
+    let mut runs = Vec::new();
+    let mut start = 0;
+    while start < calls.len() {
+        let family = step_facts(&calls[start]).family;
+        if !family.groupable() {
+            runs.push(StepRun::One(&calls[start]));
+            start += 1;
+            continue;
+        }
+        let mut end = start + 1;
+        while end < calls.len() && step_facts(&calls[end]).family == family {
+            end += 1;
+        }
+        let run = &calls[start..end];
+        let folds = match family {
+            StepFamily::Terminal => true,
+            StepFamily::Read => run
+                .iter()
+                .all(|call| call.status == ToolCallStatus::Completed),
+            StepFamily::Manage => false,
+        };
+        if run.len() > 1 && folds {
+            runs.push(StepRun::Group { family, calls: run });
+        } else {
+            for call in run {
+                runs.push(StepRun::One(call));
+            }
+        }
+        start = end;
+    }
+    runs
+}
+
+/// One tool call as a step: a status mark, the verb, what it acted on, and the
+/// quiet extra — a flat row with no frame. Opening it shows the arguments and
+/// the answer that came back.
 fn tool_call(
     message_index: usize,
-    call_index: usize,
     call: &ToolCallState,
     window: &mut Window,
     cx: &mut App,
@@ -1521,7 +1893,7 @@ fn tool_call(
         ToolCallStatus::Failed => StepState::Failed,
     };
     let id = gpui::ElementId::from(SharedString::from(format!(
-        "chat-tool-{message_index}-{call_index}-{}",
+        "chat-tool-{message_index}-{}",
         call.id
     )));
     let opens = !call.args.is_null() || call.result_summary.is_some();
@@ -1530,7 +1902,11 @@ fn tool_call(
     let mark = step_mark((id.clone(), "mark").into(), status, window, cx);
     let theme = cx.theme();
     let colors = &theme.colors;
-    let summary = arguments_summary(&call.args);
+    let facts = step_facts(call);
+    let verb = match facts.verb {
+        Some(verb) => verb.label(),
+        None => call.name.clone(),
+    };
     let took = match (call.completed_at, call.started_at) {
         (Some(end), start) => Some(end.saturating_sub(start)),
         _ => None,
@@ -1546,32 +1922,50 @@ fn tool_call(
     };
     let mut header = div()
         .id(id.clone())
+        .w_full()
         .flex()
         .items_center()
         .gap_2()
-        .px_3()
-        .py_2()
-        .when(opens, |row| row.cursor_pointer().on_click(toggle))
+        .px_2()
+        .py_1()
+        .rounded(theme.radius(Radius::Sm))
+        .when(opens, |row| {
+            row.cursor_pointer()
+                .hover(|style| style.bg(colors.hover))
+                .on_click(toggle)
+        })
         .child(mark)
         .child(
             div()
-                .min_w_0()
-                .text_color(colors.fg)
-                .child(Ellipsis::new(SharedString::from(call.name.clone()))),
+                .flex_none()
+                .text_size(theme.text_size(TextSize::Sm))
+                .text_color(colors.fg_muted)
+                .child(Ellipsis::new(SharedString::from(verb))),
         )
-        .when(!summary.is_empty(), |row| {
+        .when(!facts.target.is_empty(), |row| {
             row.child(
                 div()
-                    .flex_1()
                     .min_w_0()
-                    .text_color(colors.fg_muted)
-                    .child(Ellipsis::new(SharedString::from(summary.clone()))),
+                    .text_size(theme.text_size(TextSize::Sm))
+                    .text_color(colors.fg)
+                    .child(Ellipsis::new(SharedString::from(facts.target.clone()))),
             )
-        });
+        })
+        .child(div().flex_1());
+    if let Some(meta) = facts.meta.as_ref() {
+        header = header.child(
+            div()
+                .flex_none()
+                .text_size(theme.text_size(TextSize::Xs))
+                .text_color(colors.fg_subtle)
+                .child(meta.clone()),
+        );
+    }
     if let Some(took) = took {
         header = header.child(
             div()
                 .flex_none()
+                .text_size(theme.text_size(TextSize::Xs))
                 .text_color(colors.fg_subtle)
                 .child(took_label(took)),
         );
@@ -1579,15 +1973,17 @@ fn tool_call(
     if opens {
         header = header.child(Disclosure::new((id.clone(), "chevron"), open).size(IconSize::Sm));
     }
-    let mut card = div()
-        .rounded(theme.radius(Radius::Md))
-        .border_1()
-        .border_color(colors.border)
-        .bg(colors.surface)
-        .text_size(theme.text_size(TextSize::Sm))
-        .child(header);
+    let mut block = div().w_full().flex().flex_col().gap_1().child(header);
     if open && opens {
-        let mut body = div().flex().flex_col().gap_2().px_3().pt_1().pb_3();
+        let mut body = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .pl_4()
+            .ml_3()
+            .border_l_1()
+            .border_color(colors.border)
+            .py_1();
         if !call.args.is_null() {
             let json =
                 serde_json::to_string_pretty(&call.args).unwrap_or_else(|_| call.args.to_string());
@@ -1626,9 +2022,142 @@ fn tool_call(
                     )),
             );
         }
-        card = card.child(body);
+        block = block.child(body);
     }
-    card.into_any_element()
+    block.into_any_element()
+}
+
+/// A run of same-family steps behind one line: `终端 · 2 个命令`, and the calls
+/// it covers when opened. Each member keeps its own verb, target and answer, so
+/// opening the run is reading the transcript, not a summary of it.
+fn step_group(
+    message_index: usize,
+    family: StepFamily,
+    calls: &[ToolCallState],
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let first = calls
+        .first()
+        .map(|call| call.id.clone())
+        .unwrap_or_default();
+    let id = gpui::ElementId::from(SharedString::from(format!(
+        "chat-group-{message_index}-{first}"
+    )));
+    let state = window.use_keyed_state((id.clone(), "open"), cx, |_, _| false);
+    let open = *state.read(cx);
+    let theme = cx.theme();
+    let colors = &theme.colors;
+    let failed = calls
+        .iter()
+        .filter(|call| call.status == ToolCallStatus::Failed)
+        .count();
+    let count = match family {
+        StepFamily::Terminal => {
+            rust_i18n::t!("ai.chat.group.commands", count = calls.len()).to_string()
+        }
+        _ => rust_i18n::t!("ai.chat.group.reads", count = calls.len()).to_string(),
+    };
+    let toggle = {
+        let state = state.clone();
+        move |_: &gpui::ClickEvent, _window: &mut Window, cx: &mut App| {
+            state.update(cx, |open, cx| {
+                *open = !*open;
+                cx.notify();
+            });
+        }
+    };
+    let mut header = div()
+        .id(id.clone())
+        .w_full()
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_2()
+        .py_1()
+        .rounded(theme.radius(Radius::Sm))
+        .cursor_pointer()
+        .hover(|style| style.bg(colors.hover))
+        .on_click(toggle)
+        .child(
+            Icon::new(match family {
+                StepFamily::Terminal => IconName::Terminal,
+                _ => IconName::BookOpen,
+            })
+            .size(IconSize::Sm)
+            .color(colors.fg_subtle),
+        )
+        .child(
+            div()
+                .flex_none()
+                .text_size(theme.text_size(TextSize::Sm))
+                .text_color(colors.fg_muted)
+                .child(family.label()),
+        )
+        .child(
+            div()
+                .flex_none()
+                .text_size(theme.text_size(TextSize::Xs))
+                .text_color(colors.fg_subtle)
+                .child(format!("· {count}")),
+        );
+    if failed > 0 {
+        header = header.child(
+            div()
+                .flex_none()
+                .text_size(theme.text_size(TextSize::Xs))
+                .text_color(colors.warning)
+                .child(rust_i18n::t!("ai.chat.group.failed", count = failed).to_string()),
+        );
+    }
+    let mut block = div().w_full().flex().flex_col().gap_1().child(
+        header
+            .child(div().flex_1())
+            .child(Disclosure::new((id.clone(), "chevron"), open).size(IconSize::Sm)),
+    );
+    if open {
+        let mut body = div()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .pl_4()
+            .ml_3()
+            .border_l_1()
+            .border_color(colors.border)
+            .py_1();
+        for call in calls {
+            let facts = step_facts(call);
+            let failed = call.status == ToolCallStatus::Failed;
+            let lead = match family {
+                StepFamily::Terminal => format!("$ {}", facts.target),
+                _ => match facts.verb {
+                    Some(verb) => format!("{} {}", verb.label(), facts.target),
+                    None => format!("{} {}", call.name, facts.target),
+                },
+            };
+            let mut line = div().flex().flex_col().gap_0p5().child(
+                div()
+                    .text_size(theme.text_size(TextSize::Xs))
+                    .text_color(if failed { colors.danger } else { colors.fg })
+                    .child(lead.trim_end().to_owned()),
+            );
+            if let Some(result) = call.result_summary.as_ref() {
+                line = line.child(
+                    div()
+                        .text_size(theme.text_size(TextSize::Xs))
+                        .text_color(if failed {
+                            colors.danger
+                        } else {
+                            colors.fg_subtle
+                        })
+                        .child(result.clone()),
+                );
+            }
+            body = body.child(line);
+        }
+        block = block.child(body);
+    }
+    block.into_any_element()
 }
 
 /// A fold's body: the wire's own text, monospaced, on the sunken ground. The
@@ -1658,6 +2187,20 @@ fn fold_label(text: String, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
+/// The thinking row's own words: the label, and the quiet length that follows
+/// it. Drawn here because the library's `ThinkingDuration` prints "Thought
+/// for …" and the row must speak the reader's language.
+fn thought_words(streaming: bool, took_ms: Option<u64>) -> (String, Option<String>) {
+    if streaming {
+        return (t("ai.chat.streaming"), None);
+    }
+    let meta = match took_ms.unwrap_or(0) / 1000 {
+        0 => t("ai.chat.thought_moment"),
+        seconds => rust_i18n::t!("ai.chat.thought_took", seconds = seconds).to_string(),
+    };
+    (t("ai.chat.thought"), Some(meta))
+}
+
 /// The reasoning a turn thought with, folded away until it is asked for: it is
 /// the model talking to itself, and it is long. The header is the panel's own
 /// so its words follow the reader's locale; the library draws the text inside.
@@ -1675,14 +2218,7 @@ fn reasoning_block(
     let opened = *open.read(cx);
     let theme = cx.theme();
     let colors = &theme.colors;
-    let label = if streaming {
-        t("ai.chat.streaming")
-    } else {
-        match took_ms.unwrap_or(0) / 1000 {
-            0 => t("ai.chat.thought_moment"),
-            seconds => rust_i18n::t!("ai.chat.thought_seconds", seconds = seconds).to_string(),
-        }
-    };
+    let (label, meta) = thought_words(streaming, took_ms);
     let toggle = {
         let open = open.clone();
         move |_: &gpui::ClickEvent, _window: &mut Window, cx: &mut App| {
@@ -1699,27 +2235,44 @@ fn reasoning_block(
             .flex()
             .items_center()
             .gap_2()
-            .px_1()
-            .py_0p5()
+            .px_2()
+            .py_1()
             .rounded(theme.radius(Radius::Sm))
             .cursor_pointer()
             .hover(|style| style.bg(colors.hover))
             .on_click(toggle)
             .child(
+                Icon::new(IconName::Sparkles)
+                    .size(IconSize::Sm)
+                    .color(colors.fg_subtle),
+            )
+            .child(
                 div()
-                    .text_size(theme.text_size(TextSize::Xs))
+                    .flex_none()
+                    .text_size(theme.text_size(TextSize::Sm))
                     .text_color(colors.fg_muted)
                     .child(label),
             )
+            .when_some(meta, |row, meta| {
+                row.child(
+                    div()
+                        .flex_none()
+                        .text_size(theme.text_size(TextSize::Xs))
+                        .text_color(colors.fg_subtle)
+                        .child(format!("· {meta}")),
+                )
+            })
             .child(div().flex_1())
             .child(Disclosure::new((key.clone(), "chevron"), opened).size(IconSize::Sm)),
     );
     if opened {
         block = block.child(
             div()
-                .pl_3()
-                .border_l_2()
+                .pl_4()
+                .ml_3()
+                .border_l_1()
                 .border_color(colors.border)
+                .py_1()
                 .text_size(theme.text_size(TextSize::Xs))
                 .text_color(colors.fg_muted)
                 .child(StreamingText::new(
@@ -1881,6 +2434,7 @@ fn compacted_note(info: &CompactionInfo, cx: &mut App) -> AnyElement {
     div()
         .w_full()
         .px_2()
+        .pb_2()
         .text_size(theme.text_size(TextSize::Xs))
         .text_color(theme.colors.warning)
         .child(
@@ -2142,15 +2696,6 @@ fn persist(message: &ChatMessage) {
     }
 }
 
-/// What is written above a message. The store's own two roles, in the words a
-/// reader expects.
-fn role_label(role: &str) -> String {
-    match role {
-        "user" => t("ai.chat.role_you"),
-        _ => t("ai.chat.role_assistant"),
-    }
-}
-
 /// The role the API is spoken to with. The store says `orchestrator` where the
 /// wire says `assistant` (`ChatMessageRef` documents the four it accepts), and
 /// the store keeps only these two.
@@ -2168,6 +2713,41 @@ fn retry_target(messages: &[ChatMessage]) -> Option<usize> {
     messages
         .iter()
         .rposition(|message| message.role == "user" && !message.content.is_empty())
+}
+
+/// What editing `index` puts back in the composer: the user's own words, when
+/// the row is one of theirs. The model's messages have nothing to revise.
+fn edit_target(messages: &[ChatMessage], index: usize) -> Option<String> {
+    let message = messages.get(index)?;
+    (message.role == "user" && !message.content.is_empty()).then(|| message.content.clone())
+}
+
+/// Cut the conversation back to just before `index`: an edit replaces the
+/// message it started from and every answer below it.
+fn cut_before(messages: &mut Vec<ChatMessage>, index: usize) {
+    messages.truncate(index);
+}
+
+/// Forget the replaced turn in the store, at and after `sequence`. A failure
+/// here must not stop the new turn, so it is logged rather than shown.
+fn truncate_store(session_id: &str, sequence: i64) {
+    if session_id.is_empty() {
+        return;
+    }
+    match SessionManager::shared() {
+        Ok(manager) => {
+            if let Err(error) = manager.truncate_messages(session_id, sequence) {
+                tracing::warn!(
+                    target: "zenix-chat",
+                    %error,
+                    "the replaced messages were not removed"
+                );
+            }
+        }
+        Err(error) => {
+            tracing::warn!(target: "zenix-chat", %error, "the session store was not opened")
+        }
+    }
 }
 
 /// A tool's arguments as one line: the keys the model filled in, with long
@@ -2467,6 +3047,258 @@ mod tests {
         assert_eq!(message.usage.map(|usage| usage.total_tokens()), Some(1500));
     }
 
+    fn a_call(
+        id: &str,
+        name: &str,
+        args: serde_json::Value,
+        status: ToolCallStatus,
+    ) -> ToolCallState {
+        let finished = status != ToolCallStatus::Running;
+        ToolCallState {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            args,
+            status,
+            result_summary: finished.then(|| "ok".to_owned()),
+            started_at: 0,
+            completed_at: finished.then_some(5),
+        }
+    }
+
+    #[test]
+    fn an_edit_puts_a_user_message_back_and_cuts_the_turn() {
+        let mut messages = vec![
+            message("s1", "user", "first".into(), 1),
+            message("s1", "orchestrator", "answer".into(), 2),
+            message("s1", "user", "second".into(), 3),
+            message("s1", "orchestrator", "answer 2".into(), 4),
+        ];
+        assert_eq!(edit_target(&messages, 2).as_deref(), Some("second"));
+        assert_eq!(
+            edit_target(&messages, 1),
+            None,
+            "the model's words are not editable"
+        );
+        assert_eq!(edit_target(&messages, 9), None);
+
+        cut_before(&mut messages, 2);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages.last().map(|m| m.content.as_str()), Some("answer"));
+        assert_eq!(
+            messages.last().map(|m| m.sequence + 1),
+            Some(3),
+            "the replacement continues the sequence of what is left"
+        );
+
+        cut_before(&mut messages, 0);
+        assert!(
+            messages.is_empty(),
+            "editing the first message clears the turn"
+        );
+    }
+
+    #[test]
+    fn a_thought_row_names_its_length() {
+        let (label, meta) = thought_words(false, Some(12_000));
+        assert_eq!(label, t("ai.chat.thought"));
+        let took = rust_i18n::t!("ai.chat.thought_took", seconds = 12).to_string();
+        assert_eq!(meta.as_deref(), Some(took.as_str()));
+
+        let (label, meta) = thought_words(false, Some(400));
+        assert_eq!(label, t("ai.chat.thought"));
+        assert_eq!(meta.as_deref(), Some(t("ai.chat.thought_moment").as_str()));
+
+        let (label, meta) = thought_words(true, Some(5_000));
+        assert_eq!(label, t("ai.chat.streaming"));
+        assert!(
+            meta.is_none(),
+            "a live row says it is thinking, not how long"
+        );
+    }
+
+    #[test]
+    fn a_step_row_names_what_the_tool_did() {
+        let read = a_call(
+            "c1",
+            "read_output",
+            serde_json::json!({ "pane_id": "w1:p1", "lines": 20 }),
+            ToolCallStatus::Completed,
+        );
+        let facts = step_facts(&read);
+        assert_eq!(facts.family, StepFamily::Read);
+        assert_eq!(facts.verb, Some(StepVerb::Read));
+        assert_eq!(facts.target, "w1:p1");
+        let lines = rust_i18n::t!("ai.chat.step.lines", count = 20).to_string();
+        assert_eq!(facts.meta.as_deref(), Some(lines.as_str()));
+
+        let send = a_call(
+            "c2",
+            "send_text",
+            serde_json::json!({ "pane_id": "w1:p2", "text": "cargo test\n--all" }),
+            ToolCallStatus::Completed,
+        );
+        let facts = step_facts(&send);
+        assert_eq!(facts.family, StepFamily::Terminal);
+        assert_eq!(facts.verb, Some(StepVerb::Send));
+        assert_eq!(
+            facts.target, "cargo test --all",
+            "newlines fold to one line"
+        );
+        assert_eq!(facts.meta.as_deref(), Some("w1:p2"));
+    }
+
+    #[test]
+    fn an_unknown_tool_keeps_its_wire_name_and_arguments() {
+        let call = a_call(
+            "c1",
+            "plugin_thing",
+            serde_json::json!({ "path": "x" }),
+            ToolCallStatus::Completed,
+        );
+        let facts = step_facts(&call);
+        assert_eq!(facts.verb, None);
+        assert_eq!(facts.family, StepFamily::Manage);
+        assert!(facts.target.contains("path"));
+    }
+
+    #[test]
+    fn a_run_of_commands_folds_even_when_one_fails() {
+        let calls = vec![
+            a_call(
+                "a",
+                "send_text",
+                serde_json::json!({ "text": "ls" }),
+                ToolCallStatus::Completed,
+            ),
+            a_call(
+                "b",
+                "send_text",
+                serde_json::json!({ "text": "cat nope" }),
+                ToolCallStatus::Failed,
+            ),
+        ];
+        let runs = step_runs(&calls);
+        assert_eq!(runs.len(), 1);
+        match &runs[0] {
+            StepRun::Group { family, calls } => {
+                assert_eq!(*family, StepFamily::Terminal);
+                assert_eq!(calls.len(), 2);
+            }
+            other => panic!("expected one terminal group, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_read_run_with_a_failure_stays_visible() {
+        let calls = vec![
+            a_call(
+                "a",
+                "read_output",
+                serde_json::json!({ "pane_id": "w1:p1" }),
+                ToolCallStatus::Completed,
+            ),
+            a_call(
+                "b",
+                "read_output",
+                serde_json::json!({ "pane_id": "w1:p1" }),
+                ToolCallStatus::Failed,
+            ),
+            a_call(
+                "c",
+                "read_output",
+                serde_json::json!({ "pane_id": "w1:p1" }),
+                ToolCallStatus::Completed,
+            ),
+        ];
+        let runs = step_runs(&calls);
+        assert_eq!(runs.len(), 3, "a failed read is not folded away");
+        assert!(runs.iter().all(|run| matches!(run, StepRun::One(_))));
+    }
+
+    #[test]
+    fn finished_reads_fold_but_a_running_one_does_not() {
+        let done = vec![
+            a_call(
+                "a",
+                "read_output",
+                serde_json::json!({ "pane_id": "w1:p1" }),
+                ToolCallStatus::Completed,
+            ),
+            a_call(
+                "b",
+                "list_workers",
+                serde_json::json!({}),
+                ToolCallStatus::Completed,
+            ),
+        ];
+        assert!(matches!(
+            step_runs(&done).as_slice(),
+            [StepRun::Group {
+                family: StepFamily::Read,
+                ..
+            }]
+        ));
+
+        let live = vec![
+            a_call(
+                "a",
+                "read_output",
+                serde_json::json!({ "pane_id": "w1:p1" }),
+                ToolCallStatus::Completed,
+            ),
+            a_call(
+                "b",
+                "read_output",
+                serde_json::json!({ "pane_id": "w1:p1" }),
+                ToolCallStatus::Running,
+            ),
+        ];
+        assert_eq!(
+            step_runs(&live).len(),
+            2,
+            "a running read stays its own row"
+        );
+    }
+
+    #[test]
+    fn a_single_call_keeps_its_own_row() {
+        let calls = vec![a_call(
+            "a",
+            "send_text",
+            serde_json::json!({ "text": "ls" }),
+            ToolCallStatus::Completed,
+        )];
+        assert!(matches!(step_runs(&calls).as_slice(), [StepRun::One(_)]));
+    }
+
+    #[test]
+    fn management_calls_break_a_run() {
+        let calls = vec![
+            a_call(
+                "a",
+                "send_text",
+                serde_json::json!({ "text": "ls" }),
+                ToolCallStatus::Completed,
+            ),
+            a_call(
+                "b",
+                "spawn_worker",
+                serde_json::json!({ "agent": "claude", "instruction": "go" }),
+                ToolCallStatus::Completed,
+            ),
+            a_call(
+                "c",
+                "send_text",
+                serde_json::json!({ "text": "ls" }),
+                ToolCallStatus::Completed,
+            ),
+        ];
+        let runs = step_runs(&calls);
+        assert_eq!(runs.len(), 3, "a spawn is never folded into the commands");
+        assert!(runs.iter().all(|run| matches!(run, StepRun::One(_))));
+        assert_eq!(step_facts(&calls[1]).verb, Some(StepVerb::Start));
+    }
+
     #[test]
     fn an_arguments_summary_names_the_keys_and_cuts_long_values() {
         let long = "x".repeat(80);
@@ -2510,13 +3342,6 @@ mod tests {
         assert!(timestamp_of("2026-10-27T12:34:56").is_some());
         assert!(timestamp_of("yesterday").is_none());
         assert!(timestamp_of("").is_none());
-    }
-
-    #[test]
-    fn the_store_s_roles_are_labelled_for_a_reader() {
-        assert_eq!(role_label("user"), t("ai.chat.role_you"));
-        assert_eq!(role_label("orchestrator"), t("ai.chat.role_assistant"));
-        assert_ne!(role_label("user"), role_label("orchestrator"));
     }
 
     #[test]

@@ -4,8 +4,10 @@
 //!   - OpenAI-compatible (suffix options: /v1/chat/completions, /v1/responses)
 //!   - Anthropic-compatible (suffix: /v1/messages)
 //!
-//! Each provider stores: name, format, base URL, API key, model,
-//! thinking level (discrete), and URL suffix.
+//! Each provider stores: name, format, base URL, API key, the models it
+//! offers, the selected model (`model`), thinking level (discrete), and URL
+//! suffix. An older file carries only `model`; [`ApiProviderConfig::sync_models`]
+//! turns it into the list on load, and the model page edits the list.
 //!
 //! Config generation for different Agent CLI formats is provided
 //! via `to_opencode_provider()` and `to_claude_env()` methods.
@@ -136,6 +138,60 @@ impl ApiFormat {
             ApiFormat::Anthropic => "Anthropic",
         }
     }
+
+    /// The token the picker carries as a row's value.
+    pub fn token(&self) -> &'static str {
+        match self {
+            ApiFormat::OpenAI => "openai",
+            ApiFormat::Anthropic => "anthropic",
+        }
+    }
+
+    /// A format from its picker token.
+    pub fn from_token(token: &str) -> Option<ApiFormat> {
+        match token {
+            "openai" => Some(ApiFormat::OpenAI),
+            "anthropic" => Some(ApiFormat::Anthropic),
+            _ => None,
+        }
+    }
+}
+
+// ── Models ──────────────────────────────────────────────────────────
+
+/// One model a provider offers. The provider's `model` names the selected
+/// one; the list is what the model page and the chat's picker show.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelConfig {
+    /// The id the API takes (e.g. "gpt-4o").
+    pub id: String,
+    /// What the pickers call it; empty means the id.
+    #[serde(default)]
+    pub label: String,
+    /// Whether it accepts image input.
+    #[serde(default)]
+    pub vision: bool,
+}
+
+impl ModelConfig {
+    /// A model known only by its id.
+    pub fn new(id: impl Into<String>) -> Self {
+        Self {
+            id: id.into(),
+            label: String::new(),
+            vision: false,
+        }
+    }
+
+    /// The name to draw: the label when one is set, else the id.
+    pub fn display_label(&self) -> &str {
+        let label = self.label.trim();
+        if label.is_empty() {
+            self.id.trim()
+        } else {
+            label
+        }
+    }
 }
 
 // ── API Provider Config ─────────────────────────────────────────────
@@ -151,7 +207,7 @@ pub struct ApiProviderConfig {
     pub base_url: String,
     /// API key (masked in UI).
     pub api_key: String,
-    /// Currently selected model name.
+    /// The selected model's id; one of `models`.
     pub model: String,
     /// Reasoning effort level.
     pub thinking_level: ThinkingLevel,
@@ -160,6 +216,10 @@ pub struct ApiProviderConfig {
     /// Agent CLIs this provider is applied to (e.g. ["claude", "opencode"]).
     #[serde(default)]
     pub enabled_agents: Vec<String>,
+    /// The models this provider offers. An older file has only `model`; the
+    /// list is filled on load, so a hand-written file keeps working.
+    #[serde(default)]
+    pub models: Vec<ModelConfig>,
 }
 
 impl ApiProviderConfig {
@@ -172,6 +232,36 @@ impl ApiProviderConfig {
             return format!("{base}/{}", self.url_suffix);
         };
         format!("{base}{suffix}")
+    }
+
+    /// Make the selected id and the list agree. An older file's `model`
+    /// becomes the list's only entry; a hand-edited id the list lacks is
+    /// inserted so the model a turn runs on is never invisible; an empty
+    /// selection falls back to the first listed model.
+    pub fn sync_models(&mut self) {
+        self.model = self.model.trim().to_owned();
+        self.models.retain(|model| !model.id.trim().is_empty());
+        if self.models.is_empty() {
+            if !self.model.is_empty() {
+                self.models.push(ModelConfig::new(self.model.clone()));
+            }
+            return;
+        }
+        if self.model.is_empty() {
+            self.model = self.models[0].id.clone();
+        } else if !self.models.iter().any(|model| model.id == self.model) {
+            self.models.insert(0, ModelConfig::new(self.model.clone()));
+        }
+    }
+
+    /// Point the provider at `id` when the list carries it.
+    pub fn select_model(&mut self, id: &str) -> bool {
+        if self.models.iter().any(|model| model.id == id) {
+            self.model = id.to_owned();
+            true
+        } else {
+            false
+        }
     }
 }
 
@@ -189,13 +279,27 @@ impl ApiProviderConfig {
 /// ```
 impl ApiProviderConfig {
     /// Generate an OpenCode-compatible provider entry.
+    ///
+    /// Every model the provider offers is listed; an older file with only a
+    /// selected model lists that one.
     pub fn to_opencode_provider(&self) -> serde_json::Value {
         let base_url = self.endpoint_url();
         let mut models = serde_json::Map::new();
-        models.insert(
-            self.model.clone(),
-            serde_json::json!({ "name": self.model }),
-        );
+        for model in &self.models {
+            if model.id.trim().is_empty() {
+                continue;
+            }
+            models.insert(
+                model.id.clone(),
+                serde_json::json!({ "name": model.display_label() }),
+            );
+        }
+        if models.is_empty() && !self.model.trim().is_empty() {
+            models.insert(
+                self.model.clone(),
+                serde_json::json!({ "name": self.model }),
+            );
+        }
 
         let mut options = serde_json::Map::new();
         options.insert("baseURL".into(), serde_json::Value::String(base_url));
@@ -291,7 +395,15 @@ pub fn load_all() -> Vec<ApiProviderConfig> {
         }
     };
     match serde_json::from_str(&content) {
-        Ok(providers) => providers,
+        Ok(mut providers) => {
+            // The list is derived from `model` for an older file; doing it on
+            // read means every consumer sees the same catalog without a
+            // write, and the first save carries it to disk.
+            for provider in &mut providers {
+                ApiProviderConfig::sync_models(provider);
+            }
+            providers
+        }
         Err(e) => {
             tracing::warn!("failed to parse api-providers config: {e}");
             vec![]
@@ -354,6 +466,7 @@ mod tests {
             thinking_level: ThinkingLevel::Medium,
             url_suffix: "/v1/chat/completions".into(),
             enabled_agents: vec![],
+            models: vec![],
         };
         assert_eq!(
             cfg.endpoint_url(),
@@ -372,6 +485,7 @@ mod tests {
             thinking_level: ThinkingLevel::High,
             url_suffix: "/v1/chat/completions".into(),
             enabled_agents: vec![],
+            models: vec![],
         };
         let prov = cfg.to_opencode_provider();
         assert_eq!(prov["npm"].as_str().unwrap(), "@ai-sdk/openai-compatible");
@@ -393,6 +507,7 @@ mod tests {
             thinking_level: ThinkingLevel::Low,
             url_suffix: "/v1/messages".into(),
             enabled_agents: vec![],
+            models: vec![],
         };
         let env = cfg.to_claude_env();
         assert_eq!(env["ANTHROPIC_BASE_URL"], "https://ai.xxx.com");
@@ -412,10 +527,132 @@ mod tests {
             thinking_level: ThinkingLevel::Medium,
             url_suffix: "/v1/chat/completions".into(),
             enabled_agents: vec![],
+            models: vec![],
         };
         let env = cfg.to_openai_env();
         assert_eq!(env["OPENAI_API_KEY"], "sk-xxx");
         assert_eq!(env["OPENAI_BASE_URL"], "https://api.openai.com");
         assert_eq!(env["OPENAI_MODEL"], "gpt-4o");
+    }
+
+    /// A file written before the list existed still names its selected model;
+    /// `sync_models` is what gives it the list every consumer reads.
+    #[test]
+    fn test_old_file_gains_its_model_in_the_list() {
+        let mut cfg: ApiProviderConfig = serde_json::from_str(
+            r#"{
+                "name": "old",
+                "format": "openai",
+                "base_url": "https://api.openai.com",
+                "api_key": "sk-x",
+                "model": "gpt-4o",
+                "thinking_level": "medium",
+                "url_suffix": "/v1/chat/completions"
+            }"#,
+        )
+        .expect("an older file has no models key");
+        assert!(cfg.models.is_empty(), "serde(default) leaves it empty");
+        cfg.sync_models();
+        assert_eq!(cfg.models.len(), 1);
+        assert_eq!(cfg.models[0].id, "gpt-4o");
+        assert_eq!(cfg.model, "gpt-4o");
+        assert!(!cfg.models[0].vision);
+    }
+
+    /// The list and the selected id always agree: an empty selection takes the
+    /// first model, and an id the list lacks is kept by inserting it rather
+    /// than silently running a model the page cannot show.
+    #[test]
+    fn test_sync_models_reconciles_the_selection() {
+        let mut cfg = ApiProviderConfig {
+            name: "p".into(),
+            format: ApiFormat::OpenAI,
+            base_url: "https://api.openai.com".into(),
+            api_key: "sk-x".into(),
+            model: "b".into(),
+            thinking_level: ThinkingLevel::Medium,
+            url_suffix: "/v1/chat/completions".into(),
+            enabled_agents: vec![],
+            models: vec![ModelConfig::new("a"), ModelConfig::new("b")],
+        };
+        cfg.sync_models();
+        assert_eq!(cfg.model, "b");
+        assert_eq!(cfg.models.len(), 2, "a selection already listed stays put");
+
+        cfg.model.clear();
+        cfg.sync_models();
+        assert_eq!(cfg.model, "a", "nothing selected runs on the first model");
+
+        cfg.model = "hand-written".into();
+        cfg.sync_models();
+        assert_eq!(cfg.models[0].id, "hand-written");
+        assert_eq!(cfg.models.len(), 3);
+    }
+
+    /// An empty list and an empty selection stay empty: a provider with no
+    /// models is a provider the chat cannot run, and the page says so.
+    #[test]
+    fn test_sync_models_leaves_a_model_less_provider_alone() {
+        let mut cfg = ApiProviderConfig {
+            name: "blank".into(),
+            format: ApiFormat::OpenAI,
+            base_url: "https://api.openai.com".into(),
+            api_key: String::new(),
+            model: String::new(),
+            thinking_level: ThinkingLevel::Low,
+            url_suffix: "/v1/chat/completions".into(),
+            enabled_agents: vec![],
+            models: vec![ModelConfig::new("  ")],
+        };
+        cfg.sync_models();
+        assert!(cfg.models.is_empty());
+        assert!(cfg.model.is_empty());
+    }
+
+    /// Opencode's provider entry lists the whole catalog; a model with no
+    /// label goes by its id, and a file that predates the list still lists its
+    /// one selected model.
+    #[test]
+    fn test_to_opencode_provider_lists_every_model() {
+        let mut cfg = ApiProviderConfig {
+            name: "deepin".into(),
+            format: ApiFormat::OpenAI,
+            base_url: "https://ai.xxx.com".into(),
+            api_key: "ah-xxx".into(),
+            model: "glm-5".into(),
+            thinking_level: ThinkingLevel::High,
+            url_suffix: "/v1/chat/completions".into(),
+            enabled_agents: vec![],
+            models: vec![
+                ModelConfig {
+                    id: "glm-5".into(),
+                    label: "GLM 5".into(),
+                    vision: true,
+                },
+                ModelConfig::new("glm-5-air"),
+            ],
+        };
+        cfg.sync_models();
+        let prov = cfg.to_opencode_provider();
+        assert_eq!(prov["models"]["glm-5"]["name"], "GLM 5");
+        assert_eq!(prov["models"]["glm-5-air"]["name"], "glm-5-air");
+    }
+
+    /// A model entry is at least its id: the two capabilities default to off,
+    /// so an older list written by hand still reads.
+    #[test]
+    fn test_model_config_defaults() {
+        let model: ModelConfig = serde_json::from_str(r#"{"id":"x"}"#).expect("id alone is enough");
+        assert_eq!(model.label, "");
+        assert!(!model.vision);
+        assert_eq!(model.display_label(), "x");
+    }
+
+    #[test]
+    fn test_format_tokens_round_trip() {
+        for format in [ApiFormat::OpenAI, ApiFormat::Anthropic] {
+            assert_eq!(ApiFormat::from_token(format.token()), Some(format));
+        }
+        assert_eq!(ApiFormat::from_token("other"), None);
     }
 }
