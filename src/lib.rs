@@ -10,11 +10,13 @@
 //! The client's resident threads — the daemon reader (`herdr::connection`), the
 //! event stream (`events`), the fleet stream (`fleet`), the plugin host
 //! (`plugins::host`) and the worktree worker (`worktrees`) — are detached and
-//! live for the process. The quit mode is
-//! `LastWindowClosed`: closing the last window is process exit, which takes
-//! every thread with it, so there is nothing for a stop flag to stop. A
-//! per-window shutdown story arrives with multi-window (PLAN §3 B tier); until
-//! then a thread's lifetime is the process's.
+//! outlive the code that started them, but each has a way to end: the daemon
+//! reader stops when its window's pulse inbox closes, the plugin host and the
+//! two request-serving workers end when their channels disconnect, and the
+//! event and fleet streams read a stop flag the window's drop sets (a stream
+//! parked in one blocking line read ends at that read's next answer). The
+//! orchestrator socket (`mcp`) is the one deliberately process-lifetime
+//! surface: it serves until the process ends, whichever windows come and go.
 
 rust_i18n::i18n!("locales");
 
