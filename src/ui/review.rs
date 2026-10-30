@@ -270,9 +270,17 @@ pub(crate) fn overlay(
 
     let mut files = div().w_full().flex().flex_col();
     files = files.child(section_head(t("shell.review.staged"), staged.len(), cx));
-    files = files.child(file_list(&staged, true, state, root, &revealed, cx));
+    files = files.child(file_list(&staged, true, true, state, root, &revealed, cx));
     files = files.child(section_head(t("shell.review.unstaged"), unstaged.len(), cx));
-    files = files.child(file_list(&unstaged, false, state, root, &revealed, cx));
+    files = files.child(file_list(
+        &unstaged,
+        false,
+        staged.is_empty(),
+        state,
+        root,
+        &revealed,
+        cx,
+    ));
     if total == 0 && review.error.is_none() && state.note().is_none() {
         files = files.child(
             div()
@@ -517,11 +525,14 @@ fn section_head(name: String, count: usize, cx: &App) -> AnyElement {
 /// walk the selection past what the window shows, and a manual scroll after a
 /// pick is not undone because the guard only fires on a new generation. The
 /// same shape as the library's `reveal_when_focused`, keyed on the pick
-/// instead of focus.
+/// instead of focus. The listing's very first row is told apart: bringing it
+/// into view alone would leave the section heads cropped above it, so it
+/// resets the column to its head instead.
 fn reveal_stop(
     scroll: &ScrollHandle,
     generation: u64,
     revealed: &Entity<Option<u64>>,
+    first_row: bool,
 ) -> AnyElement {
     let (scroll, revealed) = (scroll.clone(), revealed.clone());
     canvas(
@@ -530,7 +541,18 @@ fn reveal_stop(
                 return;
             }
             revealed.update(cx, |revealed, _| *revealed = Some(generation));
-            if bring_into_view(&scroll, bounds, Axis::Vertical) {
+            let moved = if first_row {
+                let offset = scroll.offset();
+                if offset.y != px(0.) {
+                    scroll.set_offset(point(offset.x, px(0.)));
+                    true
+                } else {
+                    false
+                }
+            } else {
+                bring_into_view(&scroll, bounds, Axis::Vertical)
+            };
+            if moved {
                 window.request_animation_frame();
             }
         },
@@ -546,6 +568,7 @@ fn reveal_stop(
 fn file_list(
     files: &[&ChangedFile],
     staged: bool,
+    holds_first: bool,
     state: &State,
     root: &Entity<Root>,
     revealed: &Entity<Option<u64>>,
@@ -554,7 +577,7 @@ fn file_list(
     let theme = cx.theme();
     let colors = &theme.colors;
     let mut list = div().flex().flex_col();
-    for file in files {
+    for (ix, file) in files.iter().enumerate() {
         let picked = state
             .selected()
             .is_some_and(|selected| selected.path == file.path && selected.staged == staged);
@@ -585,6 +608,7 @@ fn file_list(
                         &state.scroll,
                         state.generation(),
                         revealed,
+                        holds_first && ix == 0,
                     ))
                 })
                 .hover(|style| style.bg(colors.hover))
