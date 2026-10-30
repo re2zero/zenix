@@ -319,6 +319,24 @@ impl Root {
         // value this shell owns and the release writes it back.
         let mut aside_width = aside::Width::new();
         aside_width.restore(config::get(cx).layout.aside_width);
+        // The empty screen's attach field: one line for a remote host, alive
+        // with the window; its Enter opens the window it names.
+        let host_input =
+            cx.new(|cx| TextInput::new(window, cx).placeholder(t("shell.remote.host_placeholder")));
+        let host_sub = cx.subscribe_in(
+            &host_input,
+            window,
+            |this: &mut Self, _input, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::Submit) {
+                    this.connect_remote(window, cx);
+                }
+            },
+        );
+        let empty = empty::State {
+            host: Some(host_input),
+            _host_sub: Some(host_sub),
+            ..Default::default()
+        };
 
         // The MCP surface: one orchestrator socket per process, in the config
         // directory, started at the first window and serving until the
@@ -404,7 +422,7 @@ impl Root {
             confirm: None,
             layout_state: LayoutState::default(),
             layout_cwd: None,
-            empty: empty::State::default(),
+            empty,
             _daemon_task: None,
             _layout_input: None,
             toasts,
@@ -733,6 +751,32 @@ impl Root {
     /// window draws the honest degraded faces instead of local actions.
     pub(crate) fn lane_up(&self) -> bool {
         self.lane.is_some()
+    }
+
+    /// The attach card's submit: open one more window on the host the field
+    /// names. This window keeps its own daemon; the new one speaks for itself,
+    /// and a refused attachment degrades in its own frame.
+    pub(crate) fn connect_remote(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        let Some(input) = self.empty.host.clone() else {
+            return;
+        };
+        let host = input.read(cx).text().trim().to_owned();
+        if host.is_empty() {
+            return;
+        }
+        let target = ConnectTarget::Ssh {
+            target: host,
+            session: String::from("default"),
+        };
+        match super::windows::open_shell_window(cx, target) {
+            Ok(_) => {
+                self.empty.note = Some(t("shell.remote.opened").to_string());
+            }
+            Err(error) => {
+                self.empty.note = Some(error.to_string());
+            }
+        }
+        cx.notify();
     }
 
     pub(crate) fn show_view(&mut self, view: chrome::View, cx: &mut Context<Self>) {

@@ -28,6 +28,7 @@
 
 use ely_core::buttons::{Button, ButtonVariant};
 use ely_core::feedback::EmptyState;
+use ely_core::forms::TextInput;
 use ely_core::layout::ScrollArea;
 use ely_core::primitives::{Icon, IconName};
 use ely_core::theme::{ActiveTheme, ControlSize, IconSize, Radius, TextSize};
@@ -55,6 +56,10 @@ pub(crate) struct State {
     pub(crate) note: Option<String>,
     /// A start is running off the UI thread; the button says so by waiting.
     pub(crate) starting: bool,
+    /// The remote host field of the connect card, alive with the block.
+    pub(crate) host: Option<Entity<TextInput>>,
+    /// The field's submission handler, alive exactly while the field is.
+    pub(crate) _host_sub: Option<gpui::Subscription>,
 }
 
 /// The block over the grid. `live` decides whether the daemon card is drawn;
@@ -93,6 +98,9 @@ pub(crate) fn main(live: &LiveState, state: &State, root: &Entity<Root>, cx: &Ap
                     .body(t("shell.first_run.body")),
                 )
                 .child(entries(root, cx))
+                .when_some(connect_card(state, root, cx).into(), |row, card| {
+                    row.child(card)
+                })
                 // A remote window cannot start, copy or tail a local
                 // daemon: its card would offer actions that belong to
                 // another machine, so it draws the connection line only.
@@ -217,6 +225,73 @@ fn entries(root: &Entity<Root>, cx: &App) -> AnyElement {
 
 /// The daemon, when there is none: why, how to start it, and — if it failed —
 /// what it said.
+/// The attach card: one field for a remote host, one button. Submitting it
+/// opens one more window — the current one keeps its own daemon either way.
+fn connect_card(state: &State, root: &Entity<Root>, cx: &App) -> AnyElement {
+    let Some(host) = state.host.clone() else {
+        return div().into_any_element();
+    };
+    let theme = cx.theme();
+    let colors = &theme.colors;
+    let connect = {
+        let root = root.clone();
+        Button::new("remote-connect", t("shell.remote.connect"))
+            .variant(ButtonVariant::Primary)
+            .size(ControlSize::Sm)
+            .on_click(move |_, window, cx| {
+                root.update(cx, |root, cx| root.connect_remote(window, cx));
+            })
+    };
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .p_3()
+        .rounded(theme.radius(Radius::Lg))
+        .border_1()
+        .border_color(colors.border)
+        .bg(colors.surface)
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(
+                    Icon::new(IconName::Globe)
+                        .size(IconSize::Sm)
+                        .color(colors.fg_muted),
+                )
+                .child(
+                    div()
+                        .text_size(theme.text_size(TextSize::Sm))
+                        .font_weight(gpui::FontWeight::SEMIBOLD)
+                        .text_color(colors.fg)
+                        .child(t("shell.remote.host_title")),
+                )
+                .child(
+                    div()
+                        .text_size(theme.text_size(TextSize::Xs))
+                        .text_color(colors.fg_muted)
+                        .child(t("shell.remote.host_detail")),
+                ),
+        )
+        .child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .child(host)
+                .child(connect),
+        )
+        .children(state.note.as_deref().map(|note| {
+            div()
+                .text_size(theme.text_size(TextSize::Xs))
+                .text_color(colors.fg_muted)
+                .child(SharedString::from(note.to_owned()))
+        }))
+        .into_any_element()
+}
+
 /// The disconnected line a remote window draws instead of the daemon card:
 /// naming the target, and saying honestly that the local actions are not
 /// this window's to take.
