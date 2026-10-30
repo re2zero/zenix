@@ -16,14 +16,14 @@
 
 use ely_core::{
     buttons::{Button, ButtonVariant, IconButton},
-    layout::ScrollArea,
+    layout::{ScrollArea, bring_into_view},
     primitives::{Backdrop, FocusScope, Icon, IconName, give_back, take_focus},
     theme::{ActiveTheme, ControlSize, Elevation, IconSize, Radius, TextSize},
     typography::Ellipsis,
 };
 use gpui::{
-    AnyElement, App, Entity, IntoElement, ParentElement, SharedString, Styled, Window, div,
-    prelude::*, px,
+    AnyElement, App, Axis, Entity, IntoElement, ParentElement, ScrollHandle, SharedString, Styled,
+    Window, canvas, div, point, prelude::*, px,
 };
 
 use super::shell::Root;
@@ -37,13 +37,17 @@ const MARGIN: f32 = 48.;
 const FILES: f32 = 280.;
 
 /// The sheet's own state: open, the picked file, and a note for the case where
-/// there is no repository to read at all.
+/// there is no repository to read at all. The two scroll handles are owned so
+/// the keyboard can bring the picked row into view and a new sheet starts at
+/// the head instead of where the last one was left.
 #[derive(Default)]
 pub(crate) struct State {
     open: bool,
     note: Option<String>,
     selected: Option<Selected>,
     generation: u64,
+    scroll: ScrollHandle,
+    diff_scroll: ScrollHandle,
 }
 
 /// The file the right column shows, and which side of the index asked for it.
@@ -60,6 +64,9 @@ impl State {
         self.note = note;
         self.selected = None;
         self.generation = self.generation.wrapping_add(1);
+        let head = point(px(0.), px(0.));
+        self.scroll.set_offset(head);
+        self.diff_scroll.set_offset(head);
     }
 
     pub(crate) fn close(&mut self) {
@@ -80,7 +87,9 @@ impl State {
         self.selected.as_ref()
     }
 
-    /// Pick a file and hand back the generation the read belongs to.
+    /// Pick a file and hand back the generation the read belongs to. The diff
+    /// column restarts: another file is read from its first line, not from
+    /// where the last one was scrolled to.
     pub(crate) fn select(&mut self, path: String, staged: bool, untracked: bool) -> u64 {
         self.selected = Some(Selected {
             path,
@@ -88,6 +97,7 @@ impl State {
             untracked,
         });
         self.generation = self.generation.wrapping_add(1);
+        self.diff_scroll.set_offset(point(px(0.), px(0.)));
         self.generation
     }
 
@@ -208,6 +218,9 @@ pub(crate) fn overlay(
     }
     let takeover = take_focus("review-dialog-takeover", window, cx);
     let focus = takeover.read(cx).focus.clone();
+    // The picked row's one-shot reveal guard: the generation the canvas last
+    // moved the column for, so a manual scroll afterwards is not undone.
+    let revealed = window.use_keyed_state("review-reveal", cx, |_, _| None::<u64>);
     let theme = cx.theme();
     let colors = &theme.colors;
     let close = {
@@ -257,9 +270,9 @@ pub(crate) fn overlay(
 
     let mut files = div().w_full().flex().flex_col();
     files = files.child(section_head(t("shell.review.staged"), staged.len(), cx));
-    files = files.child(file_list(&staged, true, state, root, cx));
+    files = files.child(file_list(&staged, true, state, root, &revealed, cx));
     files = files.child(section_head(t("shell.review.unstaged"), unstaged.len(), cx));
-    files = files.child(file_list(&unstaged, false, state, root, cx));
+    files = files.child(file_list(&unstaged, false, state, root, &revealed, cx));
     if total == 0 && review.error.is_none() && state.note().is_none() {
         files = files.child(
             div()
@@ -281,6 +294,7 @@ pub(crate) fn overlay(
         div().w(px(FILES)).flex_none().min_h_0().child(
             ScrollArea::new("review-files")
                 .vertical()
+                .track_scroll(&state.scroll)
                 .size_full()
                 .child(files),
         ),
@@ -497,11 +511,44 @@ fn section_head(name: String, count: usize, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
+/// The picked row's one-shot scroll: a canvas the size of the row that, once
+/// per pick — the sheet's generation is the guard, kept in keyed window state —
+/// moves the file column so the row sits fully inside it. The arrows must not
+/// walk the selection past what the window shows, and a manual scroll after a
+/// pick is not undone because the guard only fires on a new generation. The
+/// same shape as the library's `reveal_when_focused`, keyed on the pick
+/// instead of focus.
+fn reveal_stop(
+    scroll: &ScrollHandle,
+    generation: u64,
+    revealed: &Entity<Option<u64>>,
+) -> AnyElement {
+    let (scroll, revealed) = (scroll.clone(), revealed.clone());
+    canvas(
+        move |bounds, window, cx| {
+            if revealed.read(cx) == &Some(generation) {
+                return;
+            }
+            revealed.update(cx, |revealed, _| *revealed = Some(generation));
+            if bring_into_view(&scroll, bounds, Axis::Vertical) {
+                window.request_animation_frame();
+            }
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+    .into_any_element()
+}
+
 fn file_list(
     files: &[&ChangedFile],
     staged: bool,
     state: &State,
     root: &Entity<Root>,
+    revealed: &Entity<Option<u64>>,
     cx: &App,
 ) -> AnyElement {
     let theme = cx.theme();
@@ -533,7 +580,13 @@ fn file_list(
                 .px_3()
                 .py_1()
                 .rounded(theme.radius(Radius::Sm))
-                .when(picked, |row| row.bg(colors.active))
+                .when(picked, |row| {
+                    row.bg(colors.active).child(reveal_stop(
+                        &state.scroll,
+                        state.generation(),
+                        revealed,
+                    ))
+                })
                 .hover(|style| style.bg(colors.hover))
                 .cursor_pointer()
                 .on_click(move |_, _, cx| {
@@ -711,6 +764,7 @@ fn diff_body(state: &State, diff: &DiffState, cx: &App) -> AnyElement {
         div().flex_1().min_h_0().child(
             ScrollArea::new("review-diff")
                 .vertical()
+                .track_scroll(&state.diff_scroll)
                 .size_full()
                 .child(lines),
         ),
@@ -764,6 +818,36 @@ mod tests {
         assert_eq!(second, 2);
         assert_eq!(state.selected().map(|s| s.path.as_str()), Some("b.txt"));
         assert!(state.selected().unwrap().staged);
+    }
+
+    #[test]
+    fn a_new_sheet_starts_at_the_head() {
+        let mut state = State::default();
+        state.select("a.txt".into(), false, false);
+        state.scroll.set_offset(point(px(0.), px(-40.)));
+        state.diff_scroll.set_offset(point(px(0.), px(-90.)));
+        state.open(None);
+        assert_eq!(
+            state.scroll.offset(),
+            point(px(0.), px(0.)),
+            "the reopened sheet lists the staged section first"
+        );
+        assert_eq!(state.diff_scroll.offset(), point(px(0.), px(0.)));
+    }
+
+    #[test]
+    fn a_new_pick_reads_its_diff_from_the_first_line() {
+        let mut state = State::default();
+        state.diff_scroll.set_offset(point(px(0.), px(-90.)));
+        state.select("a.txt".into(), false, false);
+        assert_eq!(state.diff_scroll.offset(), point(px(0.), px(0.)));
+        state.diff_scroll.set_offset(point(px(0.), px(-90.)));
+        state.select("a.txt".into(), true, false);
+        assert_eq!(
+            state.diff_scroll.offset(),
+            point(px(0.), px(0.)),
+            "the other side of the same path is another pick"
+        );
     }
 
     #[test]
