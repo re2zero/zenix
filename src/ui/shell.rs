@@ -29,7 +29,7 @@ use gpui::{
     MouseUpEvent, ParentElement, Render, Subscription, SystemNotification, Task, Window,
     WindowBounds, div, prelude::*,
 };
-use herdr_client::ConnectTarget;
+use herdr_client::{ConnectTarget, SavedHost};
 
 use super::{
     aside, chat, chrome, commands, confirm, empty, fleet, inspector, keymap, layout_sheet, manager,
@@ -158,6 +158,9 @@ pub struct Root {
     /// A daemon start running off the UI thread, because seeding the binary is
     /// file work.
     _daemon_task: Option<Task<()>>,
+    /// The saved-host catalog read, off the UI thread while the window was
+    /// opening; its rows feed the empty screen's attach card.
+    _saved_task: Task<()>,
     /// The layout inspector's directory field, alive while the sheet offers it,
     /// and the field's submission handler.
     _layout_input: Option<Subscription>,
@@ -341,6 +344,31 @@ impl Root {
             ..Default::default()
         };
 
+        // The daemon's saved-host catalog is a file beside its state; read it
+        // once per window off the UI thread so the empty screen's attach card
+        // can offer its rows. A failed read is said in the card, not swallowed.
+        // Zenix speaks to the production daemon, whose catalog lives under
+        // `herdr`, so the read is never the development one.
+        let _saved_task = cx.spawn(async move |root, cx| {
+            let read = cx
+                .background_executor()
+                .spawn(async { herdr_client::load_saved_hosts(false) })
+                .await;
+            root.update(cx, |root, cx| {
+                match read {
+                    Ok(hosts) => root.empty.saved = empty::offered(&hosts),
+                    Err(error) => {
+                        root.empty.saved_error = Some(
+                            rust_i18n::t!("shell.remote.saved_error", error = error.to_string())
+                                .to_string(),
+                        );
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        });
+
         // The MCP surface: one orchestrator socket per process, in the config
         // directory, started at the first window and serving until the
         // process ends. Agents have reached it there since M6; the settings
@@ -427,6 +455,7 @@ impl Root {
             layout_cwd: None,
             empty,
             _daemon_task: None,
+            _saved_task,
             _layout_input: None,
             toasts,
             target: target.clone(),
@@ -761,10 +790,28 @@ impl Root {
         if host.is_empty() {
             return;
         }
-        let target = ConnectTarget::Ssh {
-            target: host,
-            session: String::from("default"),
-        };
+        self.attach(
+            ConnectTarget::Ssh {
+                target: host,
+                session: String::from("default"),
+            },
+            cx,
+        );
+    }
+
+    /// A saved-host row's press: open one more window on the entry the
+    /// daemon's catalog names, target and session both.
+    pub(crate) fn connect_saved(
+        &mut self,
+        host: &SavedHost,
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.attach(empty::saved_target(host), cx);
+    }
+
+    /// The one open-and-say-so path behind both attach triggers.
+    fn attach(&mut self, target: ConnectTarget, cx: &mut Context<Self>) {
         match super::windows::open_shell_window(cx, target) {
             Ok(_) => {
                 self.empty.note = Some(t("shell.remote.opened").to_string());

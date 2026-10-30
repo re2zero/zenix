@@ -41,6 +41,7 @@ use super::commands::Command;
 use super::shell::Root;
 use crate::herdr::{ConnectionStatus, LiveState};
 use crate::i18n::t;
+use herdr_client::{ConnectTarget, SavedHost};
 
 /// The block's own width: the design's four cards read two by two, and the
 /// daemon card's sentence needs a line's room.
@@ -60,6 +61,13 @@ pub(crate) struct State {
     pub(crate) host: Option<Entity<TextInput>>,
     /// The field's submission handler, alive exactly while the field is.
     pub(crate) _host_sub: Option<gpui::Subscription>,
+    /// The daemon's saved-host catalog (the enabled rows), read once off the
+    /// UI thread while the window was opening. Empty until the read lands and
+    /// whenever the catalog is absent.
+    pub(crate) saved: Vec<SavedHost>,
+    /// Why the catalog could not be read, when it could not. The card says so
+    /// rather than quietly drawing a shorter list.
+    pub(crate) saved_error: Option<String>,
 }
 
 /// The block over the grid. `live` decides whether the daemon card is drawn;
@@ -233,6 +241,21 @@ fn entries(root: &Entity<Root>, cx: &App) -> AnyElement {
 
 /// The daemon, when there is none: why, how to start it, and — if it failed —
 /// what it said.
+/// The catalog's rows the selector offers: a host switched off upstream is
+/// not a window zenix should open, so it never reaches the card.
+pub(crate) fn offered(hosts: &[SavedHost]) -> Vec<SavedHost> {
+    hosts.iter().filter(|host| host.enabled).cloned().collect()
+}
+
+/// The connection a saved row opens: the entry's own target and session,
+/// not this window's defaults.
+pub(crate) fn saved_target(host: &SavedHost) -> ConnectTarget {
+    ConnectTarget::Ssh {
+        target: host.target.clone(),
+        session: host.session.clone(),
+    }
+}
+
 /// The attach card: one field for a remote host, one button. Submitting it
 /// opens one more window — the current one keeps its own daemon either way.
 fn connect_card(state: &State, root: &Entity<Root>, cx: &App) -> AnyElement {
@@ -291,12 +314,97 @@ fn connect_card(state: &State, root: &Entity<Root>, cx: &App) -> AnyElement {
                 .child(host)
                 .child(connect),
         )
+        .children((!state.saved.is_empty()).then(|| {
+            div()
+                .flex()
+                .flex_col()
+                .gap_0p5()
+                .child(
+                    div()
+                        .text_size(theme.text_size(TextSize::Xs))
+                        .text_color(colors.fg_muted)
+                        .child(t("shell.remote.saved_title")),
+                )
+                .children(
+                    state
+                        .saved
+                        .iter()
+                        .enumerate()
+                        .map(|(index, host)| saved_row(index, host, root, cx)),
+                )
+        }))
+        .children(state.saved_error.as_deref().map(|reason| {
+            div()
+                .text_size(theme.text_size(TextSize::Xs))
+                .text_color(colors.fg_muted)
+                .child(SharedString::from(reason.to_owned()))
+        }))
         .children(state.note.as_deref().map(|note| {
             div()
                 .text_size(theme.text_size(TextSize::Xs))
                 .text_color(colors.fg_muted)
                 .child(SharedString::from(note.to_owned()))
         }))
+        .into_any_element()
+}
+
+/// One saved host of the daemon's catalog: its label names the row, its
+/// target says where the window would go, and a press opens that window.
+fn saved_row(index: usize, host: &SavedHost, root: &Entity<Root>, cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    let colors = &theme.colors;
+    let open = root.clone();
+    let host = host.clone();
+    let (label, target) = (host.label.clone(), host.target.clone());
+    div()
+        .id(("saved-host", index))
+        .role(gpui::Role::Button)
+        .aria_label(format!("{label} ({target})"))
+        .flex()
+        .items_center()
+        .gap_2()
+        .px_2()
+        .py_1p5()
+        .rounded(theme.radius(Radius::Md))
+        .cursor_pointer()
+        .hover(move |style| style.bg(colors.hover))
+        .on_click(move |_, window, cx| {
+            open.update(cx, |root, cx| root.connect_saved(&host, window, cx));
+        })
+        .child(
+            Icon::new(IconName::Globe)
+                .size(IconSize::Sm)
+                .color(colors.fg_muted),
+        )
+        .child(
+            div()
+                .min_w_0()
+                .flex()
+                .items_baseline()
+                .gap_2()
+                .child(
+                    div()
+                        .flex_none()
+                        .text_size(theme.text_size(TextSize::Sm))
+                        .font_weight(gpui::FontWeight::MEDIUM)
+                        .text_color(colors.fg)
+                        .child(SharedString::from(label)),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .text_size(theme.text_size(TextSize::Xs))
+                        .text_color(colors.fg_muted)
+                        .truncate()
+                        .child(SharedString::from(target)),
+                ),
+        )
+        .child(div().flex_1())
+        .child(
+            Icon::new(IconName::ChevronRight)
+                .size(IconSize::Sm)
+                .color(colors.fg_muted),
+        )
         .into_any_element()
 }
 
@@ -562,11 +670,48 @@ mod tests {
                 "shell.first_run.daemon.body",
                 "shell.first_run.daemon.start",
                 "shell.first_run.daemon.logs",
+                "shell.remote.saved_title",
             ] {
                 let copy = t(key);
                 assert_ne!(copy, key, "{locale}: {key} has no translation");
             }
         }
         crate::i18n::set_locale(&previous);
+    }
+
+    fn saved_host(label: &str, session: &str, enabled: bool) -> SavedHost {
+        SavedHost {
+            id: "0123456789abcdef0123456789abcdef".into(),
+            label: label.into(),
+            target: "user@box".into(),
+            session: session.into(),
+            enabled,
+        }
+    }
+
+    /// The selector offers what the daemon's catalog enables: a host switched
+    /// off upstream is not a window zenix should open.
+    #[test]
+    fn the_selector_offers_only_enabled_hosts() {
+        let hosts = vec![
+            saved_host("on", "default", true),
+            saved_host("off", "default", false),
+        ];
+        let offered = offered(&hosts);
+        assert_eq!(offered.len(), 1);
+        assert_eq!(offered[0].label, "on");
+    }
+
+    /// A saved row opens the entry's own target and session — the daemon
+    /// recorded both when the host was added, and "default" is only what the
+    /// typed field falls back to.
+    #[test]
+    fn a_saved_row_opens_the_entrys_own_target() {
+        let host = saved_host("build box", "infra", true);
+        let ConnectTarget::Ssh { target, session } = saved_target(&host) else {
+            panic!("a saved host opens an SSH window");
+        };
+        assert_eq!(target, "user@box");
+        assert_eq!(session, "infra");
     }
 }

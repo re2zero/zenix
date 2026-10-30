@@ -1401,6 +1401,12 @@ shell:
     opened:
       en: "The window is open; it connects on its own connection."
       zh-CN: "窗口已打开，它使用自己的连接。"
+    saved_title:
+      en: "Saved hosts"
+      zh-CN: "已存主机"
+    saved_error:
+      en: "Saved hosts are unavailable: %{error}"
+      zh-CN: "已存主机不可用：%{error}"
   # The event view's chips: the slices the stream can be read through.
   event_filter:
     all:
