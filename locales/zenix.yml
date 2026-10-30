@@ -1386,6 +1386,21 @@ shell:
     disconnected_body:
       en: "Retry is automatic; this window starts no local daemon."
       zh-CN: "会自动重连；此窗口不会启动本地 daemon。"
+    host_title:
+      en: "Attach to a remote host"
+      zh-CN: "连接远程主机"
+    host_detail:
+      en: "opens one more window over SSH"
+      zh-CN: "经 SSH 开一个新窗口"
+    host_placeholder:
+      en: "user@host"
+      zh-CN: "user@host"
+    connect:
+      en: "Connect"
+      zh-CN: "连接"
+    opened:
+      en: "The window is open; it connects on its own connection."
+      zh-CN: "窗口已打开，它使用自己的连接。"
   # The event view's chips: the slices the stream can be read through.
   event_filter:
     all:
