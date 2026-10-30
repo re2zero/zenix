@@ -1381,11 +1381,11 @@ shell:
       en: "This window is attached to a remote daemon; this surface needs this machine's daemon."
       zh-CN: "此窗口连接的是远程 daemon，该功能需要本机 daemon。"
     disconnected_title:
-      en: "Remote daemon not reachable"
-      zh-CN: "远程 daemon 暂不可达"
+      en: "This window's daemon is not connected"
+      zh-CN: "此窗口的 daemon 暂未连接"
     disconnected_body:
-      en: "Retry is automatic; this window starts no local daemon."
-      zh-CN: "会自动重连；此窗口不会启动本地 daemon。"
+      en: "It retries on its own; this window starts no daemon of its own."
+      zh-CN: "会自动重连；此窗口不会代为启动 daemon。"
     host_title:
       en: "Attach to a remote host"
       zh-CN: "连接远程主机"

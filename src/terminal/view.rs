@@ -117,6 +117,10 @@ fn popup_target(surface: Option<&PaneSurfaceFrame>) -> Option<&str> {
 pub(crate) struct TerminalView {
     focus: FocusHandle,
     connection: Connection,
+    /// The window's own identity for the title bar, when the daemon this view
+    /// paints is not the default local one: the pane title composes with it
+    /// instead of replacing the whole name.
+    window_base: Option<String>,
     painter: Rc<RefCell<TerminalPainter>>,
     font: Font,
     /// The font's size and the cell's height the grid draws at, from the
@@ -192,6 +196,7 @@ impl TerminalView {
         Self {
             focus: cx.focus_handle(),
             connection,
+            window_base: None,
             painter: Rc::new(RefCell::new(TerminalPainter::default())),
             font: font(mono),
             font_size,
@@ -259,6 +264,12 @@ impl TerminalView {
     /// not bump it, and those answers are exactly what frees the next request.
     /// The shell drains the clipboard and notifications off the shared state;
     /// this view only paints the copy.
+    /// The window-title base for a named target (`zenix — ssh host`). A local
+    /// window keeps the pane title alone, as it always read.
+    pub(crate) fn set_window_base(&mut self, base: Option<String>) {
+        self.window_base = base;
+    }
+
     pub(crate) fn sync(&mut self, live: LiveState, cx: &mut Context<Self>) {
         let boot_changed = live.boot_id() != self.live.boot_id();
         let moved =
@@ -1739,14 +1750,21 @@ impl TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // The daemon's window title while this view is the focused one; the
-        // app's own name when it reports none.
-        let title = self
+        // window's own identity when it reports none — and, on a window whose
+        // daemon is a named target, the two together, so the pane title never
+        // erases which connection face this is.
+        let pane = self
             .live
             .title
             .as_deref()
             .filter(|title| !title.is_empty())
-            .map(str::to_owned)
-            .unwrap_or_else(|| rust_i18n::t!("terminal.title.fallback").to_string());
+            .map(str::to_owned);
+        let title = match (&pane, &self.window_base) {
+            (Some(pane), Some(base)) => format!("{pane} — {base}"),
+            (Some(pane), None) => pane.clone(),
+            (None, Some(base)) => base.clone(),
+            (None, None) => rust_i18n::t!("terminal.title.fallback").to_string(),
+        };
         window.set_window_title(&title);
         let live = self.live.clone();
         // Each canvas closure takes its own handle: both outlive this render.

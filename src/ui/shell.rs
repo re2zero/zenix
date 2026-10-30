@@ -297,6 +297,9 @@ impl Root {
         let panes = cx.new(|cx| TerminalView::new(connection.clone(), starting, cx));
         panes.update(cx, |panes, cx| {
             panes.set_theme(terminal_theme(cx), cx);
+            panes.set_window_base(
+                (target != ConnectTarget::Local).then(|| super::windows::window_title(&target)),
+            );
             let terminal = &config::get(cx).terminal;
             panes.set_metrics(
                 terminal.font_size,
@@ -745,12 +748,6 @@ impl Root {
     /// this window is a face of.
     pub(crate) fn target_label(&self) -> Option<String> {
         super::windows::target_label(&self.target)
-    }
-
-    /// Whether this window's daemon lane is this machine's socket. A remote
-    /// window draws the honest degraded faces instead of local actions.
-    pub(crate) fn lane_up(&self) -> bool {
-        self.lane.is_some()
     }
 
     /// The attach card's submit: open one more window on the host the field
@@ -2093,6 +2090,7 @@ impl Render for Root {
                     keymap: &self.keymap,
                     prefix_armed: self.prefix_armed,
                     empty: &self.empty,
+                    local_daemon: matches!(self.target, ConnectTarget::Local),
                     root,
                 },
                 cx,
@@ -2160,6 +2158,7 @@ impl Render for Root {
                             window,
                             &self.live,
                             &self.keymap,
+                            self.target_label(),
                             root,
                             cx,
                         ))
