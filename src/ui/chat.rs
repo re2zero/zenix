@@ -142,6 +142,10 @@ pub(crate) struct ChatView {
     /// before it asks again; deliberately not persisted, because a permission
     /// granted in one conversation should not answer for another.
     always_allow: Arc<Mutex<HashSet<String>>>,
+    /// Whether this window's daemon has a JSON lane for the chat's tools. A
+    /// remote window's model conversation runs, but no daemon tool is offered
+    /// or executed — its agents live on the other machine.
+    daemon_tools: bool,
     /// The composer menu standing open, if one is.
     menu: Option<ComposerMenu>,
     /// Why the last model or level choice could not be written to the provider
@@ -162,7 +166,7 @@ pub(crate) struct ChatView {
 }
 
 impl ChatView {
-    pub(crate) fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub(crate) fn new(window: &mut Window, daemon_tools: bool, cx: &mut Context<Self>) -> Self {
         let input = cx.new(|cx| {
             TextInput::new(window, cx)
                 .multi_line(2, 6)
@@ -197,6 +201,7 @@ impl ChatView {
             always_allow: Arc::new(Mutex::new(HashSet::new())),
             menu: None,
             menu_error: None,
+            daemon_tools,
             full_access: Arc::new(AtomicBool::new(false)),
             unread: 0,
             on_screen: false,
@@ -425,12 +430,21 @@ impl ChatView {
         let report = events.clone();
         let always_allow = self.always_allow.clone();
         let full_access = self.full_access.clone();
+        let daemon_tools = self.daemon_tools;
         self.turn = Some(runtime.spawn(async move {
-            let tools = builtin_tools();
+            let tools = if daemon_tools {
+                builtin_tools()
+            } else {
+                Vec::new()
+            };
             let tools: Vec<&dyn Tool> = tools.iter().map(|tool| tool.as_ref()).collect();
             // The empty workspace id is the daemon's own focused workspace: the
             // panel has no snapshot of its own to name one from.
-            let executor = ToolExecutor::new(ApiEndpoint::local(), String::new());
+            let executor = if daemon_tools {
+                ToolExecutor::new(ApiEndpoint::local(), String::new())
+            } else {
+                ToolExecutor::without_daemon()
+            };
             let compactor = Compactor::default_compactor();
             let gate = ApprovalGate {
                 requests: approval_tx,

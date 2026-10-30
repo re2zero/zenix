@@ -277,7 +277,7 @@ impl Drop for Stream {
 impl Stream {
     /// Start the stream and its worker. The returned receiver pulses once per
     /// event, so the shell repaints as they arrive instead of polling.
-    pub(crate) fn start() -> (Self, Receiver<()>) {
+    pub(crate) fn start(client: ApiClient) -> (Self, Receiver<()>) {
         let cache = Arc::new(Mutex::new(EventState::default()));
         // Bounded at one: an event that arrives while the shell has not painted
         // the one before it needs no second wakeup.
@@ -287,7 +287,7 @@ impl Stream {
         let worker_stop = stop.clone();
         thread::Builder::new()
             .name("zenix-events".into())
-            .spawn(move || follow(ApiClient::local(), worker_cache, worker_stop, pulses_out))
+            .spawn(move || follow(client, worker_cache, worker_stop, pulses_out))
             .expect("failed to spawn the event stream thread");
         (Self { cache, stop }, pulses)
     }

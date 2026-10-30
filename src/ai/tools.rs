@@ -114,6 +114,10 @@ pub trait Tool: Send + Sync {
 pub struct ToolExecutor {
     endpoint: Arc<ApiEndpoint>,
     workspace_id: String,
+    /// Whether the daemon is reachable on this window's lane. A remote
+    /// window's chat keeps its model conversation but offers no daemon tool,
+    /// because the agents it would touch live on the other machine.
+    daemon_tools: bool,
 }
 
 impl ToolExecutor {
@@ -122,6 +126,17 @@ impl ToolExecutor {
         Self {
             endpoint: Arc::new(endpoint),
             workspace_id,
+            daemon_tools: true,
+        }
+    }
+
+    /// An executor for a window without a daemon lane: the same shape, but
+    /// every tool call refuses by name rather than reaching any daemon.
+    pub fn without_daemon() -> Self {
+        Self {
+            endpoint: Arc::new(ApiEndpoint::local()),
+            workspace_id: String::new(),
+            daemon_tools: false,
         }
     }
 
@@ -138,6 +153,9 @@ impl ToolExecutor {
 
     /// Execute a single tool call, dispatching by name.
     pub fn execute(&self, call: &ToolCall) -> ToolResult {
+        if !self.daemon_tools {
+            return ToolResult::error(&call.name, rust_i18n::t!("ai.tool.no_daemon").to_string());
+        }
         let all_tools = Self::available_tools();
         for tool in &all_tools {
             if tool.name() == call.name {
@@ -713,6 +731,18 @@ pub fn execute_tool_call(call: &ToolCall, executor: &ToolExecutor) -> ToolResult
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_laneless_executor_refuses_every_tool() {
+        let executor = ToolExecutor::without_daemon();
+        let call = ToolCall {
+            id: "t1".into(),
+            name: "agent_send".into(),
+            arguments: serde_json::json!({}),
+        };
+        let result = executor.execute(&call);
+        assert!(result.is_error, "the call refuses");
+    }
+
     use super::*;
 
     fn executor() -> ToolExecutor {

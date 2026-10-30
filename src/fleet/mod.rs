@@ -182,7 +182,7 @@ struct Watch {
 impl Stream {
     /// Start the stream and its worker. The returned receiver pulses once per
     /// transition, so the shell repaints as they arrive instead of polling.
-    pub(crate) fn start() -> (Self, Receiver<()>) {
+    pub(crate) fn start(client: ApiClient) -> (Self, Receiver<()>) {
         let cache = Arc::new(Mutex::new(FleetState::default()));
         let watch = Arc::new(Mutex::new(Watch::default()));
         // Bounded at one: a transition that arrives while the shell has not
@@ -196,7 +196,7 @@ impl Stream {
         };
         thread::Builder::new()
             .name("zenix-fleet".into())
-            .spawn(move || follow(ApiClient::local(), worker, pulses_out))
+            .spawn(move || follow(client, worker, pulses_out))
             .expect("failed to spawn the fleet stream thread");
         (Self { cache, watch, stop }, pulses)
     }

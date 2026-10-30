@@ -905,6 +905,9 @@ ai:
     unknown:
       en: "Unknown tool: %{name}"
       zh-CN: "未知工具：%{name}"
+    no_daemon:
+      en: "this window is attached to a remote daemon; agent tools need a local window"
+      zh-CN: "此窗口连接的是远程 daemon，agent 工具需要在本地窗口使用"
     param_required:
       en: "Argument %{param} is required and must be a non-empty string."
       zh-CN: "参数 %{param} 是必需的非空字符串"
@@ -1352,6 +1355,9 @@ shell:
     stale:
       en: "last snapshot · daemon disconnected"
       zh-CN: "最后一次快照 · daemon 已断开"
+    remote:
+      en: "remote daemon · local lane unavailable"
+      zh-CN: "远程 daemon · 本机车道不可用"
     workspaces:
       en: "snapshot push · no polling"
       zh-CN: "snapshot 推送 · 无轮询"
@@ -1370,6 +1376,16 @@ shell:
     layout:
       en: "layout.export / layout.apply"
       zh-CN: "layout.export / layout.apply"
+  remote:
+    no_lane:
+      en: "This window is attached to a remote daemon; this surface needs this machine's daemon."
+      zh-CN: "此窗口连接的是远程 daemon，该功能需要本机 daemon。"
+    disconnected_title:
+      en: "Remote daemon not reachable"
+      zh-CN: "远程 daemon 暂不可达"
+    disconnected_body:
+      en: "Retry is automatic; this window starts no local daemon."
+      zh-CN: "会自动重连；此窗口不会启动本地 daemon。"
   # The event view's chips: the slices the stream can be read through.
   event_filter:
     all:

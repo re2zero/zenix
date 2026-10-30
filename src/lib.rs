@@ -89,8 +89,15 @@ pub fn run() {
     // Ensure config dir exists for socket
     std::fs::create_dir_all(crate::platform::zenix_config_dir()).ok();
 
-    // Acquire single-instance lock
-    let second_launch_rx = match single_instance::try_acquire() {
+    // The verb check above already answered every non-window launch, so what
+    // is left names the daemon this process's first window opens on.
+    let launch_target = match cli::parse(std::env::args().skip(1)) {
+        Ok(cli::Launch::Window(target)) => target,
+        _ => unreachable!("dispatch answered every non-window launch"),
+    };
+    // A second instance forwards the launch it parsed — target included —
+    // and exits; this one keeps the receiver.
+    let second_launch_rx = match single_instance::try_acquire(&launch_target) {
         Ok(rx) => rx,
         Err(e) => {
             eprintln!("zenix: {e}");
@@ -115,27 +122,32 @@ pub fn run() {
             // directory and cached; without this the embedded copy is used and
             // an edited `prompts/orchestrator.md` would never be read.
             ai::prompts::init();
-            // The first window. Its shape — the config's geometry, client
-            // decorations, the close guard and the shell over its own
-            // endpoint connection — is `ui::windows`, the same face the
-            // `view.new-window` chord and a second launch use.
-            ui::windows::open_shell_window(cx).expect("failed to open window");
+            // The first window, on the target the command line named. Its
+            // shape — geometry, client decorations, the close guard and a
+            // shell over its own endpoint connection — is `ui::windows`, the
+            // same face the `view.new-window` chord and a second launch use.
+            ui::windows::open_shell_window(cx, launch_target).expect("failed to open window");
 
-            // A second launch asks this process for one more window. The
-            // receiver is crossbeam, so the blocking read runs on the
-            // background executor and a fresh clone carries each ask.
+            // A second launch asks this process for one more window, on the
+            // target its word carries. The receiver is crossbeam, so the
+            // blocking read runs on the background executor and a fresh
+            // clone carries each ask.
             cx.spawn(async move |cx| {
                 loop {
                     let rx = second_launch_rx.clone();
-                    let Ok(single_instance::Signal::Launch) = cx
+                    let Ok(single_instance::Signal::Open(target)) = cx
                         .background_executor()
                         .spawn(async move { rx.recv() })
                         .await
                     else {
                         break;
                     };
-                    if let Err(error) = cx.update(ui::windows::open_shell_window) {
-                        tracing::error!(%error, "a second launch could not open its window");
+                    let opened = cx.update(|cx| ui::windows::open_shell_window(cx, target));
+                    if let Err(error) = opened {
+                        tracing::error!(
+                            %error,
+                            "a second launch could not open its window"
+                        );
                         break;
                     }
                 }

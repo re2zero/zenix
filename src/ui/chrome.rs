@@ -140,8 +140,14 @@ impl View {
         t(self.label_key())
     }
 
-    fn source(self) -> String {
-        t(self.source_key())
+    fn source(self, data: &sidebar::Data) -> String {
+        // The lane views of a remote window have no source to name: their
+        // socket is on the other machine, and the foot says that rather than
+        // implying a quiet one.
+        if !data.lane && matches!(self, Self::Fleet | Self::Events | Self::Plugins) {
+            return t("shell.foot.remote").to_string();
+        }
+        t(self.source_key()).to_string()
     }
 
     /// The view an item id names, for the rail's callback.
@@ -154,6 +160,9 @@ impl View {
     /// kept snapshot beside a dropped connection is the last picture, not a
     /// live one.
     fn source_is_live(self, data: &sidebar::Data) -> bool {
+        if !data.lane && self != Self::Agents {
+            return false;
+        }
         let snapshot = data.live.snapshot.is_some();
         let connected = data.live.status != ConnectionStatus::Disconnected;
         match self {
@@ -212,6 +221,21 @@ pub(crate) fn title_bar(
                 .child("zenix"),
         );
 
+    // A window whose daemon is not the default local one names it beside the
+    // brand: the one on-screen mark of which connection face this is.
+    let target_badge = root.read(cx).target_label().map(|label| {
+        div()
+            .flex_none()
+            .px_1()
+            .py(px(2.))
+            .rounded(theme.radius(Radius::Sm))
+            .bg(colors.surface)
+            .border_1()
+            .border_color(colors.border)
+            .text_size(theme.text_size(TextSize::Xs))
+            .text_color(colors.fg_muted)
+            .child(label)
+    });
     let pill = focused_workspace(live).map(|workspace| workspace_pill(workspace, live, root, cx));
     let search = search_trigger(keymap, live, root, cx);
 
@@ -260,6 +284,7 @@ pub(crate) fn title_bar(
             .gap_2()
             .occlude()
             .child(brand)
+            .children(target_badge)
             .children(pill),
     )
     .child(
@@ -462,7 +487,7 @@ pub(crate) fn sidebar(
     } else if stale {
         t("shell.foot.stale")
     } else {
-        view.source()
+        view.source(data)
     };
     div()
         .w(px(SIDEBAR_WIDTH))

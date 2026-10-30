@@ -33,6 +33,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use crate::client;
+use herdr_client::ConnectTarget;
 
 /// How long to wait for a reply that the daemon is expected to produce at once.
 /// Waits the daemon performs on the caller's behalf (`pane.wait_for_output`, an
@@ -84,6 +85,26 @@ impl ApiClient {
         Self {
             socket: client::herdr_api_socket_path(),
         }
+    }
+
+    /// The client for the daemon a [`ConnectTarget`] names, when its API lane
+    /// is reachable as this machine's socket. A local target's endpoint socket
+    /// keeps the API socket beside it (`herdr.sock` in the same directory); a
+    /// remote target — SSH or WSL — has no lane here at all, because the API
+    /// socket lives on the other machine and this client speaks Unix sockets.
+    /// A window whose target answers `None` runs its lane surfaces against
+    /// nothing rather than quietly reading this machine's daemon.
+    pub fn for_target(target: &ConnectTarget) -> Option<Self> {
+        let endpoint = match target {
+            ConnectTarget::Local => return Some(Self::local()),
+            ConnectTarget::Ssh { .. } | ConnectTarget::Wsl { .. } => return None,
+            // A local target resolves to the endpoint socket; the API socket
+            // the lane surfaces read is the `herdr.sock` beside it.
+            other => other.socket_path().ok()?,
+        };
+        Some(Self {
+            socket: endpoint.with_file_name("herdr.sock"),
+        })
     }
 
     /// The client for an explicit socket path.
@@ -347,6 +368,48 @@ mod tests {
                 .is_some_and(|id| id.starts_with("zenix-")),
             "every request carries an id the daemon echoes back"
         );
+    }
+
+    #[test]
+    fn a_targets_lane_answers_local_targets_only() {
+        let local = ApiClient::for_target(&ConnectTarget::Local);
+        assert!(local.is_some(), "the default daemon has a lane");
+
+        let session = ApiClient::for_target(&ConnectTarget::Session {
+            name: "dev".into(),
+            development: false,
+        });
+        let socket = session.as_ref().map(|client| client.socket.clone());
+        assert!(
+            socket
+                .as_deref()
+                .is_some_and(|path| path.ends_with("sessions/dev/herdr.sock")),
+            "a session's API socket sits beside its endpoint: {socket:?}"
+        );
+
+        let explicit = ApiClient::for_target(&ConnectTarget::Socket(
+            "/tmp/herdr/herdr-client.sock".into(),
+        ));
+        assert_eq!(
+            explicit.map(|client| client.socket.clone()),
+            Some("/tmp/herdr/herdr.sock".into()),
+        );
+
+        for remote in [
+            ConnectTarget::Ssh {
+                target: "ops@box".into(),
+                session: "default".into(),
+            },
+            ConnectTarget::Wsl {
+                distro: "Ubuntu".into(),
+                session: "default".into(),
+            },
+        ] {
+            assert!(
+                ApiClient::for_target(&remote).is_none(),
+                "a remote target has no lane on this machine"
+            );
+        }
     }
 
     #[test]
