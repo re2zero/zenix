@@ -176,11 +176,6 @@ pub struct Root {
     /// A layout export or apply running off the UI thread. Replacing it on the
     /// next ask cancels the request it replaced.
     _layout_task: Option<Task<()>>,
-    /// The orchestrator socket this window serves while it is open. It is
-    /// the MCP surface the settings page states and an agent calls; `None`
-    /// when its session store could not be opened, which degrades the
-    /// orchestrator rather than the window.
-    _orchestrator: Option<crate::mcp::server::McpOrchestrationServer>,
     /// The app-wide keystroke interceptor: the prefix has to claim the next
     /// key wherever focus is, which a bound action could not do.
     _keys: Subscription,
@@ -208,7 +203,8 @@ pub struct Root {
 }
 
 impl Root {
-    /// Built by [`crate::run`] for the first window.
+    /// Built for every window [`crate::run`] or `view.new-window` opens; each
+    /// owns its endpoint connection, hosts and streams.
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (pulse, pulses) = crossbeam_channel::unbounded::<()>();
         let connection = Connection::start(ConnectTarget::Local, move || {
@@ -279,11 +275,11 @@ impl Root {
         let mut aside_width = aside::Width::new();
         aside_width.restore(config::get(cx).layout.aside_width);
 
-        // The MCP surface: one orchestrator socket in the config directory,
-        // serving while this window is open. The retired shell started it at
-        // window construction and agents have reached it there since M6;
-        // the settings dialog's MCP page states what it is serving.
-        let orchestrator = crate::mcp::start_orchestrator(String::new());
+        // The MCP surface: one orchestrator socket per process, in the config
+        // directory, started at the first window and serving until the
+        // process ends. Agents have reached it there since M6; the settings
+        // dialog's MCP page states what it is serving.
+        crate::mcp::ensure_orchestrator();
 
         // The config has already dressed the theme in `config::init`; a later
         // write has done the same in its apply, so this only repaints and
@@ -372,7 +368,6 @@ impl Root {
             plugin_error_seen: None,
             _trust_input: None,
             _layout_task: None,
-            _orchestrator: orchestrator,
             _keys: keys,
             drawn: 0,
             _pulses: pulses,
@@ -757,6 +752,11 @@ impl Root {
             commands::Command::LinkPlugin => self.open_trust_at(None, window, cx),
             commands::Command::InspectLayout => self.open_layout(window, cx),
             commands::Command::OpenReview => self.open_review(cx),
+            // One more window, one more connection face; the shell it draws
+            // is this window's own shape over a fresh connection.
+            commands::Command::NewWindow => {
+                drop(super::windows::open_shell_window(cx));
+            }
             command => {
                 if let Some((method, params)) = self
                     .live
@@ -2041,7 +2041,7 @@ impl Render for Root {
                     live: &self.live,
                     plugins: &self.plugins,
                     keymap: &self.keymap,
-                    orchestrator: self._orchestrator.is_some(),
+                    orchestrator: crate::mcp::orchestrator_running(),
                 },
                 root,
                 cx,

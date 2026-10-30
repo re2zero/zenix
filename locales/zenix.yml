@@ -2312,6 +2312,9 @@ command:
     review:
       en: "Review Changes"
       zh-CN: "变更审阅"
+    new-window:
+      en: "New Window"
+      zh-CN: "新建窗口"
     close-popup:
       en: "Close Popup Pane"
       zh-CN: "关闭弹出窗格"

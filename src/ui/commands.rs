@@ -56,6 +56,7 @@ pub(crate) enum Command {
     CopyMode,
     TogglePalette,
     ToggleAside,
+    NewWindow,
     OpenSettings,
     LinkPlugin,
     InspectLayout,
@@ -221,6 +222,16 @@ pub(crate) const COMMANDS: &[CommandInfo] = &[
         direct: &["secondary-,"],
         prefixed: &[],
     },
+    // A second window is a second connection face over the same daemon. Its
+    // chord is claimed outright beside the other view chords: `secondary-n`
+    // touches nothing behind the prefix, where `shift-n` is already the new
+    // workspace's key.
+    CommandInfo {
+        command: Command::NewWindow,
+        id: "view.new-window",
+        direct: &["secondary-shift-n"],
+        prefixed: &[],
+    },
     // A plugin is linked from a directory the reader names; the review reads
     // it before the daemon does. Palette-only: typing a path is not a chord.
     CommandInfo {
@@ -345,6 +356,7 @@ pub(crate) fn request(command: Command, snapshot: &ClientShellSnapshot) -> Optio
         | Command::CopyMode
         | Command::TogglePalette
         | Command::ToggleAside
+        | Command::NewWindow
         | Command::OpenSettings
         | Command::LinkPlugin
         | Command::InspectLayout
@@ -415,6 +427,7 @@ mod tests {
                 | Command::CopyMode
                 | Command::TogglePalette
                 | Command::ToggleAside
+                | Command::NewWindow
                 | Command::NewWorktree
                 | Command::OpenSettings
                 | Command::LinkPlugin
@@ -498,7 +511,7 @@ mod tests {
         }
         // A variant with no entry would panic in `info`; this walks the table
         // once so the enum and the directory stay the same size.
-        assert_eq!(COMMANDS.len(), 23);
+        assert_eq!(COMMANDS.len(), 24);
     }
 
     /// A label is a key the locale file answers, not a string kept in the
@@ -525,6 +538,18 @@ mod tests {
                 assert!(request(info.command, &snapshot).is_none(), "{}", info.id);
             }
         }
+    }
+
+    #[test]
+    fn the_new_window_command_is_a_direct_view_chord() {
+        let info = Command::NewWindow
+            .info()
+            .expect("the directory carries NewWindow");
+        assert_eq!(info.id, "view.new-window");
+        assert_eq!(info.direct, &["secondary-shift-n"]);
+        // `shift-n` behind the prefix is the new workspace's; the window's
+        // chord carries its own modifier and must not shadow it.
+        assert!(info.prefixed.is_empty());
     }
 
     #[test]

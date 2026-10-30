@@ -2,7 +2,8 @@
 //!
 //! The socket serves dual purpose:
 //! 1. Acts as a lock — if bind fails, another instance is running.
-//! 2. IPC channel — second instance sends "focus" to bring the first to front.
+//! 2. IPC channel — a second instance asks the running one for another
+//!    window, which [`try_acquire`]'s receiver hands to the application.
 //!
 //! Platform strategy:
 //! - Linux/macOS/FreeBSD: Unix domain socket
@@ -14,8 +15,9 @@ mod unix_impl {
     use std::net::Shutdown;
     use std::os::unix::net::{UnixListener, UnixStream};
     use std::path::PathBuf;
-    use std::sync::mpsc::{self, Receiver};
     use std::thread;
+
+    use crossbeam_channel::{Receiver, unbounded};
 
     use crate::platform;
 
@@ -32,7 +34,7 @@ mod unix_impl {
         if socket_path.exists() {
             match UnixStream::connect(&socket_path) {
                 Ok(mut stream) => {
-                    if stream.write_all(b"focus").is_ok() {
+                    if stream.write_all(b"open").is_ok() {
                         stream.shutdown(Shutdown::Both).ok();
                     }
                     return Err(format!(
@@ -53,7 +55,7 @@ mod unix_impl {
             Err(e) => {
                 // Race condition — try one more time to connect
                 if let Ok(mut stream) = UnixStream::connect(&socket_path)
-                    && stream.write_all(b"focus").is_ok()
+                    && stream.write_all(b"open").is_ok()
                 {
                     stream.shutdown(Shutdown::Both).ok();
                 }
@@ -65,7 +67,7 @@ mod unix_impl {
             }
         };
 
-        let (tx, rx) = mpsc::channel::<super::Signal>();
+        let (tx, rx) = unbounded::<super::Signal>();
 
         thread::spawn(move || {
             for stream in listener.incoming() {
@@ -75,8 +77,10 @@ mod unix_impl {
                         match stream.read(&mut buf) {
                             Ok(n) => {
                                 let msg = String::from_utf8_lossy(&buf[..n]);
-                                if msg.trim() == "focus" {
-                                    tx.send(super::Signal::Focus).ok();
+                                // "focus" is the word earlier builds sent for
+                                // the same ask; both mean: open a window.
+                                if matches!(msg.trim(), "open" | "focus") {
+                                    tx.send(super::Signal::Launch).ok();
                                 }
                             }
                             Err(e) => eprintln!("zenix: failed to read from socket: {}", e),
@@ -101,8 +105,9 @@ mod windows_impl {
     use std::io::{Read, Write};
     use std::net::{Shutdown, TcpListener, TcpStream};
     use std::path::PathBuf;
-    use std::sync::mpsc::{self, Receiver};
     use std::thread;
+
+    use crossbeam_channel::{Receiver, unbounded};
 
     use crate::platform;
 
@@ -140,7 +145,7 @@ mod windows_impl {
         // Step 1: Try to connect to an existing listener
         match TcpStream::connect(&addr) {
             Ok(mut stream) => {
-                if stream.write_all(b"focus").is_ok() {
+                if stream.write_all(b"open").is_ok() {
                     stream.shutdown(Shutdown::Both).ok();
                 }
                 return Err(format!(
@@ -157,9 +162,9 @@ mod windows_impl {
         let listener = match TcpListener::bind(&addr) {
             Ok(l) => l,
             Err(e) => {
-                // Try one more time to connect (race condition)
+                // Race condition — try one more time to connect
                 if let Ok(mut stream) = TcpStream::connect(&addr) {
-                    if stream.write_all(b"focus").is_ok() {
+                    if stream.write_all(b"open").is_ok() {
                         stream.shutdown(Shutdown::Both).ok();
                     }
                 }
@@ -173,7 +178,7 @@ mod windows_impl {
         // Persist the port for future instances
         write_port(port);
 
-        let (tx, rx) = mpsc::channel::<super::Signal>();
+        let (tx, rx) = unbounded::<super::Signal>();
 
         thread::spawn(move || {
             for stream in listener.incoming() {
@@ -183,8 +188,10 @@ mod windows_impl {
                         match stream.read(&mut buf) {
                             Ok(n) => {
                                 let msg = String::from_utf8_lossy(&buf[..n]);
-                                if msg.trim() == "focus" {
-                                    tx.send(super::Signal::Focus).ok();
+                                // "focus" is the word earlier builds sent for
+                                // the same ask; both mean: open a window.
+                                if matches!(msg.trim(), "open" | "focus") {
+                                    tx.send(super::Signal::Launch).ok();
                                 }
                             }
                             Err(e) => eprintln!("zenix: failed to read from socket: {}", e),
@@ -208,8 +215,8 @@ mod windows_impl {
 
 /// Signals received from other zenix instances.
 pub enum Signal {
-    /// Another instance launched — bring this window to front.
-    Focus,
+    /// Another instance launched — open one more window in this process.
+    Launch,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]

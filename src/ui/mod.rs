@@ -126,6 +126,8 @@ mod toast;
 mod trust;
 mod worktree;
 
+pub(crate) mod windows;
+
 pub use shell::Root;
 
 pub(crate) use shell::install_close_guard;

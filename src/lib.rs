@@ -20,7 +20,6 @@ rust_i18n::i18n!("locales");
 
 use std::sync::OnceLock;
 
-use ely_core::theme::ActiveTheme;
 use gpui::*;
 
 /// Handle to the tokio runtime created by [`run`].
@@ -89,7 +88,7 @@ pub fn run() {
     std::fs::create_dir_all(crate::platform::zenix_config_dir()).ok();
 
     // Acquire single-instance lock
-    let _second_launch_rx = match single_instance::try_acquire() {
+    let second_launch_rx = match single_instance::try_acquire() {
         Ok(rx) => rx,
         Err(e) => {
             eprintln!("zenix: {e}");
@@ -102,7 +101,7 @@ pub fn run() {
         // is the whole source: nothing of the retired kit ships any more.
         .with_assets(ely_core::Assets)
         .with_quit_mode(QuitMode::LastWindowClosed)
-        .run(|cx| {
+        .run(move |cx| {
             // The theme global and the library's key bindings. The assets are
             // compiled in, so a failure here is a broken build and a window
             // without a theme would only draw a panic.
@@ -114,49 +113,32 @@ pub fn run() {
             // directory and cached; without this the embedded copy is used and
             // an edited `prompts/orchestrator.md` would never be read.
             ai::prompts::init();
-            // The window opens the shape the last one closed with: its size
-            // and maximized state are the config's `window` section, written
-            // by the closing window itself. The position is the compositor's
-            // to choose.
-            let window_config = config::get(cx).window.clone();
-            let window_size = size(px(window_config.width), px(window_config.height));
-            let window_bounds = if window_config.maximized {
-                WindowBounds::Maximized(Bounds {
-                    origin: Default::default(),
-                    size: window_size,
-                })
-            } else {
-                WindowBounds::centered(window_size, cx)
-            };
-            // The shell draws the whole frame itself, the window controls
-            // included, so the window asks for client-side decorations. Where
-            // the platform cannot honor that — on X11, a compositor that does
-            // not advertise GTK frame extents (KWin with desktop effects off
-            // among them) — gpui falls back to the window manager's own
-            // decorations and the chrome hides its controls instead of
-            // stacking two title bars. macOS keeps its traffic lights drawn
-            // over our strip, at the origin the theme reserves for them.
-            let titlebar = TitlebarOptions {
-                title: Some("zenix".into()),
-                appears_transparent: true,
-                traffic_light_position: Some(cx.theme().traffic_light_origin()),
-            };
-            let options = WindowOptions {
-                window_bounds: Some(window_bounds),
-                window_min_size: Some(size(px(640.), px(400.))),
-                titlebar: Some(titlebar),
-                window_decorations: Some(WindowDecorations::Client),
-                ..Default::default()
-            };
-            cx.open_window(options, |window, cx| {
-                // Both of the window's close paths — the strip's own button
-                // and the window manager's — save its geometry through this
-                // one check. It goes in before the shell because a close can
-                // arrive before the first paint.
-                ui::install_close_guard(window, cx);
-                cx.new(|cx| ui::Root::new(window, cx))
+            // The first window. Its shape — the config's geometry, client
+            // decorations, the close guard and the shell over its own
+            // endpoint connection — is `ui::windows`, the same face the
+            // `view.new-window` chord and a second launch use.
+            ui::windows::open_shell_window(cx).expect("failed to open window");
+
+            // A second launch asks this process for one more window. The
+            // receiver is crossbeam, so the blocking read runs on the
+            // background executor and a fresh clone carries each ask.
+            cx.spawn(async move |cx| {
+                loop {
+                    let rx = second_launch_rx.clone();
+                    let Ok(single_instance::Signal::Launch) = cx
+                        .background_executor()
+                        .spawn(async move { rx.recv() })
+                        .await
+                    else {
+                        break;
+                    };
+                    if let Err(error) = cx.update(ui::windows::open_shell_window) {
+                        tracing::error!(%error, "a second launch could not open its window");
+                        break;
+                    }
+                }
             })
-            .expect("failed to open window");
+            .detach();
         });
 
     // Release lock on exit
