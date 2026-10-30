@@ -27,6 +27,7 @@
 //! daemon that has nothing to say.
 
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -259,6 +260,18 @@ pub(crate) struct EventState {
 /// The stream: one worker thread, one cache, one pulse channel.
 pub(crate) struct Stream {
     cache: Arc<Mutex<EventState>>,
+    /// Set when the window holding this stream is gone. The worker reads it
+    /// at every opportunity — between events and inside the reconnect wait —
+    /// so its daemon subscription ends with the window instead of living for
+    /// the process. A worker parked in the blocking line read ends at that
+    /// read's next answer.
+    stop: Arc<AtomicBool>,
+}
+
+impl Drop for Stream {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+    }
 }
 
 impl Stream {
@@ -269,12 +282,14 @@ impl Stream {
         // Bounded at one: an event that arrives while the shell has not painted
         // the one before it needs no second wakeup.
         let (pulses_out, pulses) = crossbeam_channel::bounded(1);
+        let stop = Arc::new(AtomicBool::new(false));
         let worker_cache = cache.clone();
+        let worker_stop = stop.clone();
         thread::Builder::new()
             .name("zenix-events".into())
-            .spawn(move || follow(ApiClient::local(), worker_cache, pulses_out))
+            .spawn(move || follow(ApiClient::local(), worker_cache, worker_stop, pulses_out))
             .expect("failed to spawn the event stream thread");
-        (Self { cache }, pulses)
+        (Self { cache, stop }, pulses)
     }
 
     /// A copy of the ring for one paint.
@@ -291,17 +306,36 @@ impl Stream {
 
 /// Read the stream, and read it again whenever it ends. A subscription ends
 /// when the daemon stops, and when it drops a subscriber that fell behind its
-/// retained history; both are answered the same way.
-fn follow(client: ApiClient, cache: Arc<Mutex<EventState>>, pulses: Sender<()>) {
-    loop {
+/// retained history; both are answered the same way. A window that closed
+/// ends the loop at its next check instead of following forever.
+fn follow(
+    client: ApiClient,
+    cache: Arc<Mutex<EventState>>,
+    stop: Arc<AtomicBool>,
+    pulses: Sender<()>,
+) {
+    while !stop.load(Ordering::Acquire) {
         let error = match read(&client, &cache, &pulses) {
             // The daemon closed the connection without saying why: say so in the
             // panel rather than showing a stream that quietly stopped.
             Ok(()) => "the daemon closed the event stream".to_owned(),
             Err(error) => error.to_string(),
         };
+        if stop.load(Ordering::Acquire) {
+            return;
+        }
         set_error(&cache, Some(error), &pulses);
-        thread::sleep(RECONNECT);
+        wait_reconnect(&stop, RECONNECT);
+    }
+}
+
+/// Sit out the reconnect wait, ending early when the stream was stopped.
+fn wait_reconnect(stop: &AtomicBool, total: Duration) {
+    let step = Duration::from_millis(100).min(total);
+    let mut waited = Duration::ZERO;
+    while waited < total && !stop.load(Ordering::Acquire) {
+        thread::sleep(step);
+        waited += step;
     }
 }
 

@@ -208,6 +208,7 @@ fn icon(command: Command) -> Option<IconName> {
         Command::CopyMode => IconName::Copy,
         Command::TogglePalette => IconName::Command,
         Command::ToggleAside => IconName::MessageSquare,
+        Command::NewWindow => IconName::AppWindow,
         Command::OpenSettings => IconName::Settings,
         Command::LinkPlugin => IconName::Shield,
         Command::InspectLayout => IconName::FileCode,

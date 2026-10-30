@@ -7,15 +7,36 @@
 //! half had no consumer. What is left is the path the shell actually runs, plus
 //! the reverse bridge a separate process serves.
 //!
-//! Consumers: `src/ui/shell.rs` holds `start_orchestrator`'s return value, and
-//! that path runs through `server` → `handler` → `sse`/`plugin_tools`/`types`.
-//! `src/cli.rs` runs `agent_bridge` as `zenix mcp-agent`, which is the one place
-//! an external agent gets a tool from zenix.
+//! Consumers: `src/ui/shell.rs` calls [`ensure_orchestrator`] at each window's
+//! construction and that path runs through `server` → `handler` → `sse`/
+//! `plugin_tools`/`types`. `src/cli.rs` runs `agent_bridge` as `zenix
+//! mcp-agent`, which is the one place an external agent gets a tool from zenix.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::platform;
+
+/// The process's one orchestrator, started once and held for the process's
+/// life: its `Drop` is its shutdown, so the handle must outlive every window
+/// — a closed first window must not end the socket a second window's agent
+/// is still using. `None` when the session store could not be opened.
+static ORCHESTRATOR: OnceLock<Option<server::McpOrchestrationServer>> = OnceLock::new();
+
+/// Start the orchestrator if this process has not already. Every window calls
+/// it; only the first starts the socket, so a second window neither fights
+/// over the path nor ends the serving one by closing.
+pub fn ensure_orchestrator() {
+    let _ = ORCHESTRATOR.get_or_init(|| start_orchestrator(String::new()));
+}
+
+/// Whether the orchestrator socket is serving. A process that could not open
+/// its session store says no; the attempt is not retried, matching the way
+/// the config diagnostics keep one line per problem instead of polling.
+pub fn orchestrator_running() -> bool {
+    ensure_orchestrator();
+    ORCHESTRATOR.get().is_some_and(Option::is_some)
+}
 
 /// The socket the built-in orchestrator listens on inside zenix's config dir.
 pub fn orchestrator_socket_path() -> PathBuf {

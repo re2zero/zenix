@@ -29,6 +29,7 @@
 //! is what [`Stream::watch`] asks for by moving the version the worker polls.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
 use std::time::Duration;
@@ -157,6 +158,16 @@ pub(crate) fn read_tail(endpoint: &ApiEndpoint, pane_id: &str, rows: u32, shown:
 pub(crate) struct Stream {
     cache: Arc<Mutex<FleetState>>,
     watch: Arc<Mutex<Watch>>,
+    /// Set when the window holding this stream is gone. The worker wakes on
+    /// its own poll clock anyway, so it reads this between polls and ends
+    /// with the window instead of living for the process.
+    stop: Arc<AtomicBool>,
+}
+
+impl Drop for Stream {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+    }
 }
 
 /// Which panes are worth a subscription, and which generation of that list the
@@ -177,13 +188,17 @@ impl Stream {
         // Bounded at one: a transition that arrives while the shell has not
         // painted the one before it needs no second wakeup.
         let (pulses_out, pulses) = crossbeam_channel::bounded(1);
-        let worker_cache = cache.clone();
-        let worker_watch = watch.clone();
+        let stop = Arc::new(AtomicBool::new(false));
+        let worker = Stream {
+            cache: cache.clone(),
+            watch: watch.clone(),
+            stop: stop.clone(),
+        };
         thread::Builder::new()
             .name("zenix-fleet".into())
-            .spawn(move || follow(ApiClient::local(), worker_cache, worker_watch, pulses_out))
+            .spawn(move || follow(ApiClient::local(), worker, pulses_out))
             .expect("failed to spawn the fleet stream thread");
-        (Self { cache, watch }, pulses)
+        (Self { cache, watch, stop }, pulses)
     }
 
     /// Follow these panes. Called with the snapshot's agent list on every
@@ -212,39 +227,38 @@ impl Stream {
 }
 
 /// Read the fleet, and read it again whenever the set of panes changes or the
-/// stream ends.
-fn follow(
-    client: ApiClient,
-    cache: Arc<Mutex<FleetState>>,
-    watch: Arc<Mutex<Watch>>,
-    pulses: Sender<()>,
-) {
+/// stream ends. A window that closed ends the loop at its next check instead
+/// of following forever.
+fn follow(client: ApiClient, stream: Stream, pulses: Sender<()>) {
     // The status each pane was last seen in, so a transition can name what it
     // came from. It lives here rather than in the cache because it is the
     // reader's own memory of the stream.
     let mut last: HashMap<String, String> = HashMap::new();
-    loop {
+    while !stream.stop.load(Ordering::Acquire) {
         let (version, panes) = {
-            let watch = lock(&watch);
+            let watch = lock(&stream.watch);
             (watch.version, watch.panes.clone())
         };
         if panes.is_empty() {
             // No agents: nothing to listen to, and nothing wrong either.
-            set_error(&cache, None, &pulses);
+            set_error(&stream.cache, None, &pulses);
             thread::sleep(POLL);
             continue;
         }
-        let outcome = read(&client, &cache, &watch, version, &panes, &mut last, &pulses);
+        let outcome = read(&client, &stream, version, &panes, &mut last, &pulses);
         match outcome {
             // The set of panes changed: subscribe again at once, not after a
             // backoff — a fleet that just grew should be followed immediately.
             Ok(Ended::Rewatch) => continue,
+            // The window that owned this stream is gone: no error to name,
+            // just stop.
+            Ok(Ended::Stopped) => return,
             Ok(Ended::Closed) => set_error(
-                &cache,
+                &stream.cache,
                 Some("the daemon closed the fleet stream".into()),
                 &pulses,
             ),
-            Err(error) => set_error(&cache, Some(error.to_string()), &pulses),
+            Err(error) => set_error(&stream.cache, Some(error.to_string()), &pulses),
         }
         thread::sleep(RECONNECT);
     }
@@ -254,6 +268,8 @@ fn follow(
 enum Ended {
     /// The set of panes changed; subscribe again with the new one.
     Rewatch,
+    /// The window holding this stream is gone; the worker ends.
+    Stopped,
     /// The daemon closed the connection.
     Closed,
 }
@@ -272,8 +288,7 @@ fn set_error(cache: &Mutex<FleetState>, error: Option<String>, pulses: &Sender<(
 
 fn read(
     client: &ApiClient,
-    cache: &Mutex<FleetState>,
-    watch: &Mutex<Watch>,
+    stream: &Stream,
     version: u64,
     panes: &[String],
     last: &mut HashMap<String, String>,
@@ -285,13 +300,16 @@ fn read(
             .map(|pane_id| json!({"type": "pane.agent_status_changed", "pane_id": pane_id}))
             .collect::<Vec<Value>>(),
     });
-    let mut stream = client.subscribe(params)?;
-    set_error(cache, None, pulses);
+    let mut subscription = client.subscribe(params)?;
+    set_error(&stream.cache, None, pulses);
     loop {
-        if lock(watch).version != version {
+        if stream.stop.load(Ordering::Acquire) {
+            return Ok(Ended::Stopped);
+        }
+        if lock(&stream.watch).version != version {
             return Ok(Ended::Rewatch);
         }
-        match stream.next_line_within(POLL)? {
+        match subscription.next_line_within(POLL)? {
             // Nothing yet, and the daemon has not closed: look at the watch
             // again, which is how a fleet that grew is noticed.
             Line::Idle => continue,
@@ -301,10 +319,18 @@ fn read(
                 match transition_from(&line) {
                     Ok(None) => {}
                     Ok(Some((pane_id, status, agent))) => {
-                        apply(cache, last, &pane_id, status, agent, at_unix_ms, pulses);
+                        apply(
+                            &stream.cache,
+                            last,
+                            &pane_id,
+                            status,
+                            agent,
+                            at_unix_ms,
+                            pulses,
+                        );
                     }
                     Err(reason) => {
-                        set_error(cache, Some(reason), pulses);
+                        set_error(&stream.cache, Some(reason), pulses);
                         return Ok(Ended::Closed);
                     }
                 }
@@ -538,6 +564,7 @@ mod tests {
         let stream = Stream {
             cache: cache.clone(),
             watch: watch.clone(),
+            stop: Arc::new(AtomicBool::new(false)),
         };
         stream.watch(vec!["w1:p2".into()]);
         let first = lock(&watch).version;
@@ -556,6 +583,7 @@ mod tests {
         let stream = Stream {
             cache: cache.clone(),
             watch: watch.clone(),
+            stop: Arc::new(AtomicBool::new(false)),
         };
         let mut last = HashMap::new();
         let (pulses, _) = crossbeam_channel::bounded(1);
