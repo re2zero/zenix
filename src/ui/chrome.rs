@@ -181,6 +181,7 @@ pub(crate) fn title_bar(
     window: &mut Window,
     live: &LiveState,
     keymap: &Keymap,
+    target_label: Option<String>,
     root: &Entity<Root>,
     cx: &mut App,
 ) -> AnyElement {
@@ -222,8 +223,9 @@ pub(crate) fn title_bar(
         );
 
     // A window whose daemon is not the default local one names it beside the
-    // brand: the one on-screen mark of which connection face this is.
-    let target_badge = root.read(cx).target_label().map(|label| {
+    // brand: the one on-screen mark of which connection face this is. The
+    // label arrives as a value — the shell is mid-render and cannot be read.
+    let target_badge = target_label.map(|label| {
         div()
             .flex_none()
             .px_1()
@@ -560,6 +562,11 @@ pub(crate) struct Main<'a> {
     pub(crate) keymap: &'a Keymap,
     pub(crate) prefix_armed: bool,
     pub(crate) empty: &'a super::empty::State,
+    /// Whether this window's daemon is the default local one, so the empty
+    /// screen may offer to start, copy or tail it. A named session or socket
+    /// window and a remote window draw the retry note instead: none of them
+    /// owns the default daemon this card would touch.
+    pub(crate) local_daemon: bool,
     pub(crate) root: &'a Entity<Root>,
 }
 
@@ -581,6 +588,7 @@ pub(crate) fn main_area(main: Main<'_>, cx: &App) -> AnyElement {
         keymap,
         prefix_armed,
         empty,
+        local_daemon,
         root,
     } = main;
     let first_run = live
@@ -595,7 +603,7 @@ pub(crate) fn main_area(main: Main<'_>, cx: &App) -> AnyElement {
         // `flex_1` box would give a childless canvas one row; the entity fills
         // it, and the view paints its own ground before the cells.
         .child(panes.clone())
-        .children(first_run.then(|| super::empty::main(live, empty, root, cx)));
+        .children(first_run.then(|| super::empty::main(live, empty, local_daemon, root, cx)));
     let mut column = div().flex_1().min_w_0().min_h_0().flex().flex_col();
     if !first_run {
         column = column.child(tab_strip(live, connection, cx));

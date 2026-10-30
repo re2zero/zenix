@@ -65,7 +65,13 @@ pub(crate) struct State {
 /// The block over the grid. `live` decides whether the daemon card is drawn;
 /// the four entries are always there, because a connected daemon with no
 /// workspace is the same question to a reader as an absent one.
-pub(crate) fn main(live: &LiveState, state: &State, root: &Entity<Root>, cx: &App) -> AnyElement {
+pub(crate) fn main(
+    live: &LiveState,
+    state: &State,
+    local_daemon: bool,
+    root: &Entity<Root>,
+    cx: &App,
+) -> AnyElement {
     let theme = cx.theme();
     div()
         .id("first-run")
@@ -104,8 +110,10 @@ pub(crate) fn main(live: &LiveState, state: &State, root: &Entity<Root>, cx: &Ap
                 // A remote window cannot start, copy or tail a local
                 // daemon: its card would offer actions that belong to
                 // another machine, so it draws the connection line only.
+                // The lane flag arrives as a value: the shell is mid-render
+                // and cannot be read here.
                 .children((live.status == ConnectionStatus::Disconnected).then(|| {
-                    if root.read(cx).lane_up() {
+                    if local_daemon {
                         daemon_card(live, state, root, cx)
                     } else {
                         remote_note(live, cx)
