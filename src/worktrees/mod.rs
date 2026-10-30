@@ -131,7 +131,7 @@ pub(crate) struct WorktreeHost {
 impl WorktreeHost {
     /// Start the host and its worker. The returned receiver pulses once per
     /// state change, so the shell repaints on a change instead of polling.
-    pub(crate) fn start() -> (Self, Receiver<()>) {
+    pub(crate) fn start(client: ApiClient) -> (Self, Receiver<()>) {
         let cache = Arc::new(Mutex::new(WorktreeState::default()));
         let (commands, requests) = crossbeam_channel::unbounded();
         // Bounded at one: the shell only needs to know that something moved
@@ -140,7 +140,7 @@ impl WorktreeHost {
         let worker_cache = cache.clone();
         thread::Builder::new()
             .name("zenix-worktrees".into())
-            .spawn(move || work(ApiClient::local(), worker_cache, requests, pulses_out))
+            .spawn(move || work(client, worker_cache, requests, pulses_out))
             .expect("failed to spawn the worktree worker thread");
         let host = Self { cache, commands };
         (host, pulses)

@@ -106,10 +106,10 @@ pub struct Root {
     worktree_form: worktree::State,
     /// The two fields' submission handlers, alive exactly while the form is.
     _worktree_inputs: Vec<Subscription>,
-    event_stream: crate::events::Stream,
-    fleet_stream: crate::fleet::Stream,
-    plugin_host: PluginHost,
-    worktree_host: WorktreeHost,
+    event_stream: Option<crate::events::Stream>,
+    fleet_stream: Option<crate::fleet::Stream>,
+    plugin_host: Option<PluginHost>,
+    worktree_host: Option<WorktreeHost>,
     /// Which sidebar view is in front. The daemon has no opinion about what
     /// the client is looking at, so the rail's choice is the shell's own.
     rail: chrome::View,
@@ -164,6 +164,12 @@ pub struct Root {
     /// The window's short-lived messages (U3-5). The viewport is the library's;
     /// this is the one stack the shell pushes to.
     toasts: Entity<ely_core::feedback::Toaster>,
+    /// The daemon target this window's launch named, and the JSON lane beside
+    /// its endpoint connection — `None` on a remote window, whose lane surfaces
+    /// (events, fleet, plugins, worktrees, layout, the chat's daemon tools)
+    /// stay dark rather than read this machine's daemon.
+    target: ConnectTarget,
+    lane: Option<crate::herdr::api::ApiClient>,
     /// The last values toasted about, so a pulse that did not change them does
     /// not say the same thing twice: the daemon's last refusal and the two
     /// hosts' last failure reasons.
@@ -187,10 +193,10 @@ pub struct Root {
     _pulses: Task<()>,
     /// One wake-up task per host. Each reads its cache and repaints; the
     /// worker thread that wrote it never touches GPUI.
-    _plugin_pulses: Task<()>,
-    _worktree_pulses: Task<()>,
-    _event_pulses: Task<()>,
-    _fleet_pulses: Task<()>,
+    _plugin_pulses: Option<Task<()>>,
+    _worktree_pulses: Option<Task<()>>,
+    _event_pulses: Option<Task<()>>,
+    _fleet_pulses: Option<Task<()>>,
     _review_pulses: Task<()>,
     /// A config write can change the mode, locale or metrics the chrome reads.
     _config: Subscription,
@@ -204,10 +210,11 @@ pub struct Root {
 
 impl Root {
     /// Built for every window [`crate::run`] or `view.new-window` opens; each
-    /// owns its endpoint connection, hosts and streams.
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    /// owns its endpoint connection, hosts and streams, on the daemon target
+    /// its launch named.
+    pub fn new(window: &mut Window, target: ConnectTarget, cx: &mut Context<Self>) -> Self {
         let (pulse, pulses) = crossbeam_channel::unbounded::<()>();
-        let connection = Connection::start(ConnectTarget::Local, move || {
+        let connection = Connection::start(target.clone(), move || {
             // A closed inbox means the window that owns this connection is
             // gone; the reader stops instead of retrying forever.
             pulse.try_send(()).is_ok()
@@ -231,18 +238,55 @@ impl Root {
             }
         });
 
-        // The sidebar's four sources beside the snapshot. Each host owns its
-        // worker thread and pulses this side when its cache moved; none of
-        // them is polled by the paint, and the plugin registry's own fallback
-        // tick is the host's, not the shell's.
-        let (plugin_host, plugin_pulses) = PluginHost::start();
-        let plugin_pulses = Self::follow(cx, plugin_pulses, Self::read_plugins);
-        let (worktree_host, worktree_pulses) = WorktreeHost::start();
-        let worktree_pulses = Self::follow(cx, worktree_pulses, Self::read_worktrees);
-        let (event_stream, event_pulses) = crate::events::Stream::start();
-        let event_pulses = Self::follow(cx, event_pulses, Self::read_events);
-        let (fleet_stream, fleet_pulses) = crate::fleet::Stream::start();
-        let fleet_pulses = Self::follow(cx, fleet_pulses, Self::read_fleet);
+        // The JSON lane beside the endpoint: a local target has one (its API
+        // socket sits beside the endpoint socket), and the sidebar's four
+        // sources read it — each host owns its worker thread and pulses this
+        // side when its cache moved; none of them is polled by the paint, and
+        // the plugin registry's own fallback tick is the host's, not the
+        // shell's. A remote target has no lane here — its API socket lives on
+        // the other machine — so those sources stay dark rather than quietly
+        // reading this machine's daemon.
+        let lane = crate::herdr::api::ApiClient::for_target(&target);
+        let (plugin_host, plugin_pulses) = match lane.as_ref() {
+            Some(client) => {
+                let (host, pulses) = PluginHost::start(client.clone());
+                (
+                    Some(host),
+                    Some(Self::follow(cx, pulses, Self::read_plugins)),
+                )
+            }
+            None => (None, None),
+        };
+        let (worktree_host, worktree_pulses) = match lane.as_ref() {
+            Some(client) => {
+                let (host, pulses) = WorktreeHost::start(client.clone());
+                (
+                    Some(host),
+                    Some(Self::follow(cx, pulses, Self::read_worktrees)),
+                )
+            }
+            None => (None, None),
+        };
+        let (event_stream, event_pulses) = match lane.as_ref() {
+            Some(client) => {
+                let (stream, pulses) = crate::events::Stream::start(client.clone());
+                (
+                    Some(stream),
+                    Some(Self::follow(cx, pulses, Self::read_events)),
+                )
+            }
+            None => (None, None),
+        };
+        let (fleet_stream, fleet_pulses) = match lane.as_ref() {
+            Some(client) => {
+                let (stream, pulses) = crate::fleet::Stream::start(client.clone());
+                (
+                    Some(stream),
+                    Some(Self::follow(cx, pulses, Self::read_fleet)),
+                )
+            }
+            None => (None, None),
+        };
         let (review_host, review_pulses) = ReviewHost::start();
         let review_pulses = Self::follow(cx, review_pulses, Self::read_review);
 
@@ -266,8 +310,9 @@ impl Root {
 
         // The aside's conversation. It is built closed: `layout.aside_visible`
         // is the reader's intent, and the config's default is off until the
-        // panel is asked for.
-        let chat = cx.new(|cx| chat::ChatView::new(window, cx));
+        // panel is asked for. On a window without a JSON lane the model
+        // conversation runs but the daemon tools are not offered.
+        let chat = cx.new(|cx| chat::ChatView::new(window, lane.is_some(), cx));
         let aside_wanted = config::get(cx).layout.aside_visible;
         chat.update(cx, |chat, cx| chat.set_on_screen(aside_wanted, cx));
         // The panel opens at the width the config remembers; a drag moves the
@@ -363,6 +408,8 @@ impl Root {
             _daemon_task: None,
             _layout_input: None,
             toasts,
+            target: target.clone(),
+            lane: lane.clone(),
             rejected_seen: None,
             worktree_error_seen: None,
             plugin_error_seen: None,
@@ -407,7 +454,11 @@ impl Root {
     }
 
     fn read_plugins(&mut self, cx: &mut Context<Self>) {
-        self.plugins = self.plugin_host.state();
+        self.plugins = self
+            .plugin_host
+            .as_ref()
+            .map(|host| host.state())
+            .unwrap_or_default();
         // A link asked for from the trust dialog is answered in the registry's
         // own words: the daemon pushes nothing, so the next read is where the
         // outcome appears.
@@ -436,7 +487,11 @@ impl Root {
     }
 
     fn read_worktrees(&mut self, cx: &mut Context<Self>) {
-        self.worktrees = self.worktree_host.state();
+        self.worktrees = self
+            .worktree_host
+            .as_ref()
+            .map(|host| host.state())
+            .unwrap_or_default();
         // A create asked from the form is answered in the host's own words;
         // the daemon pushes `worktree.created`, so the list beside the form
         // updates in the same pulse.
@@ -458,7 +513,11 @@ impl Root {
     }
 
     fn read_fleet(&mut self, cx: &mut Context<Self>) {
-        self.fleet = self.fleet_stream.state();
+        self.fleet = self
+            .fleet_stream
+            .as_ref()
+            .map(|stream| stream.state())
+            .unwrap_or_default();
         cx.notify();
     }
 
@@ -484,6 +543,11 @@ impl Root {
     /// The focused repository's changes. With no repository to read the sheet
     /// still opens and says so, rather than refusing silently.
     pub(crate) fn open_review(&mut self, cx: &mut Context<Self>) {
+        if self.lane.is_none() {
+            self.review.open(Some(t("shell.remote.no_lane")));
+            cx.notify();
+            return;
+        }
         match self.review_root() {
             Some(root) => {
                 self.review.open(None);
@@ -528,7 +592,11 @@ impl Root {
     /// waiting for the next focus change. A removal asks for the daemon's
     /// active workspace rather than a scope the removal may just have deleted.
     fn read_events(&mut self, cx: &mut Context<Self>) {
-        self.events = self.event_stream.state();
+        self.events = self
+            .event_stream
+            .as_ref()
+            .map(|stream| stream.state())
+            .unwrap_or_default();
         if let Some(event) = self.events.events.front()
             && event.kind.starts_with("worktree.")
         {
@@ -537,7 +605,9 @@ impl Root {
             } else {
                 self.worktrees_scope.clone()
             };
-            self.worktree_host.refresh(scope);
+            if let Some(host) = self.worktree_host.as_ref() {
+                host.refresh(scope);
+            }
         }
         cx.notify();
     }
@@ -545,7 +615,9 @@ impl Root {
     /// The events view's chips: the ring keeps reading every kind; this only
     /// decides which slice the rows show.
     pub(crate) fn set_event_filter(&mut self, filter: EventFilter, cx: &mut Context<Self>) {
-        self.event_stream.set_filter(filter);
+        if let Some(stream) = self.event_stream.as_ref() {
+            stream.set_filter(filter);
+        }
         self.events.filter = filter;
         cx.notify();
     }
@@ -560,7 +632,9 @@ impl Root {
             Some(branch) => WorktreeTarget::Branch(branch),
             None => WorktreeTarget::Path(path),
         };
-        self.worktree_host.open(scope, target);
+        if let Some(host) = self.worktree_host.as_ref() {
+            host.open(scope, target);
+        }
     }
 
     /// The worktrees section's `+` and the palette row: ask for a branch and
@@ -568,6 +642,10 @@ impl Root {
     /// the focused workspace's own branch, which is the one a worktree is
     /// usually cut from.
     pub(crate) fn open_worktree_form(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.lane.is_none() {
+            toast::not_sent(&self.toasts, &t("shell.remote.no_lane").to_string(), cx);
+            return;
+        }
         let branch = cx.new(|cx| {
             TextInput::new(window, cx).placeholder(t("shell.worktrees.form_branch_placeholder"))
         });
@@ -632,17 +710,31 @@ impl Root {
         self.worktree_form.creating(
             rust_i18n::t!("shell.worktrees.form_creating", branch = branch.clone()).to_string(),
         );
-        self.worktree_host.create(
-            scope,
-            Some(branch),
-            Some(base).filter(|base| !base.is_empty()),
-        );
+        if let Some(host) = self.worktree_host.as_ref() {
+            host.create(
+                scope,
+                Some(branch),
+                Some(base).filter(|base| !base.is_empty()),
+            );
+        }
         cx.notify();
     }
 
     /// Put one of the rail's views in front. The rail and the workspace pill
     /// both come through here, so the two cannot disagree about what the
     /// sidebar shows.
+    /// The short identity the chrome draws beside the brand: which daemon
+    /// this window is a face of.
+    pub(crate) fn target_label(&self) -> Option<String> {
+        super::windows::target_label(&self.target)
+    }
+
+    /// Whether this window's daemon lane is this machine's socket. A remote
+    /// window draws the honest degraded faces instead of local actions.
+    pub(crate) fn lane_up(&self) -> bool {
+        self.lane.is_some()
+    }
+
     pub(crate) fn show_view(&mut self, view: chrome::View, cx: &mut Context<Self>) {
         if self.rail != view {
             self.rail = view;
@@ -752,10 +844,12 @@ impl Root {
             commands::Command::LinkPlugin => self.open_trust_at(None, window, cx),
             commands::Command::InspectLayout => self.open_layout(window, cx),
             commands::Command::OpenReview => self.open_review(cx),
-            // One more window, one more connection face; the shell it draws
-            // is this window's own shape over a fresh connection.
+            // One more window, one more connection face — this window's own
+            // target, so a chord on a remote window opens another window
+            // there.
             commands::Command::NewWindow => {
-                drop(super::windows::open_shell_window(cx));
+                let target = self.target.clone();
+                drop(super::windows::open_shell_window(cx, target));
             }
             command => {
                 if let Some((method, params)) = self
@@ -921,6 +1015,9 @@ impl Root {
     /// A card's terminal button: open the comparison on that pane — plus the
     /// one it was paired with, if the picks already hold two — and read them.
     pub(crate) fn fleet_open_tail(&mut self, pane: &str, cx: &mut Context<Self>) {
+        if self.lane.is_none() {
+            return;
+        }
         self.fleet_panel.open_tail(pane);
         self.fleet_read(cx);
         cx.notify();
@@ -1229,8 +1326,10 @@ impl Root {
                 self.connection.focus_workspace(&workspace_id);
             }
             palette::Target::Plugin(tool_name) => {
-                if let Some(action) = self.plugin_action(&tool_name) {
-                    self.plugin_host.invoke(action, "palette");
+                if let Some(action) = self.plugin_action(&tool_name)
+                    && let Some(host) = self.plugin_host.as_ref()
+                {
+                    host.invoke(action, "palette");
                 }
             }
         }
@@ -1258,7 +1357,9 @@ impl Root {
         // The page is about one plugin's contract, and the log ring is part of
         // it; opening the drawer asks for it once instead of waiting for the
         // host's fallback tick or for something else to change.
-        self.plugin_host.refresh_logs();
+        if let Some(host) = self.plugin_host.as_ref() {
+            host.refresh_logs();
+        }
         window.focus(&self.manager_focus, cx);
         cx.notify();
     }
@@ -1274,8 +1375,10 @@ impl Root {
     pub(crate) fn set_manager_tab(&mut self, tab: manager::Tab, cx: &mut Context<Self>) {
         if self.manager.tab() != tab {
             self.manager.set_tab(tab);
-            if tab == manager::Tab::Logs {
-                self.plugin_host.refresh_logs();
+            if tab == manager::Tab::Logs
+                && let Some(host) = self.plugin_host.as_ref()
+            {
+                host.refresh_logs();
             }
             cx.notify();
         }
@@ -1289,7 +1392,9 @@ impl Root {
         action: crate::plugins::model::PluginAction,
         cx: &mut Context<Self>,
     ) {
-        self.plugin_host.invoke(action, "manager");
+        if let Some(host) = self.plugin_host.as_ref() {
+            host.invoke(action, "manager");
+        }
         cx.notify();
     }
 
@@ -1304,8 +1409,9 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.plugin_host
-            .open_pane(plugin_id, entrypoint, title, placement);
+        if let Some(host) = self.plugin_host.as_ref() {
+            host.open_pane(plugin_id, entrypoint, title, placement);
+        }
         self.close_plugin_manager(window, cx);
     }
 
@@ -1318,7 +1424,9 @@ impl Root {
         enabled: bool,
         cx: &mut Context<Self>,
     ) {
-        self.plugin_host.set_enabled(plugin_id, enabled);
+        if let Some(host) = self.plugin_host.as_ref() {
+            host.set_enabled(plugin_id, enabled);
+        }
         cx.notify();
     }
 
@@ -1374,10 +1482,14 @@ impl Root {
         };
         match confirm.kind {
             confirm::Kind::RemoveWorktree { workspace_id, name } => {
-                self.worktree_host.remove(workspace_id, name, confirm.force)
+                if let Some(host) = self.worktree_host.as_ref() {
+                    host.remove(workspace_id, name, confirm.force)
+                }
             }
             confirm::Kind::UnlinkPlugin { plugin_id, .. } => {
-                self.plugin_host.unlink(plugin_id.clone());
+                if let Some(host) = self.plugin_host.as_ref() {
+                    host.unlink(plugin_id.clone());
+                }
                 if self.manager.shows(&plugin_id) {
                     self.manager.close();
                 }
@@ -1396,6 +1508,10 @@ impl Root {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.lane.is_none() {
+            toast::not_sent(&self.toasts, &t("shell.remote.no_lane").to_string(), cx);
+            return;
+        }
         let placeholder = t("shell.trust.placeholder");
         let input = cx.new(|cx| TextInput::new(window, cx).placeholder(placeholder));
         if let Some(path) = path.clone() {
@@ -1459,7 +1575,9 @@ impl Root {
         let text = path.to_string_lossy().into_owned();
         self.trust
             .linking(rust_i18n::t!("shell.trust.linking", path = text.clone()).to_string());
-        self.plugin_host.link(text);
+        if let Some(host) = self.plugin_host.as_ref() {
+            host.link(text);
+        }
         cx.notify();
     }
 
@@ -1772,7 +1890,9 @@ impl Root {
         if !action.is_available(availability) {
             return;
         }
-        self.plugin_host.invoke(action, "key");
+        if let Some(host) = self.plugin_host.as_ref() {
+            host.invoke(action, "key");
+        }
     }
 
     /// Take the reader's latest state. Clipboard writes and platform
@@ -1844,7 +1964,9 @@ impl Root {
             .and_then(|snapshot| snapshot.focused_workspace_id.clone());
         if focused != self.worktrees_scope {
             self.worktrees_scope = focused.clone();
-            self.worktree_host.refresh(focused);
+            if let Some(host) = self.worktree_host.as_ref() {
+                host.refresh(focused);
+            }
         }
         let panes: Vec<String> = self
             .live
@@ -1858,7 +1980,9 @@ impl Root {
                     .collect()
             })
             .unwrap_or_default();
-        self.fleet_stream.watch(panes);
+        if let Some(stream) = self.fleet_stream.as_ref() {
+            stream.watch(panes);
+        }
         self.scan_layout();
     }
 
@@ -1900,6 +2024,7 @@ impl Render for Root {
             layout: &self.layout_state,
             selected: self.inspector.selected(),
             manager: self.manager.plugin_id(),
+            lane: self.lane.is_some(),
         };
         let roomy = sidebar_visible(window.viewport_size().width.as_f32());
         // The aside's state is the config's intent, narrowed by what the

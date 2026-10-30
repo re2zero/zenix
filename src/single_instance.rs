@@ -2,8 +2,9 @@
 //!
 //! The socket serves dual purpose:
 //! 1. Acts as a lock — if bind fails, another instance is running.
-//! 2. IPC channel — a second instance asks the running one for another
-//!    window, which [`try_acquire`]'s receiver hands to the application.
+//! 2. IPC channel — a second instance sends the window launch it parsed
+//!    (`crate::cli`'s wire word), and [`try_acquire`]'s receiver hands it to
+//!    the running process as one more window.
 //!
 //! Platform strategy:
 //! - Linux/macOS/FreeBSD: Unix domain socket
@@ -27,14 +28,17 @@ mod unix_impl {
         platform::zenix_config_dir().join(SOCKET_NAME)
     }
 
-    pub fn try_acquire() -> Result<Receiver<super::Signal>, String> {
+    pub fn try_acquire(
+        forward: &herdr_client::ConnectTarget,
+    ) -> Result<Receiver<super::Signal>, String> {
         let socket_path = socket_path();
+        let word = crate::cli::encode_launch(forward);
 
         // Step 1: Try to connect to an existing socket
         if socket_path.exists() {
             match UnixStream::connect(&socket_path) {
                 Ok(mut stream) => {
-                    if stream.write_all(b"open").is_ok() {
+                    if stream.write_all(word.as_bytes()).is_ok() {
                         stream.shutdown(Shutdown::Both).ok();
                     }
                     return Err(format!(
@@ -55,7 +59,7 @@ mod unix_impl {
             Err(e) => {
                 // Race condition — try one more time to connect
                 if let Ok(mut stream) = UnixStream::connect(&socket_path)
-                    && stream.write_all(b"open").is_ok()
+                    && stream.write_all(word.as_bytes()).is_ok()
                 {
                     stream.shutdown(Shutdown::Both).ok();
                 }
@@ -73,14 +77,12 @@ mod unix_impl {
             for stream in listener.incoming() {
                 match stream {
                     Ok(mut stream) => {
-                        let mut buf = [0u8; 64];
+                        let mut buf = [0u8; 512];
                         match stream.read(&mut buf) {
                             Ok(n) => {
                                 let msg = String::from_utf8_lossy(&buf[..n]);
-                                // "focus" is the word earlier builds sent for
-                                // the same ask; both mean: open a window.
-                                if matches!(msg.trim(), "open" | "focus") {
-                                    tx.send(super::Signal::Launch).ok();
+                                if let Some(target) = crate::cli::decode_launch(msg.trim()) {
+                                    tx.send(super::Signal::Open(target)).ok();
                                 }
                             }
                             Err(e) => eprintln!("zenix: failed to read from socket: {}", e),
@@ -137,15 +139,18 @@ mod windows_impl {
         std::fs::write(&path, port.to_string()).ok();
     }
 
-    pub fn try_acquire() -> Result<Receiver<super::Signal>, String> {
+    pub fn try_acquire(
+        forward: &herdr_client::ConnectTarget,
+    ) -> Result<Receiver<super::Signal>, String> {
         // Try the persisted port first
         let port = read_port().unwrap_or(BASE_PORT);
         let addr = format!("{}:{}", LOCALHOST, port);
+        let word = crate::cli::encode_launch(forward);
 
         // Step 1: Try to connect to an existing listener
         match TcpStream::connect(&addr) {
             Ok(mut stream) => {
-                if stream.write_all(b"open").is_ok() {
+                if stream.write_all(word.as_bytes()).is_ok() {
                     stream.shutdown(Shutdown::Both).ok();
                 }
                 return Err(format!(
@@ -164,7 +169,7 @@ mod windows_impl {
             Err(e) => {
                 // Race condition — try one more time to connect
                 if let Ok(mut stream) = TcpStream::connect(&addr) {
-                    if stream.write_all(b"open").is_ok() {
+                    if stream.write_all(word.as_bytes()).is_ok() {
                         stream.shutdown(Shutdown::Both).ok();
                     }
                 }
@@ -184,14 +189,12 @@ mod windows_impl {
             for stream in listener.incoming() {
                 match stream {
                     Ok(mut stream) => {
-                        let mut buf = [0u8; 64];
+                        let mut buf = [0u8; 512];
                         match stream.read(&mut buf) {
                             Ok(n) => {
                                 let msg = String::from_utf8_lossy(&buf[..n]);
-                                // "focus" is the word earlier builds sent for
-                                // the same ask; both mean: open a window.
-                                if matches!(msg.trim(), "open" | "focus") {
-                                    tx.send(super::Signal::Launch).ok();
+                                if let Some(target) = crate::cli::decode_launch(msg.trim()) {
+                                    tx.send(super::Signal::Open(target)).ok();
                                 }
                             }
                             Err(e) => eprintln!("zenix: failed to read from socket: {}", e),
@@ -215,8 +218,9 @@ mod windows_impl {
 
 /// Signals received from other zenix instances.
 pub enum Signal {
-    /// Another instance launched — open one more window in this process.
-    Launch,
+    /// Another instance launched asking for a window on this daemon — open
+    /// one more window connected to the target it named.
+    Open(herdr_client::ConnectTarget),
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]

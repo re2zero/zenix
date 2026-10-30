@@ -81,6 +81,10 @@ pub(crate) struct Data<'a> {
     pub(crate) selected: Option<&'a events::Event>,
     /// The plugin whose manager page is in front, so its row can do the same.
     pub(crate) manager: Option<&'a str>,
+    /// Whether the window's daemon lane is this machine's socket. A remote
+    /// window's lane views are empty by design, and their heads and feet say
+    /// so instead of implying a quiet source.
+    pub(crate) lane: bool,
 }
 
 /// The head's dim count: what the view holds right now, in the view's own

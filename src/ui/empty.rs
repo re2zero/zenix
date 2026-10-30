@@ -93,10 +93,16 @@ pub(crate) fn main(live: &LiveState, state: &State, root: &Entity<Root>, cx: &Ap
                     .body(t("shell.first_run.body")),
                 )
                 .child(entries(root, cx))
-                .children(
-                    (live.status == ConnectionStatus::Disconnected)
-                        .then(|| daemon_card(live, state, root, cx)),
-                ),
+                // A remote window cannot start, copy or tail a local
+                // daemon: its card would offer actions that belong to
+                // another machine, so it draws the connection line only.
+                .children((live.status == ConnectionStatus::Disconnected).then(|| {
+                    if root.read(cx).lane_up() {
+                        daemon_card(live, state, root, cx)
+                    } else {
+                        remote_note(live, cx)
+                    }
+                })),
         )
         .into_any_element()
 }
@@ -211,6 +217,74 @@ fn entries(root: &Entity<Root>, cx: &App) -> AnyElement {
 
 /// The daemon, when there is none: why, how to start it, and — if it failed —
 /// what it said.
+/// The disconnected line a remote window draws instead of the daemon card:
+/// naming the target, and saying honestly that the local actions are not
+/// this window's to take.
+fn remote_note(live: &LiveState, cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    let colors = &theme.colors;
+    div()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .p_3()
+        .rounded(theme.radius(Radius::Lg))
+        .border_1()
+        .border_color(colors.border)
+        .bg(colors.surface)
+        .child(
+            div()
+                .flex()
+                .items_start()
+                .gap_3()
+                .child(
+                    div()
+                        .flex_none()
+                        .size(px(30.))
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded_full()
+                        .bg(colors.sunken)
+                        .child(
+                            Icon::new(IconName::TriangleAlert)
+                                .size(IconSize::Sm)
+                                .color(colors.warning),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .flex()
+                        .flex_col()
+                        .gap_0p5()
+                        .child(
+                            div()
+                                .text_size(theme.text_size(TextSize::Sm))
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .text_color(colors.fg)
+                                .child(t("shell.remote.disconnected_title")),
+                        )
+                        .child(
+                            div()
+                                .text_size(theme.text_size(TextSize::Xs))
+                                .text_color(colors.fg_muted)
+                                .child(
+                                    live.error
+                                        .as_deref()
+                                        .filter(|reason| !reason.is_empty())
+                                        .map(str::to_owned)
+                                        .unwrap_or_else(|| {
+                                            t("shell.remote.disconnected_body").to_string()
+                                        }),
+                                ),
+                        ),
+                ),
+        )
+        .into_any_element()
+}
+
 fn daemon_card(live: &LiveState, state: &State, root: &Entity<Root>, cx: &App) -> AnyElement {
     let theme = cx.theme();
     let colors = &theme.colors;
