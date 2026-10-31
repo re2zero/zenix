@@ -90,14 +90,22 @@ pub fn run() {
     std::fs::create_dir_all(crate::platform::zenix_config_dir()).ok();
 
     // The verb check above already answered every non-window launch, so what
-    // is left names the daemon this process's first window opens on.
-    let launch_target = match cli::parse(std::env::args().skip(1)) {
-        Ok(cli::Launch::Window(target)) => target,
+    // is left names what this process's first window is: the daemon to open
+    // on, or — for a focus ask with nothing running yet — the daemon whose
+    // window would have been raised, opened instead.
+    let launch = match cli::parse(std::env::args().skip(1)) {
+        Ok(launch @ (cli::Launch::Window(_) | cli::Launch::Focus(_))) => launch,
         _ => unreachable!("dispatch answered every non-window launch"),
     };
-    // A second instance forwards the launch it parsed — target included —
-    // and exits; this one keeps the receiver.
-    let second_launch_rx = match single_instance::try_acquire(&launch_target) {
+    let first_target = match &launch {
+        cli::Launch::Window(target) => target.clone(),
+        cli::Launch::Focus(Some(target)) => target.clone(),
+        cli::Launch::Focus(None) => herdr_client::ConnectTarget::Local,
+        _ => unreachable!("dispatch answered every non-window launch"),
+    };
+    // A second instance forwards the launch it parsed — ask included — and
+    // exits; this one keeps the receiver.
+    let second_launch_rx = match single_instance::try_acquire(&launch) {
         Ok(rx) => rx,
         Err(e) => {
             eprintln!("zenix: {e}");
@@ -126,28 +134,42 @@ pub fn run() {
             // shape — geometry, client decorations, the close guard and a
             // shell over its own endpoint connection — is `ui::windows`, the
             // same face the `view.new-window` chord and a second launch use.
-            ui::windows::open_shell_window(cx, launch_target).expect("failed to open window");
+            ui::windows::open_shell_window(cx, first_target).expect("failed to open window");
 
-            // A second launch asks this process for one more window, on the
-            // target its word carries. The receiver is crossbeam, so the
+            // A second launch asks this process for one more window, or for
+            // a running one to be raised. The receiver is crossbeam, so the
             // blocking read runs on the background executor and a fresh
             // clone carries each ask.
             cx.spawn(async move |cx| {
                 loop {
                     let rx = second_launch_rx.clone();
-                    let Ok(single_instance::Signal::Open(target)) = cx
+                    let signal = cx
                         .background_executor()
                         .spawn(async move { rx.recv() })
-                        .await
-                    else {
+                        .await;
+                    let Ok(signal) = signal else {
                         break;
                     };
-                    let opened = cx.update(|cx| ui::windows::open_shell_window(cx, target));
-                    if let Err(error) = opened {
-                        tracing::error!(
-                            %error,
-                            "a second launch could not open its window"
-                        );
+                    let handled = match signal {
+                        single_instance::Signal::Open(target) => {
+                            cx.update(|cx| ui::windows::open_shell_window(cx, target).map(|_| ()))
+                        }
+                        single_instance::Signal::Focus(which) => cx.update(|cx| {
+                            if ui::windows::focus_window(cx, which.as_ref()) {
+                                Ok(())
+                            } else {
+                                // Nobody to raise yet: the ask opens the
+                                // window it would have raised.
+                                ui::windows::open_shell_window(
+                                    cx,
+                                    which.unwrap_or(herdr_client::ConnectTarget::Local),
+                                )
+                                .map(|_| ())
+                            }
+                        }),
+                    };
+                    if let Err(error) = handled {
+                        tracing::error!(%error, "a second launch's ask could not be answered");
                         break;
                     }
                 }
