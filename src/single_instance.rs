@@ -28,11 +28,13 @@ mod unix_impl {
         platform::zenix_config_dir().join(SOCKET_NAME)
     }
 
-    pub fn try_acquire(
-        forward: &herdr_client::ConnectTarget,
-    ) -> Result<Receiver<super::Signal>, String> {
+    pub fn try_acquire(forward: &crate::cli::Launch) -> Result<Receiver<super::Signal>, String> {
         let socket_path = socket_path();
-        let word = crate::cli::encode_launch(forward);
+        let Some(word) = crate::cli::encode_forward(forward) else {
+            return Err(String::from(
+                "a verb cannot be forwarded to a window instance",
+            ));
+        };
 
         // Step 1: Try to connect to an existing socket
         if socket_path.exists() {
@@ -81,8 +83,8 @@ mod unix_impl {
                         match stream.read(&mut buf) {
                             Ok(n) => {
                                 let msg = String::from_utf8_lossy(&buf[..n]);
-                                if let Some(target) = crate::cli::decode_launch(msg.trim()) {
-                                    tx.send(super::Signal::Open(target)).ok();
+                                if let Some(sig) = super::signal(msg.trim()) {
+                                    tx.send(sig).ok();
                                 }
                             }
                             Err(e) => eprintln!("zenix: failed to read from socket: {}", e),
@@ -139,13 +141,15 @@ mod windows_impl {
         std::fs::write(&path, port.to_string()).ok();
     }
 
-    pub fn try_acquire(
-        forward: &herdr_client::ConnectTarget,
-    ) -> Result<Receiver<super::Signal>, String> {
+    pub fn try_acquire(forward: &crate::cli::Launch) -> Result<Receiver<super::Signal>, String> {
         // Try the persisted port first
         let port = read_port().unwrap_or(BASE_PORT);
         let addr = format!("{}:{}", LOCALHOST, port);
-        let word = crate::cli::encode_launch(forward);
+        let Some(word) = crate::cli::encode_forward(forward) else {
+            return Err(String::from(
+                "a verb cannot be forwarded to a window instance",
+            ));
+        };
 
         // Step 1: Try to connect to an existing listener
         match TcpStream::connect(&addr) {
@@ -193,8 +197,8 @@ mod windows_impl {
                         match stream.read(&mut buf) {
                             Ok(n) => {
                                 let msg = String::from_utf8_lossy(&buf[..n]);
-                                if let Some(target) = crate::cli::decode_launch(msg.trim()) {
-                                    tx.send(super::Signal::Open(target)).ok();
+                                if let Some(sig) = super::signal(msg.trim()) {
+                                    tx.send(sig).ok();
                                 }
                             }
                             Err(e) => eprintln!("zenix: failed to read from socket: {}", e),
@@ -221,6 +225,18 @@ pub enum Signal {
     /// Another instance launched asking for a window on this daemon — open
     /// one more window connected to the target it named.
     Open(herdr_client::ConnectTarget),
+    /// Another instance asked for a running window to be raised — any of
+    /// them, or the one on the daemon it named.
+    Focus(Option<herdr_client::ConnectTarget>),
+}
+
+/// The signal a forwarded word carries.
+fn signal(word: &str) -> Option<Signal> {
+    match crate::cli::decode_forward(word) {
+        Some(crate::cli::Forward::Open(target)) => Some(Signal::Open(target)),
+        Some(crate::cli::Forward::Focus(which)) => Some(Signal::Focus(which)),
+        None => None,
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "freebsd"))]

@@ -770,13 +770,15 @@ impl Root {
         cx.notify();
     }
 
-    /// Put one of the rail's views in front. The rail and the workspace pill
-    /// both come through here, so the two cannot disagree about what the
-    /// sidebar shows.
     /// The short identity the chrome draws beside the brand: which daemon
     /// this window is a face of.
     pub(crate) fn target_label(&self) -> Option<String> {
         super::windows::target_label(&self.target)
+    }
+
+    /// The daemon this window is a face of — the target its launch named.
+    pub(crate) fn connection_target(&self) -> &ConnectTarget {
+        &self.target
     }
 
     /// The attach card's submit: open one more window on the host the field

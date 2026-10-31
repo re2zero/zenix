@@ -28,6 +28,10 @@ Usage:
   zenix --ssh <target>         Open a window attached to a remote host's
   [--session <name>]           herdr over SSH; the surfaces that read the
                                JSON API socket stay local-window only
+  zenix --focus                Raise a running window instead of opening
+  [--session|--socket|--ssh …] one; naming a daemon raises that daemon's
+                               window, bare raises the frontmost one. When
+                               nothing is running, this opens a window.
   zenix mcp-agent              Serve the one-tool MCP bridge on stdin/stdout
   zenix --version              Print the version
   zenix --help                 This text
@@ -47,6 +51,9 @@ pub enum Launch {
     /// Open a window — the first of a new process, or one more in the
     /// running instance — connected to this daemon.
     Window(ConnectTarget),
+    /// Raise a window that is already open: any of them, or the one on this
+    /// daemon. A process with no windows yet opens the named target instead.
+    Focus(Option<ConnectTarget>),
 }
 
 /// Read one invocation. A flag without its value, or a flag nothing answers,
@@ -68,9 +75,16 @@ where
         },
     }
     let mut target: Option<ConnectTarget> = None;
+    let mut focus = false;
     let mut i = 0;
     while i < args.len() {
         let flag = args[i].as_str();
+        // `--focus` names no target of its own; the target flags beside it do.
+        if flag == "--focus" {
+            focus = true;
+            i += 1;
+            continue;
+        }
         let Some(value) = args.get(i + 1) else {
             return Err(format!("{flag} needs a value (see `zenix --help`)"));
         };
@@ -106,7 +120,11 @@ where
         }
         i += 2;
     }
-    Ok(Launch::Window(target.unwrap_or(ConnectTarget::Local)))
+    Ok(match (focus, target) {
+        (true, target) => Launch::Focus(target),
+        (false, Some(target)) => Launch::Window(target),
+        (false, None) => Launch::Window(ConnectTarget::Local),
+    })
 }
 
 /// The single-instance wire word for a launch: fields separated by tabs,
@@ -121,9 +139,47 @@ pub(crate) fn encode_launch(target: &ConnectTarget) -> String {
     }
 }
 
-/// The other half of [`encode_launch`]. A word this build cannot read answers
-/// `None`, and the ask is dropped rather than guessed at.
-pub(crate) fn decode_launch(word: &str) -> Option<ConnectTarget> {
+/// The single-instance wire word for a whole launch — the ask a second
+/// process forwards, focus included. A verb (`mcp-agent`, `--help`) is not
+/// a window ask and answers `None`.
+pub(crate) fn encode_forward(launch: &Launch) -> Option<String> {
+    match launch {
+        Launch::Window(target) => Some(encode_launch(target)),
+        Launch::Focus(None) => Some(String::from("focus")),
+        Launch::Focus(Some(target)) => Some(format!("focus\t{}", encode_launch(target))),
+        _ => None,
+    }
+}
+
+/// What a forwarded word asks the running instance for.
+pub(crate) enum Forward {
+    /// Open one more window on the target the word carries.
+    Open(ConnectTarget),
+    /// Raise a window instead: any of them, or one on the named daemon.
+    Focus(Option<ConnectTarget>),
+}
+
+/// The other half of [`encode_forward`]. A word this build cannot read
+/// answers `None`, and the ask is dropped rather than guessed at.
+pub(crate) fn decode_forward(word: &str) -> Option<Forward> {
+    let (verb, rest) = match word.split_once('\t') {
+        Some((verb, rest)) => (verb, Some(rest)),
+        None => (word, None),
+    };
+    match verb {
+        // `focus` alone raises the frontmost window; a target word after it
+        // names the daemon whose window should come up.
+        "focus" => Some(Forward::Focus(match rest {
+            None => None,
+            Some(rest) => Some(decode_launch(rest)?),
+        })),
+        _ => Some(Forward::Open(decode_launch(word)?)),
+    }
+}
+
+/// The other half of [`encode_launch`]. A word this build cannot read
+/// answers `None`, and the ask is dropped rather than guessed at.
+fn decode_launch(word: &str) -> Option<ConnectTarget> {
     let mut fields = word.split('\t');
     match fields.next()? {
         "open" => Some(ConnectTarget::Local),
@@ -140,8 +196,6 @@ pub(crate) fn decode_launch(word: &str) -> Option<ConnectTarget> {
             distro: fields.next()?.to_owned(),
             session: fields.next().unwrap_or("default").to_owned(),
         }),
-        // "focus" is the word earlier builds sent for the same ask.
-        "focus" => Some(ConnectTarget::Local),
         _ => None,
     }
 }
@@ -160,7 +214,7 @@ pub fn dispatch() -> Option<i32> {
             println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
             Some(0)
         }
-        Ok(Launch::Window(_)) => None,
+        Ok(Launch::Window(_) | Launch::Focus(_)) => None,
         Err(message) => {
             eprintln!("zenix: {message}");
             Some(2)
@@ -253,14 +307,100 @@ mod tests {
             },
         ];
         for target in &targets {
-            let word = encode_launch(target);
-            let back = decode_launch(&word).expect("every encoded launch decodes");
-            assert_eq!(back, *target, "word `{word}`");
+            let back = decode_launch(&encode_launch(target)).expect("every encoded launch decodes");
+            assert_eq!(back, *target, "word `{}`", encode_launch(target));
         }
     }
 
     #[test]
-    fn the_retired_focus_word_still_means_a_local_window() {
-        assert!(matches!(decode_launch("focus"), Some(ConnectTarget::Local)));
+    fn the_retired_focus_word_now_raises_a_window() {
+        // Earlier builds sent bare `focus` for this ask; it means the same
+        // thing again — raise, not open.
+        assert!(matches!(
+            decode_forward("focus"),
+            Some(Forward::Focus(None))
+        ));
+    }
+
+    #[test]
+    fn a_focus_ask_round_trips_with_its_target() {
+        let asks = [
+            (Launch::Focus(None), "focus".to_string()),
+            (
+                Launch::Focus(Some(ConnectTarget::Session {
+                    name: "dev".into(),
+                    development: false,
+                })),
+                "focus\tsession\tdev".to_string(),
+            ),
+            (
+                Launch::Focus(Some(ConnectTarget::Ssh {
+                    target: "ops@box".into(),
+                    session: "prod".into(),
+                })),
+                "focus\tssh\tops@box\tprod".to_string(),
+            ),
+        ];
+        for (launch, word) in &asks {
+            assert_eq!(&encode_forward(launch).expect("a window ask encodes"), word);
+            let Launch::Focus(expected) = launch else {
+                panic!("the ask was a focus");
+            };
+            match decode_forward(word) {
+                Some(Forward::Focus(which)) => assert_eq!(which, *expected, "word `{word}`"),
+                _ => panic!("`{word}` did not decode as a focus"),
+            }
+        }
+    }
+
+    #[test]
+    fn an_open_ask_still_round_trips_through_the_forward() {
+        let word = "session\tdev";
+        assert!(matches!(
+            decode_forward(word),
+            Some(Forward::Open(ConnectTarget::Session { .. }))
+        ));
+        assert_eq!(
+            encode_forward(&Launch::Window(ConnectTarget::Local)).as_deref(),
+            Some("open")
+        );
+    }
+
+    #[test]
+    fn a_word_nobody_reads_is_dropped() {
+        assert!(decode_forward("gamma\t1").is_none());
+        assert!(decode_forward("focus\tgamma").is_none());
+    }
+
+    #[test]
+    fn a_focus_flag_alone_names_no_target() {
+        assert!(matches!(parse_from(&["--focus"]), Ok(Launch::Focus(None))));
+    }
+
+    #[test]
+    fn a_focus_ask_names_its_daemon_in_any_flag_order() {
+        for args in [
+            vec!["--focus", "--session", "dev"],
+            vec!["--session", "dev", "--focus"],
+        ] {
+            let Ok(parsed) = parse_from(&args) else {
+                panic!("`{args:?}` must parse");
+            };
+            assert!(matches!(
+                parsed,
+                Launch::Focus(Some(ConnectTarget::Session { .. }))
+            ));
+        }
+    }
+
+    #[test]
+    fn a_focus_ask_keeps_the_value_flags_working() {
+        let Ok(Launch::Focus(Some(ConnectTarget::Ssh { target, .. }))) =
+            parse_from(&["--focus", "--ssh", "ops@box"])
+        else {
+            panic!("--focus --ssh must parse");
+        };
+        assert_eq!(target, "ops@box");
+        assert!(parse_from(&["--focus", "--what"]).is_err());
     }
 }

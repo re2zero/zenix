@@ -177,6 +177,33 @@ pub(crate) fn open_shell_window(
     })
 }
 
+/// Raise an open window instead of opening one. `Some(target)` names the
+/// daemon whose window comes up; `None` brings up the frontmost one. The
+/// platform's own stacking order is the preference when it has one — X11
+/// reports it, Wayland does not and any window answers. Answers `false` when
+/// no window matches, so the ask's caller can open one instead.
+pub(crate) fn focus_window(cx: &mut App, target: Option<&ConnectTarget>) -> bool {
+    let mut stack = cx.window_stack().unwrap_or_else(|| cx.windows());
+    if let Some(target) = target {
+        stack.retain(|handle| window_target(cx, *handle).is_some_and(|own| own == *target));
+    }
+    let Some(handle) = stack.first().copied() else {
+        return false;
+    };
+    handle
+        .update(cx, |_, window, _| window.activate_window())
+        .is_ok()
+}
+
+/// The daemon a window is a face of, if it is still open to ask.
+fn window_target(cx: &App, handle: AnyWindowHandle) -> Option<ConnectTarget> {
+    handle
+        .read(cx, |root: Entity<Root>, cx| {
+            root.read(cx).connection_target().clone()
+        })
+        .ok()
+}
+
 /// Put the window's shape on record for the daemon it is connected to, so the
 /// next launch of the same target opens where this one closed.
 ///
