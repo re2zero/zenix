@@ -22,12 +22,12 @@
 
 use ely_core::forms::{InputEvent, TextInput};
 use ely_core::layout::AppShell;
-use ely_core::shell::{ResizeBorder, guard_close};
+use ely_core::shell::ResizeBorder;
 use ely_core::theme::ActiveTheme as _;
 use gpui::{
     App, ClipboardItem, Context, DragMoveEvent, Entity, FocusHandle, IntoElement, MouseButton,
-    MouseUpEvent, ParentElement, Render, Subscription, SystemNotification, Task, Window,
-    WindowBounds, div, prelude::*,
+    MouseUpEvent, ParentElement, Render, Subscription, SystemNotification, Task, Window, div,
+    prelude::*,
 };
 use herdr_client::{ConnectTarget, SavedHost};
 
@@ -2403,44 +2403,6 @@ fn aside_state(visible: bool, width: f32) -> AsideState {
     } else {
         AsideState::Hidden
     }
-}
-
-/// Put the window's shape into the config, so the next launch opens it.
-///
-/// The size and the maximized state are what the config carries; the position
-/// is the compositor's to choose. Both close paths run through this: the
-/// strip's own button through the library's close check, and a window
-/// manager's close through the same check (`guard_close`, registered by
-/// [`crate::run`]).
-///
-/// The size is the *inner* one on purpose. `WindowOptions::window_bounds` is
-/// the content area, while X11 (and Wayland) report the outer window from
-/// `window_bounds()` — the client decorations' 10px resize margin per side is
-/// part of it. Saving the outer size made every restart re-add that margin,
-/// so the window grew 20px a launch; `inner_window_bounds()` subtracts the
-/// insets and the round trip is stable. Elsewhere the two are the same.
-pub(crate) fn save_window_bounds(window: &Window, cx: &mut App) {
-    let size = match window.inner_window_bounds() {
-        WindowBounds::Windowed(bounds)
-        | WindowBounds::Maximized(bounds)
-        | WindowBounds::Fullscreen(bounds) => bounds.size,
-    };
-    let maximized = window.is_maximized();
-    config::update(cx, |config| {
-        config
-            .window
-            .set_bounds(size.width.as_f32(), size.height.as_f32(), maximized)
-    });
-}
-
-/// Register the close guard the shell's two close paths share, and open the
-/// window's content. [`crate::run`] calls this from inside the window's
-/// construction.
-pub(crate) fn install_close_guard(window: &mut Window, cx: &mut App) {
-    guard_close(window, cx, |window, cx| {
-        save_window_bounds(window, cx);
-        true
-    });
 }
 
 #[cfg(test)]
