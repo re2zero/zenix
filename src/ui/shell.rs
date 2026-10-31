@@ -175,10 +175,12 @@ pub struct Root {
     lane: Option<crate::herdr::api::ApiClient>,
     /// The last values toasted about, so a pulse that did not change them does
     /// not say the same thing twice: the daemon's last refusal and the two
-    /// hosts' last failure reasons.
+    /// hosts' last failure reasons as the toast actually said them — a
+    /// refusal whose asking card is still up says it inline and is not the
+    /// toast's to say.
     rejected_seen: Option<String>,
-    worktree_error_seen: Option<String>,
-    plugin_error_seen: Option<String>,
+    worktree_error_said: Option<String>,
+    plugin_error_said: Option<String>,
     /// The trust field's submission handler, alive exactly while the dialog's
     /// field is.
     _trust_input: Option<Subscription>,
@@ -461,8 +463,8 @@ impl Root {
             target: target.clone(),
             lane: lane.clone(),
             rejected_seen: None,
-            worktree_error_seen: None,
-            plugin_error_seen: None,
+            worktree_error_said: None,
+            plugin_error_said: None,
             _trust_input: None,
             _layout_task: None,
             _keys: keys,
@@ -518,10 +520,15 @@ impl Root {
             self.trust.note(last);
         }
         // A refusal has no log entry and no page of its own when the action
-        // came from a chord or the palette; the toast is where it lands. The
-        // value is compared so a pulse that changed nothing says nothing.
-        if self.plugins.last_error != self.plugin_error_seen {
-            self.plugin_error_seen = self.plugins.last_error.clone();
+        // came from a chord or the palette; the toast is where it lands —
+        // unless the trust review is up, whose answer line is already saying
+        // the daemon's sentence.
+        if host_toast_due(
+            self.plugins.last_error.as_deref(),
+            self.plugin_error_said.as_deref(),
+            self.trust.is_open(),
+        ) {
+            self.plugin_error_said = self.plugins.last_error.clone();
             if let Some(reason) = self.plugins.last_error.as_deref() {
                 toast::host_failed(&self.toasts, t("shell.toast.plugin_failed"), reason, cx);
             }
@@ -552,9 +559,14 @@ impl Root {
         }
         // A removal's refusal is the design's "show the daemon's reason": the
         // card that asked is gone by now, and the row that lost the request
-        // has no room for a sentence.
-        if self.worktrees.last_error != self.worktree_error_seen {
-            self.worktree_error_seen = self.worktrees.last_error.clone();
+        // has no room for a sentence. A refusal the worktree form asked for
+        // is the form's own answer line, and the corner stays quiet.
+        if host_toast_due(
+            self.worktrees.last_error.as_deref(),
+            self.worktree_error_said.as_deref(),
+            self.worktree_form.is_open(),
+        ) {
+            self.worktree_error_said = self.worktrees.last_error.clone();
             if let Some(reason) = self.worktrees.last_error.as_deref() {
                 toast::host_failed(&self.toasts, t("shell.toast.worktree_failed"), reason, cx);
             }
@@ -2407,6 +2419,16 @@ fn aside_state(visible: bool, width: f32) -> AsideState {
     }
 }
 
+/// Whether a host refusal rings the toast. The toast is a refusal's surface
+/// only when no surface of its own is up to carry the sentence — the trust
+/// review and the worktree form keep the daemon's words in their answer line
+/// while they are open, the policy `toast.rs` states — and only when the
+/// reason is news: `said` holds the last reason the toast itself spoke, so a
+/// pulse that repeats it says nothing.
+fn host_toast_due(error: Option<&str>, said: Option<&str>, card_up: bool) -> bool {
+    !card_up && error.is_some() && error != said
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2424,5 +2446,22 @@ mod tests {
         assert_eq!(aside_state(false, 480.), AsideState::Rail);
         // A phone-width window still draws the rail; only the column folds.
         assert!(!sidebar_visible(480.));
+    }
+
+    /// A refusal whose asking card is still up rides the card's own answer
+    /// line and must not ring in the corner too; once the card is closed the
+    /// toast is the refusal's only surface, and the same reason is not news
+    /// twice.
+    #[test]
+    fn a_refusal_toasts_only_when_no_card_holds_it_inline() {
+        let reason = Some("invalid branch name".to_string());
+        // The worktree form / trust review is up: the inline line says it.
+        assert!(!host_toast_due(reason.as_deref(), None, true));
+        // The card is closed — a chord's refusal has nowhere else to land.
+        assert!(host_toast_due(reason.as_deref(), None, false));
+        // The toast already said this reason; the pulse repeats it.
+        assert!(!host_toast_due(reason.as_deref(), reason.as_deref(), false));
+        // A success cleared the error; there is nothing left to say.
+        assert!(!host_toast_due(None, reason.as_deref(), false));
     }
 }
