@@ -243,15 +243,20 @@ pub(crate) struct ModelForm {
     index: Option<usize>,
     id: Entity<TextInput>,
     label: Entity<TextInput>,
+    /// The context window in tokens, as the reader typed it; empty is "the
+    /// file does not know". Parsed when the form is saved.
+    context: Entity<TextInput>,
     vision: bool,
 }
 
 impl ModelForm {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         provider: String,
         index: Option<usize>,
         id: Entity<TextInput>,
         label: Entity<TextInput>,
+        context: Entity<TextInput>,
         vision: bool,
     ) -> Self {
         Self {
@@ -259,6 +264,7 @@ impl ModelForm {
             index,
             id,
             label,
+            context,
             vision,
         }
     }
@@ -547,11 +553,23 @@ impl State {
         };
         let id = form.id.read(cx).text().trim().to_owned();
         let label = form.label.read(cx).text().trim().to_owned();
+        let context_text = form.context.read(cx).text().trim().to_owned();
         let (vision, index, provider) = (form.vision, form.index, form.provider.clone());
         if id.is_empty() {
             self.error = Some(t("settings.ai.model_id_required"));
             return false;
         }
+        let context = if context_text.is_empty() {
+            None
+        } else {
+            match context_text.parse::<u64>() {
+                Ok(window) if window > 0 => Some(window),
+                _ => {
+                    self.error = Some(t("settings.ai.model_context_invalid"));
+                    return false;
+                }
+            }
+        };
         let Some(provider_index) = self
             .providers
             .iter()
@@ -578,6 +596,7 @@ impl State {
                     id: id.clone(),
                     label,
                     vision,
+                    context_window: context,
                 };
                 if provider.model == old {
                     provider.model = id;
@@ -588,6 +607,7 @@ impl State {
                     id: id.clone(),
                     label,
                     vision,
+                    context_window: context,
                 });
                 if provider.model.is_empty() {
                     provider.model = id;
@@ -2130,6 +2150,13 @@ fn model_form_panel(form: &ModelForm, root: &Entity<Root>, cx: &App) -> AnyEleme
                 .into_any_element(),
             cx,
         ))
+        .child(field(
+            t("settings.ai.model_context"),
+            Input::new(&form.context)
+                .size(ControlSize::Sm)
+                .into_any_element(),
+            cx,
+        ))
         .child(
             div()
                 .flex()
@@ -2639,6 +2666,17 @@ fn about_cards(live: &LiveState, cx: &App) -> Vec<AnyElement> {
         }
     }
 
+    let events = Switch::new("settings-debug-events", config::get(cx).debug.events)
+        .on_change(|on, _, cx| {
+            config::update(cx, |config| config.debug.events = on);
+        })
+        .into_any_element();
+    let debug_rows = vec![row(
+        t("settings.debug.events"),
+        Some(t("settings.debug.events_note")),
+        Some(events),
+    )];
+
     vec![
         card(t("settings.about.version_card"), None, version_rows, cx),
         card(
@@ -2648,6 +2686,12 @@ fn about_cards(live: &LiveState, cx: &App) -> Vec<AnyElement> {
             cx,
         ),
         card(t("settings.about.files_card"), None, file_rows, cx),
+        card(
+            t("settings.debug.card"),
+            Some(t("settings.debug.card_note")),
+            debug_rows,
+            cx,
+        ),
     ]
 }
 

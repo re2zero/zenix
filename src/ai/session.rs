@@ -64,12 +64,16 @@ pub enum Entry {
     Text { text: String },
 }
 
-/// The token bill an API reported for one turn: what went in, what came out.
-/// Ephemeral display data — the store does not keep it.
+/// The token bill an API reported for one turn: what went in, what came out,
+/// and how much of the input the provider answered from its cache. Ephemeral
+/// display data — the store does not keep it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct UsageInfo {
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// The cached share of the input, when the provider reports one. Zero is
+    /// "unknown or none", and the panel names the rate only when it knows.
+    pub cached_tokens: u64,
 }
 
 impl UsageInfo {

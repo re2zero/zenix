@@ -1,10 +1,11 @@
-//! The right-hand panel's frame: its tab strip, the body below it, and the
-//! 34px rail the collapsed panel folds into.
+//! The right-hand panel's frame: its header, the conversation below it, and
+//! the 34px rail the collapsed panel folds into.
 //!
-//! U3-2 mounted the conversation; U3-3 appends the fleet (cards, transitions
-//! and the TAIL comparison) as [`super::fleet`]. The plugin panels (U3-4)
-//! append theirs when their body exists; a tab is offered only when it has
-//! somewhere to go, so the strip never promises an empty page.
+//! The panel carries one body, the conversation — the fleet tab and its TAIL
+//! comparison retired 2026-11-02 (the sidebar's fleet view is where the fleet
+//! lives). The header names the panel and holds its three presses: a new
+//! chat, the session history, and the close that folds the column into the
+//! rail. The conversation's unread count rides both the header and the rail.
 //!
 //! Whether the panel is drawn at all is the shell's decision
 //! (`shell::aside_state`): the config's `layout.aside_visible` is the intent,
@@ -20,14 +21,14 @@
 
 use ely_core::buttons::{ButtonVariant, IconButton};
 use ely_core::primitives::{Icon, IconName};
-use ely_core::theme::{ActiveTheme, ControlSize, IconSize, Radius, TextSize};
+use ely_core::theme::{ActiveTheme, ControlSize, IconSize, TextSize};
+use ely_core::typography::Ellipsis;
 use gpui::{
     AnyElement, App, CursorStyle, Entity, IntoElement, MouseButton, ParentElement, Render,
     SharedString, Styled, Window, div, prelude::*, px,
 };
 
 use super::chat::ChatView;
-use super::fleet;
 use super::shell::Root;
 use crate::config::{ASIDE_WIDTH_DEFAULT, ASIDE_WIDTH_MAX, ASIDE_WIDTH_MIN};
 use crate::i18n::t;
@@ -36,43 +37,6 @@ use crate::i18n::t;
 const HANDLE: f32 = 6.;
 /// The share of the window the panel may take, however wide it was dragged.
 const MAX_SHARE: f32 = 0.6;
-
-/// The panel's tabs, in strip order.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Tab {
-    Chat,
-    Fleet,
-}
-
-impl Tab {
-    /// Every tab this build offers, in strip order.
-    pub(crate) const ALL: &'static [Tab] = &[Tab::Chat, Tab::Fleet];
-
-    /// Stable id: the rail's and the strip's element ids, and what a future
-    /// "which tab is in front" value would carry.
-    pub(crate) fn id(self) -> &'static str {
-        match self {
-            Tab::Chat => "chat",
-            Tab::Fleet => "fleet",
-        }
-    }
-
-    /// What the strip calls it: the locale's own word, shared with the old
-    /// shell's tab labels.
-    pub(crate) fn label(self) -> String {
-        match self {
-            Tab::Chat => t("shell.aside.chat"),
-            Tab::Fleet => t("shell.aside.fleet"),
-        }
-    }
-
-    fn icon(self) -> IconName {
-        match self {
-            Tab::Chat => IconName::MessageSquare,
-            Tab::Fleet => IconName::Gauge,
-        }
-    }
-}
 
 /// The panel's width: its default until the reader drags the edge, then what
 /// the pointer left, never wider than [`MAX_SHARE`] of the window. The value is
@@ -187,23 +151,17 @@ pub(crate) fn grip(root: &Entity<Root>, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-/// The open panel: a column at the shell's width, the tab strip on top and the
-/// active tab's body filling the rest.
+/// The open panel: a column at the shell's width, the header on top and the
+/// conversation filling the rest.
 pub(crate) fn column(
     chat: &Entity<ChatView>,
-    tab: Tab,
     unread: usize,
     width: f32,
-    fleet: fleet::Sources<'_>,
     root: &Entity<Root>,
     cx: &App,
 ) -> AnyElement {
     let theme = cx.theme();
     let colors = &theme.colors;
-    let body: AnyElement = match tab {
-        Tab::Chat => chat.clone().into_any_element(),
-        Tab::Fleet => fleet::body(fleet, root, cx),
-    };
     div()
         .w(px(width))
         .flex_none()
@@ -213,17 +171,21 @@ pub(crate) fn column(
         .border_l_1()
         .border_color(colors.border)
         .bg(colors.bg)
-        .child(strip(tab, unread, root, cx))
-        .child(div().flex_1().min_h_0().child(body))
+        .child(header(chat, unread, root, cx))
+        .child(chat.clone())
         .into_any_element()
 }
 
-/// The strip above the panel's body: one chip per tab, the unread badge on the
-/// conversation, and the panel's close button at the right edge.
-fn strip(tab: Tab, unread: usize, root: &Entity<Root>, cx: &App) -> AnyElement {
+/// The strip above the conversation: the panel's name, the unread badge, and
+/// the three presses — a new chat, the session history, and the close that
+/// folds the panel into its rail.
+fn header(chat: &Entity<ChatView>, unread: usize, root: &Entity<Root>, cx: &App) -> AnyElement {
     let theme = cx.theme();
     let colors = &theme.colors;
-    let mut head = div()
+    let panel = chat.clone();
+    let history = chat.clone();
+    let close = root.clone();
+    div()
         .h(px(36.))
         .flex_none()
         .flex()
@@ -231,44 +193,39 @@ fn strip(tab: Tab, unread: usize, root: &Entity<Root>, cx: &App) -> AnyElement {
         .gap(px(3.))
         .px(px(6.))
         .border_b_1()
-        .border_color(colors.border);
-    for candidate in Tab::ALL {
-        let active = *candidate == tab;
-        let mut chip = div()
-            .id(SharedString::from(format!("aside-tab-{}", candidate.id())))
-            .h(px(26.))
-            .px(px(8.))
-            .flex()
-            .items_center()
-            .gap(px(5.))
-            .rounded(theme.radius(Radius::Md))
-            .text_size(theme.text_size(TextSize::Sm))
-            .text_color(if active { colors.fg } else { colors.fg_muted })
-            .when(active, |chip| chip.bg(colors.surface))
-            .when(!active, |chip| {
-                chip.hover(|style| style.bg(colors.hover).text_color(colors.fg))
-            })
-            .child(
-                Icon::new(candidate.icon())
-                    .size(IconSize::Xs)
-                    .color(if active { colors.fg } else { colors.fg_muted }),
-            )
-            .child(candidate.label());
-        if *candidate == Tab::Chat && unread > 0 {
-            chip = chip.child(badge(unread, cx));
-        }
-        // A press on a tab puts its body in front; the chat tab also gives
-        // the composer the keys, which is what a reader reaching for the
-        // conversation expects.
-        let root = root.clone();
-        let chosen = *candidate;
-        chip = chip.cursor_pointer().on_click(move |_, window, cx| {
-            root.update(cx, |root, cx| root.select_aside_tab(chosen, window, cx));
-        });
-        head = head.child(chip);
-    }
-    let close = root.clone();
-    head.child(div().flex_1())
+        .border_color(colors.border)
+        .child(
+            Icon::new(IconName::MessageSquare)
+                .size(IconSize::Xs)
+                .color(colors.fg_muted),
+        )
+        .child(
+            div()
+                .min_w_0()
+                .text_size(theme.text_size(TextSize::Sm))
+                .text_color(colors.fg)
+                .child(Ellipsis::new(SharedString::from(t("shell.aside.chat")))),
+        )
+        .children((unread > 0).then(|| badge(unread, cx)))
+        .child(div().flex_1())
+        .child(
+            IconButton::new("aside-new-chat", IconName::SquarePen)
+                .variant(ButtonVariant::Ghost)
+                .size(ControlSize::Sm)
+                .tooltip(t("ai.chat.new_chat"))
+                .on_click(move |_, _, cx| {
+                    panel.update(cx, |panel, cx| panel.new_session(cx));
+                }),
+        )
+        .child(
+            IconButton::new("aside-history", IconName::History)
+                .variant(ButtonVariant::Ghost)
+                .size(ControlSize::Sm)
+                .tooltip(t("ai.chat.history"))
+                .on_click(move |_, _, cx| {
+                    history.update(cx, |panel, cx| panel.toggle_history(cx));
+                }),
+        )
         .child(
             IconButton::new("aside-close", IconName::X)
                 .variant(ButtonVariant::Ghost)
@@ -281,13 +238,25 @@ fn strip(tab: Tab, unread: usize, root: &Entity<Root>, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-/// The collapsed panel: a 34px rail with the tabs as icon buttons and the
-/// conversation's unread count on its badge. A press opens the panel on that
-/// tab, or puts that tab in front when the panel is already open.
+/// The collapsed panel: a 34px rail with the conversation's button and its
+/// unread count. A press opens the panel and gives the composer the keys.
 pub(crate) fn rail(unread: usize, root: &Entity<Root>, cx: &App) -> AnyElement {
     let theme = cx.theme();
     let colors = &theme.colors;
-    let mut rail = div()
+    let open = root.clone();
+    let mut slot = div().relative().child(
+        IconButton::new("aside-rail-chat", IconName::MessageSquare)
+            .variant(ButtonVariant::Ghost)
+            .size(ControlSize::Sm)
+            .tooltip(t("shell.aside.chat"))
+            .on_click(move |_, window, cx| {
+                open.update(cx, |root, cx| root.open_aside(window, cx));
+            }),
+    );
+    if unread > 0 {
+        slot = slot.child(div().absolute().top_0().right_0().child(badge(unread, cx)));
+    }
+    div()
         .w(px(34.))
         .flex_none()
         .h_full()
@@ -298,33 +267,12 @@ pub(crate) fn rail(unread: usize, root: &Entity<Root>, cx: &App) -> AnyElement {
         .py(px(7.))
         .border_l_1()
         .border_color(colors.border)
-        .bg(colors.bg);
-    for candidate in Tab::ALL {
-        let open = root.clone();
-        let chosen = *candidate;
-        let mut slot = div().relative().child(
-            IconButton::new(
-                SharedString::from(format!("aside-rail-{}", candidate.id())),
-                candidate.icon(),
-            )
-            .variant(ButtonVariant::Ghost)
-            .size(ControlSize::Sm)
-            .tooltip(candidate.label())
-            .on_click(move |_, window, cx| {
-                open.update(cx, |root, cx| {
-                    root.open_aside_tab(chosen, window, cx);
-                });
-            }),
-        );
-        if *candidate == Tab::Chat && unread > 0 {
-            slot = slot.child(div().absolute().top_0().right_0().child(badge(unread, cx)));
-        }
-        rail = rail.child(slot);
-    }
-    rail.into_any_element()
+        .bg(colors.bg)
+        .child(slot)
+        .into_any_element()
 }
 
-/// The unread count, in the accent: the same chip the strip wears.
+/// The unread count, in the accent: the same chip the header wears.
 fn badge(unread: usize, cx: &App) -> AnyElement {
     let theme = cx.theme();
     let colors = &theme.colors;

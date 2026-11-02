@@ -92,8 +92,22 @@ pub fn build_system_prompt(roles_summary: &str, workspace_info: &str, lang: &str
     prompt
 }
 
+/// One image riding a user message, as the attachments hand it over: the
+/// bytes, base64, and the media type the extension named.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct ImagePart {
+    pub media_type: String,
+    pub data: String,
+}
+
 /// Lightweight chat message reference for the engine (no session/sequence).
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+///
+/// Serialized by hand: a message carrying [`ChatMessageRef::images`] speaks
+/// the OpenAI content-parts shape (`text` first, then one `image_url` part
+/// per image, each a `data:` URL), because that is the wire the client's
+/// request path speaks; every other message stays a plain string, so a turn
+/// with no attachments is byte-for-byte what it always was.
+#[derive(Debug, Clone, Deserialize, Default)]
 pub struct ChatMessageRef {
     /// "system", "user", "assistant", or "tool".
     pub role: String,
@@ -101,11 +115,49 @@ pub struct ChatMessageRef {
     pub content: String,
     /// Tool calls from the assistant in OpenAI API format
     /// (set when role=="assistant"). Each entry: {id, type:"function", function:{name, arguments}}.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub tool_calls: Option<Vec<serde_json::Value>>,
     /// Tool call ID this result is for (set when role=="tool").
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", default)]
     pub tool_call_id: Option<String>,
+    /// The images riding this user message. Only set by the composer's send;
+    /// history rebuilt from the store never carries parts (the store keeps
+    /// the words, the pixels belonged to the one request).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub images: Option<Vec<ImagePart>>,
+}
+
+impl Serialize for ChatMessageRef {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let fields =
+            2 + usize::from(self.tool_calls.is_some()) + usize::from(self.tool_call_id.is_some());
+        let mut state = serializer.serialize_struct("ChatMessageRef", fields)?;
+        state.serialize_field("role", &self.role)?;
+        match self.images.as_deref() {
+            Some(images) if !images.is_empty() => {
+                let mut parts = Vec::with_capacity(images.len() + 1);
+                if !self.content.is_empty() {
+                    parts.push(serde_json::json!({"type": "text", "text": self.content}));
+                }
+                for image in images {
+                    parts.push(serde_json::json!({
+                        "type": "image_url",
+                        "image_url": {"url": format!("data:{};base64,{}", image.media_type, image.data)},
+                    }));
+                }
+                state.serialize_field("content", &parts)?;
+            }
+            _ => state.serialize_field("content", &self.content)?,
+        }
+        if let Some(tool_calls) = &self.tool_calls {
+            state.serialize_field("tool_calls", tool_calls)?;
+        }
+        if let Some(tool_call_id) = &self.tool_call_id {
+            state.serialize_field("tool_call_id", tool_call_id)?;
+        }
+        state.end()
+    }
 }
 
 /// Events emitted during an LLM streaming call.
@@ -319,8 +371,9 @@ enum AnthropicSseEvent {
     Text(String),
     /// A thinking (reasoning) token chunk.
     Thinking(String),
-    /// `message_start`: the turn's input bill.
-    MessageStart(u64),
+    /// `message_start`: the turn's input bill — its input tokens, and how
+    /// many of them the cache answered (Anthropic's `cache_read_input_tokens`).
+    MessageStart(u64, u64),
     /// `message_delta`: the running output bill.
     MessageDelta(u64),
     /// The stream has finished (message_stop).
@@ -346,13 +399,19 @@ fn parse_anthropic_sse_event(data: &str) -> AnthropicSseEvent {
 
     match event_type {
         "message_stop" => AnthropicSseEvent::Done,
-        "message_start" => AnthropicSseEvent::MessageStart(
-            value
-                .get("usage")
-                .and_then(|usage| usage.get("input_tokens"))
-                .and_then(|tokens| tokens.as_u64())
-                .unwrap_or(0),
-        ),
+        "message_start" => {
+            let usage = value.get("usage");
+            AnthropicSseEvent::MessageStart(
+                usage
+                    .and_then(|usage| usage.get("input_tokens"))
+                    .and_then(|tokens| tokens.as_u64())
+                    .unwrap_or(0),
+                usage
+                    .and_then(|usage| usage.get("cache_read_input_tokens"))
+                    .and_then(|tokens| tokens.as_u64())
+                    .unwrap_or(0),
+            )
+        }
         "message_delta" => AnthropicSseEvent::MessageDelta(
             value
                 .get("usage")
@@ -522,12 +581,21 @@ pub(crate) struct SseChunkWithTools {
     usage: Option<SseUsage>,
 }
 
-/// The OpenAI usage object, the two numbers the panel shows.
+/// The OpenAI usage object, the numbers the panel shows. `cached_tokens`
+/// rides OpenAI's `prompt_tokens_details` and is absent on providers that do
+/// not report it.
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 pub(crate) struct SseUsage {
     prompt_tokens: Option<u64>,
     completion_tokens: Option<u64>,
+    prompt_tokens_details: Option<SsePromptDetails>,
+}
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+pub(crate) struct SsePromptDetails {
+    cached_tokens: Option<u64>,
 }
 
 impl SseUsage {
@@ -537,6 +605,10 @@ impl SseUsage {
         (input > 0 || output > 0).then_some(StreamEvent::Usage(UsageInfo {
             input_tokens: input,
             output_tokens: output,
+            cached_tokens: self
+                .prompt_tokens_details
+                .and_then(|d| d.cached_tokens)
+                .unwrap_or(0),
         }))
     }
 }
@@ -722,9 +794,10 @@ async fn parse_tool_call_sse_stream(
     let mut done = false;
     let mut tool_call_acc: std::collections::HashMap<usize, (String, String, String)> =
         std::collections::HashMap::new();
-    // Anthropic reports the bill across the stream: input on `message_start`,
-    // output accumulating on each `message_delta`.
+    // Anthropic reports the bill across the stream: input on `message_start`
+    // (with its cached share), output accumulating on each `message_delta`.
     let mut anthropic_input = 0u64;
+    let mut anthropic_cached = 0u64;
     let mut anthropic_output = 0u64;
 
     while let Some(chunk) = stream.next().await {
@@ -778,8 +851,9 @@ async fn parse_tool_call_sse_stream(
                             AnthropicSseEvent::Thinking(text) if !text.is_empty() => {
                                 on_event(StreamEvent::Thinking { round, text });
                             }
-                            AnthropicSseEvent::MessageStart(input) => {
+                            AnthropicSseEvent::MessageStart(input, cached) => {
                                 anthropic_input = input;
+                                anthropic_cached = cached;
                             }
                             AnthropicSseEvent::MessageDelta(output) => {
                                 anthropic_output = output;
@@ -789,6 +863,7 @@ async fn parse_tool_call_sse_stream(
                                     on_event(StreamEvent::Usage(UsageInfo {
                                         input_tokens: anthropic_input,
                                         output_tokens: anthropic_output,
+                                        cached_tokens: anthropic_cached,
                                     }));
                                 }
                                 done = true;
@@ -842,8 +917,9 @@ async fn parse_tool_call_sse_stream(
                 AnthropicSseEvent::Thinking(text) if !text.is_empty() => {
                     on_event(StreamEvent::Thinking { round, text });
                 }
-                AnthropicSseEvent::MessageStart(input) => {
+                AnthropicSseEvent::MessageStart(input, cached) => {
                     anthropic_input = input;
+                    anthropic_cached = cached;
                 }
                 AnthropicSseEvent::MessageDelta(output) => {
                     anthropic_output = output;
@@ -853,6 +929,7 @@ async fn parse_tool_call_sse_stream(
                         on_event(StreamEvent::Usage(UsageInfo {
                             input_tokens: anthropic_input,
                             output_tokens: anthropic_output,
+                            cached_tokens: anthropic_cached,
                         }));
                     }
                     done = true;
@@ -866,6 +943,7 @@ async fn parse_tool_call_sse_stream(
             on_event(StreamEvent::Usage(UsageInfo {
                 input_tokens: anthropic_input,
                 output_tokens: anthropic_output,
+                cached_tokens: anthropic_cached,
             }));
         }
     }
@@ -1534,7 +1612,8 @@ mod tests {
     }
 
     /// The OpenAI bill arrives on the final chunk, empty of choices; a chunk
-    /// without one parses as before.
+    /// without one parses as before. The cached share of the input rides
+    /// `prompt_tokens_details` when the provider reports it.
     #[test]
     fn test_sse_usage_chunk_parses_into_the_bill() {
         let data = r#"{"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":34}}"#;
@@ -1542,7 +1621,15 @@ mod tests {
         assert!(matches!(
             chunk.usage.and_then(|usage| usage.into_event()),
             Some(StreamEvent::Usage(info))
-                if info.input_tokens == 12 && info.output_tokens == 34
+                if info.input_tokens == 12 && info.output_tokens == 34 && info.cached_tokens == 0
+        ));
+
+        let data = r#"{"choices":[],"usage":{"prompt_tokens":120,"completion_tokens":30,
+            "prompt_tokens_details":{"cached_tokens":96}}}"#;
+        let chunk: SseChunkWithTools = serde_json::from_str(data).expect("parse cached usage");
+        assert!(matches!(
+            chunk.usage.and_then(|usage| usage.into_event()),
+            Some(StreamEvent::Usage(info)) if info.cached_tokens == 96
         ));
 
         // No bill, no event: every chunk that only streams tokens stays so.
@@ -1551,20 +1638,58 @@ mod tests {
         assert!(chunk.usage.and_then(|usage| usage.into_event()).is_none());
     }
 
-    /// Anthropic reports the bill across two events: input on `message_start`,
-    /// output accumulating on `message_delta`.
+    /// Anthropic reports the bill across two events: input on `message_start`
+    /// (with its cached share), output accumulating on `message_delta`.
     #[test]
     fn test_parse_anthropic_usage_events() {
-        let data = r#"{"type":"message_start","usage":{"input_tokens":123}}"#;
+        let data = r#"{"type":"message_start","usage":{"input_tokens":123,"cache_read_input_tokens":100}}"#;
         assert!(matches!(
             parse_anthropic_sse_event(data),
-            AnthropicSseEvent::MessageStart(123)
+            AnthropicSseEvent::MessageStart(123, 100)
         ));
         let data = r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":45}}"#;
         assert!(matches!(
             parse_anthropic_sse_event(data),
             AnthropicSseEvent::MessageDelta(45)
         ));
+    }
+
+    /// A user message carrying images speaks the OpenAI content-parts shape —
+    /// text first, then one data-URL part per image — while every message
+    /// without images stays the plain string it always serialized to.
+    #[test]
+    fn a_message_with_images_speaks_in_parts_and_one_without_stays_a_string() {
+        use base64::Engine as _;
+        let message = ChatMessageRef {
+            role: "user".into(),
+            content: "看这张图".into(),
+            images: Some(vec![ImagePart {
+                media_type: "image/png".into(),
+                data: base64::engine::general_purpose::STANDARD.encode(b"png"),
+            }]),
+            ..Default::default()
+        };
+        let value: serde_json::Value = serde_json::to_value(&message).expect("serialize");
+        let parts = value.get("content").and_then(|content| content.as_array());
+        let text = parts.and_then(|parts| parts.first()).cloned();
+        assert_eq!(
+            text.map(|part| part["text"].as_str().map(str::to_owned)),
+            Some(Some("看这张图".to_owned()))
+        );
+        let image = parts.and_then(|parts| parts.get(1)).cloned();
+        assert_eq!(
+            image.map(|part| part["image_url"]["url"].as_str().map(str::to_owned)),
+            Some(Some("data:image/png;base64,cG5n".to_owned()))
+        );
+
+        let plain = ChatMessageRef {
+            role: "user".into(),
+            content: "hello".into(),
+            ..Default::default()
+        };
+        let value: serde_json::Value = serde_json::to_value(&plain).expect("serialize");
+        assert_eq!(value["content"], serde_json::json!("hello"));
+        assert!(value.get("images").is_none());
     }
 
     /// An empty arguments string is a call with no arguments, not a broken

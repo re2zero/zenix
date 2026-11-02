@@ -40,22 +40,15 @@
 //! directory gives the palette the same row every other command has.
 //!
 //! U3-2 mounts the aside's conversation: [`aside`] is the panel's frame — a
-//! tab strip, a body, and the 34px rail a closed panel folds into — and
-//! [`chat`] is the body itself: `crate::ai`'s streamed turn drawn as one
-//! message list, with the reasoning block, a card per tool call, the approval
-//! gate, the failure retry and the session history. `layout.aside_visible` is
-//! the panel's switch (the strip's button and `secondary-shift-a`), and the
-//! conversation's unread count badges the rail while the panel is closed.
-//!
-//! U3-3 appends the aside's second tab, [`fleet`]: the snapshot's agents as
-//! cards (status dot, name, held age, the pane line and a strip of the
-//! transitions this client watched), the stream's recent transitions, and the
-//! TAIL comparison — two panes read on demand, side by side, with the lines
-//! they do not share highlighted. A card's eye focuses its pane; its terminal
-//! button opens the comparison. The tails are read off the UI thread when the
-//! reader asks (a card's button, a mode switch, the refresh button); nothing
-//! here polls, and a pane that left the fleet keeps its last column with the
-//! read's own age and a line saying so.
+//! header with the new-chat and history presses, the body, and the 34px rail a
+//! closed panel folds into — and [`chat`] is the body itself: `crate::ai`'s
+//! streamed turn drawn as one message list, with the reasoning block, a card
+//! per tool call, the approval gate, the failure retry and the session
+//! history. `layout.aside_visible` is the panel's switch (the header's button
+//! and `secondary-shift-a`), and the conversation's unread count badges the
+//! rail while the panel is closed. The aside's second tab — the fleet roster
+//! and its TAIL comparison — retired 2026-11-02: the sidebar's fleet view is
+//! where the fleet lives, and the comparison had no reader.
 //!
 //! U3-4 adds the management surfaces, each docked or raised without taking the
 //! grid away: [`manager`] is one plugin's 480px page (contract, graded argv,
@@ -99,8 +92,7 @@
 //! find field) take the stacks, tokens, icons and `TextInput`; U2-4 (palette
 //! and search fields) takes `TextInput` again; U3-1 (settings) takes `Button`,
 //! `Switch` and `Select`; U3-2 (the conversation) takes `Button`, `IconButton`,
-//! `Select`, `InlineEdit` and `ConfirmationCard`; U3-3 (the fleet) takes
-//! `Badge`, `SimpleGrid` and `ScrollArea`. The kit's re-exported GPUI
+//! `Select`, `InlineEdit` and `ConfirmationCard`. The kit's re-exported GPUI
 //! names (`App`, `Window`, `px`, `point`, …) are `gpui`'s own — import them
 //! from `gpui`, which is the `gpui-pre` package.
 
@@ -112,7 +104,6 @@ mod chrome;
 mod commands;
 mod confirm;
 mod empty;
-mod fleet;
 mod inspector;
 mod keymap;
 mod layout_sheet;

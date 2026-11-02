@@ -508,6 +508,15 @@ settings:
     model_id_required:
       en: "A model needs an ID."
       zh-CN: "模型需要一个 ID。"
+    model_context:
+      en: "Context window (tokens)"
+      zh-CN: "上下文容量（token）"
+    model_context_hint:
+      en: "e.g. 200000; empty if unknown"
+      zh-CN: "如 200000；未知留空"
+    model_context_invalid:
+      en: "The context window is a token count."
+      zh-CN: "上下文容量需要是 token 数。"
     model_taken:
       en: "This provider already offers %{id}."
       zh-CN: "该提供商已有模型「%{id}」。"
@@ -816,6 +825,25 @@ settings:
       en: "Files"
       zh-CN: "文件"
 
+
+  # The debug surfaces (2026-11-02): the events view and the inspector it
+  # feeds are developer tools, so the sidebar offers them only while the
+  # flag is on. The switch writes `debug.events` — the same key a
+  # hand-edited config sets.
+  debug:
+    card:
+      en: "Debug"
+      zh-CN: "调试"
+    card_note:
+      en: "Developer surfaces the sidebar hides otherwise."
+      zh-CN: "侧栏默认隐藏的开发者视图。"
+    events:
+      en: "Events view"
+      zh-CN: "事件视图"
+    events_note:
+      en: "Shows the daemon's event ring in the sidebar, with its filters and inspector."
+      zh-CN: "在侧栏显示 daemon 的事件环，并提供过滤与检查器。"
+
 general:
   refresh:
     en: "Refresh"
@@ -996,23 +1024,83 @@ ai:
     effort:
       en: "Reasoning effort"
       zh-CN: "推理力度"
-    # The composer's own row: its command menu, the gate's two modes, its
-    # round send, and the model chip's popup.
+    # The composer's own row: its attachment menu, the gate's two modes, its
+    # round send, the context ring, and the model chip's two-level popup.
     commands:
       en: "Commands"
       zh-CN: "命令"
+    attach:
+      en: "Attach files"
+      zh-CN: "添加附件"
+    attach_remove:
+      en: "Remove"
+      zh-CN: "移除"
+    attach_text:
+      en: "Attachment %{name}"
+      zh-CN: "附件 %{name}"
+    attach_image:
+      en: "[image: %{name}]"
+      zh-CN: "[图片：%{name}]"
+    attach_cut:
+      en: " (cut)"
+      zh-CN: "（已截断）"
+    attach_binary:
+      en: "not readable text or an image"
+      zh-CN: "不是可读文本，也不是图片"
+    attach_too_large:
+      en: "the file is too large"
+      zh-CN: "文件过大"
+    attach_needs_vision:
+      en: "The chosen model takes no image input; attach text files, or pick a model with the vision badge."
+      zh-CN: "当前模型不接受图片输入；请改附文本文件，或选择带「视觉」标记的模型。"
+    clear_input:
+      en: "Clear the input"
+      zh-CN: "清空输入"
+    manage_models:
+      en: "Manage models"
+      zh-CN: "管理模型"
     permission_ask:
-      en: "Ask each time"
-      zh-CN: "每次询问"
+      en: "Agent mode"
+      zh-CN: "自主模式"
     permission_full:
       en: "Full access"
       zh-CN: "完全访问"
     permission_ask_hint:
-      en: "Every tool call waits for your answer."
-      zh-CN: "每次工具调用都等你确认。"
+      en: "Asks on risky calls."
+      zh-CN: "在有风险时询问"
     permission_full_hint:
-      en: "Tools run without asking; this sitting only."
-      zh-CN: "工具调用不再询问；仅本次会话有效。"
+      en: "Fewer confirmations; this sitting only."
+      zh-CN: "减少确认次数；仅本次会话有效。"
+    context:
+      en: "Context"
+      zh-CN: "上下文容量"
+    context_full:
+      en: "Context %{used} / %{capacity}"
+      zh-CN: "上下文 %{used} / %{capacity}"
+    context_used:
+      en: "Context used %{used}"
+      zh-CN: "上下文已用 %{used}"
+    context_none:
+      en: "The ring appears after the first turn reports its token bill."
+      zh-CN: "首轮回报 token 账单后，这里才会出现圆环。"
+    context_last_input:
+      en: "Last input"
+      zh-CN: "本轮输入"
+    context_last_output:
+      en: "Last output"
+      zh-CN: "本轮输出"
+    context_cache:
+      en: "Cache hit rate"
+      zh-CN: "平均缓存命中率"
+    context_cache_rate:
+      en: "%{rate}%"
+      zh-CN: "%{rate}%"
+    context_no_window:
+      en: "Set a context window on the model (the models page) and the ring shows how full it is."
+      zh-CN: "在模型页为该模型设置上下文容量后，圆环会显示用量占比。"
+    turns_row:
+      en: "Turns"
+      zh-CN: "轮数"
     menu_providers:
       en: "Provider"
       zh-CN: "提供商"
@@ -1749,83 +1837,9 @@ shell:
     chat:
       en: "Chat"
       zh-CN: "对话"
-    fleet:
-      en: "Fleet"
-      zh-CN: "舰队"
-    panels:
-      en: "Panels"
-      zh-CN: "插件面板"
     close:
       en: "Close the panel"
       zh-CN: "收起面板"
-  # The aside's fleet tab (U3-3): the roster of cards, the transitions this
-  # client watched, and the two-column TAIL comparison. The status words and
-  # the no-agents line are the cockpit's (`fleet.status.*`, `fleet.empty`) and
-  # are reused rather than duplicated.
-  fleet:
-    mode_roster:
-      en: "Roster"
-      zh-CN: "花名册"
-    mode_compare:
-      en: "TAIL"
-      zh-CN: "TAIL"
-    running:
-      en: "%{count} running"
-      zh-CN: "%{count} 运行中"
-    recent:
-      en: "Recent transitions"
-      zh-CN: "最近转场"
-    source_prefix:
-      en: "Status from "
-      zh-CN: "状态来自 "
-    source_suffix:
-      en: "; no polling."
-      zh-CN: "；不轮询。"
-    stale:
-      en: "Event stream down: %{error}"
-      zh-CN: "事件流断开：%{error}"
-    pick_hint:
-      en: "Pick two agents to compare their tails."
-      zh-CN: "选两个智能体对比它们的尾部输出。"
-    pick_more:
-      en: "Pick one more (%{count}/2)"
-      zh-CN: "再选一个（%{count}/2）"
-    picked:
-      en: "%{count}/2 picked"
-      zh-CN: "已选 %{count}/2"
-    reselect:
-      en: "Re-pick"
-      zh-CN: "重选"
-    refresh:
-      en: "Read the tails again"
-      zh-CN: "重新读取尾部"
-    reading:
-      en: "reading…"
-      zh-CN: "读取中…"
-    read_at:
-      en: "read %{age}"
-      zh-CN: "读于 %{age}"
-    failed:
-      en: "Read failed: %{error}"
-      zh-CN: "读取失败：%{error}"
-    diff:
-      en: "%{count} differences · last %{rows} lines"
-      zh-CN: "%{count} 处差异 · 尾部 %{rows} 行"
-    no_diff:
-      en: "The tails agree · last %{rows} lines"
-      zh-CN: "尾部一致 · 尾部 %{rows} 行"
-    focus:
-      en: "Focus the pane"
-      zh-CN: "聚焦窗格"
-    tail:
-      en: "Read the tail"
-      zh-CN: "读 TAIL"
-    selected:
-      en: "Picked for the comparison"
-      zh-CN: "已选入对比"
-    not_running:
-      en: "no longer running"
-      zh-CN: "已不在运行"
   # The grid with no pane to paint (PLAN.md §M11c). Every entry is a command from
   # the directory, so nothing here is decoration standing in for an action.
   empty:
