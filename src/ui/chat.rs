@@ -90,7 +90,7 @@ use ely_core::forms::{
     active_trigger, float, replace_trigger,
 };
 use ely_core::motion::ProgressRing;
-use ely_core::primitives::{Disclosure, Icon, IconName, Tooltip};
+use ely_core::primitives::{Disclosure, Icon, IconName, Tooltip, raise};
 use ely_core::theme::{ActiveTheme, ControlSize, IconSize, Radius, TextSize};
 use ely_core::typography::{Ellipsis, KbdCombo, relative_text};
 use gpui::{
@@ -2296,14 +2296,24 @@ impl ChatView {
                     let x = (panel_right + px(6.))
                         .max(bounds.origin.x + px(2.))
                         .min(card_right - px(FLYOUT_WIDTH));
-                    let flyout =
-                        measured(&provider_panel_anchor, self.provider_panel(&weak, room, cx))
-                            .occlude();
+                    // Raised above the panel's own layer: a plain anchored
+                    // element paints under the deferred draw `float` makes,
+                    // and the panel would cover the flyout it belongs to.
                     root = root.child(
-                        anchored()
-                            .position(point(x, row.origin.y))
-                            .anchor(gpui::Anchor::TopLeft)
-                            .child(flyout),
+                        raise(
+                            "chat-provider-flyout",
+                            anchored()
+                                .position(point(x, row.origin.y))
+                                .anchor(gpui::Anchor::TopLeft)
+                                .child(
+                                    measured(
+                                        &provider_panel_anchor,
+                                        self.provider_panel(&weak, room, cx),
+                                    )
+                                    .occlude(),
+                                ),
+                        )
+                        .with_priority(2),
                     );
                 }
             }
