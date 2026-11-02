@@ -213,6 +213,7 @@ fn icon(command: Command) -> Option<IconName> {
         Command::LinkPlugin => IconName::Shield,
         Command::InspectLayout => IconName::FileCode,
         Command::OpenReview => IconName::GitBranch,
+        Command::OpenMachines => IconName::Server,
     })
 }
 

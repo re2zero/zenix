@@ -32,8 +32,8 @@ use gpui::{
 use herdr_client::{ConnectTarget, SavedHost};
 
 use super::{
-    aside, chat, chrome, commands, confirm, empty, fleet, inspector, keymap, layout_sheet, manager,
-    palette, review, settings, sidebar, theme, toast, trust, worktree,
+    aside, chat, chrome, commands, confirm, empty, fleet, inspector, keymap, layout_sheet,
+    machines, manager, palette, review, settings, sidebar, theme, toast, trust, worktree,
 };
 use crate::api_provider::ApiFormat;
 use crate::config;
@@ -137,6 +137,15 @@ pub struct Root {
     review_state: ReviewState,
     review_diff: DiffState,
     review_host: ReviewHost,
+    /// The machines cockpit: whether the sheet is up, the roster's connection
+    /// bundle (each remote machine carries one read-only endpoint reader,
+    /// stopped when the sheet closes or the window does) and the rows the
+    /// last pulse pulled.
+    machines: machines::State,
+    machines_fleet: crate::machines::Fleet,
+    machines_live: Vec<machines::MachineLive>,
+    /// The repaint channel the roster's readers pulse.
+    machines_pulse: crossbeam_channel::Sender<()>,
     /// The two drawers hold the keyboard through these handles while they are
     /// open; the modal surfaces take their own. Focusing and handing back are
     /// the shell's because it owns the grid's handle.
@@ -203,6 +212,10 @@ pub struct Root {
     _event_pulses: Option<Task<()>>,
     _fleet_pulses: Option<Task<()>>,
     _review_pulses: Task<()>,
+    _machines_pulses: Task<()>,
+    /// The saved-host catalog read behind an open cockpit sheet. Replacing it
+    /// on the next open cancels the read it replaced.
+    _machines_read: Option<Task<()>>,
     /// A config write can change the mode, locale or metrics the chrome reads.
     _config: Subscription,
     /// A system appearance change has to move a `mode: system` chrome.
@@ -294,6 +307,11 @@ impl Root {
         };
         let (review_host, review_pulses) = ReviewHost::start();
         let review_pulses = Self::follow(cx, review_pulses, Self::read_review);
+
+        // The machines cockpit's repaint channel: the roster's readers pulse
+        // it while the sheet is up; nothing pulses it when it is down.
+        let (machines_pulse, machines_pulses) = crossbeam_channel::unbounded::<()>();
+        let machines_pulses = Self::follow(cx, machines_pulses, Self::read_machines);
 
         // The pane grid shares this connection; it owns no reader of its own.
         // It starts dressed for the config's mode and metrics, and the keyboard
@@ -450,6 +468,10 @@ impl Root {
             review_state: ReviewState::default(),
             review_diff: DiffState::default(),
             review_host,
+            machines: machines::State::default(),
+            machines_fleet: crate::machines::Fleet::default(),
+            machines_live: Vec::new(),
+            machines_pulse: machines_pulse.clone(),
             manager_focus,
             inspector_focus,
             confirm: None,
@@ -475,6 +497,8 @@ impl Root {
             _event_pulses: event_pulses,
             _fleet_pulses: fleet_pulses,
             _review_pulses: review_pulses,
+            _machines_pulses: machines_pulses,
+            _machines_read: None,
             _config: config,
             _appearance: appearance,
             _fleet_read: None,
@@ -623,6 +647,48 @@ impl Root {
     pub(crate) fn close_review(&mut self, cx: &mut Context<Self>) {
         self.review.close();
         cx.notify();
+    }
+
+    /// The machines cockpit: open the sheet, then read the daemon's saved-host
+    /// catalog off the UI thread. The roster's readers start when the read
+    /// lands — unless the sheet closed in between, which the arrival checks.
+    pub(crate) fn open_machines(&mut self, cx: &mut Context<Self>) {
+        self.machines.open();
+        let pulse = self.machines_pulse.clone();
+        let task = cx.spawn(async move |root, cx| {
+            let read = cx
+                .background_executor()
+                .spawn(async { herdr_client::load_saved_hosts(false) })
+                .await;
+            root.update(cx, |root, cx| {
+                if !root.machines.is_open() {
+                    return;
+                }
+                let hosts = read.unwrap_or_default();
+                let roster = crate::machines::build_roster(&root.target, &hosts);
+                root.machines_fleet.attach(roster, pulse);
+                root.read_machines(cx);
+            })
+            .ok();
+        });
+        self._machines_read = Some(task);
+        cx.notify();
+    }
+
+    pub(crate) fn close_machines(&mut self, cx: &mut Context<Self>) {
+        self.machines.close();
+        self.machines_fleet.detach();
+        self.machines_live.clear();
+        cx.notify();
+    }
+
+    /// One pull per pulse: the window's own machine reads the shell's live
+    /// state, every remote machine reads its connection's copy.
+    fn read_machines(&mut self, cx: &mut Context<Self>) {
+        if self.machines.is_open() {
+            self.machines_live = machines::pull_all(&self.machines_fleet, &self.live);
+            cx.notify();
+        }
     }
 
     pub(crate) fn refresh_review(&mut self, cx: &mut Context<Self>) {
@@ -946,6 +1012,7 @@ impl Root {
             commands::Command::LinkPlugin => self.open_trust_at(None, window, cx),
             commands::Command::InspectLayout => self.open_layout(window, cx),
             commands::Command::OpenReview => self.open_review(cx),
+            commands::Command::OpenMachines => self.open_machines(cx),
             // One more window, one more connection face — this window's own
             // target, so a chord on a remote window opens another window
             // there.
@@ -1959,6 +2026,7 @@ impl Root {
             || self.trust.is_open()
             || self.layout_sheet.is_open()
             || self.review.is_open()
+            || self.machines.is_open()
             || self.inspector.is_open()
             || self.inspector.contract_open()
             || self.worktree_form.is_open()
@@ -2347,6 +2415,17 @@ impl Render for Root {
             &self.review,
             &self.review_state,
             &self.review_diff,
+            root,
+            window,
+            cx,
+        ) {
+            Some(overlay) => frame.child(overlay),
+            None => frame,
+        };
+        let frame = match machines::overlay(
+            &self.machines,
+            &self.machines_live,
+            self.machines_fleet.attached(),
             root,
             window,
             cx,

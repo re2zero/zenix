@@ -116,6 +116,7 @@ mod fleet;
 mod inspector;
 mod keymap;
 mod layout_sheet;
+mod machines;
 mod manager;
 mod palette;
 mod review;
