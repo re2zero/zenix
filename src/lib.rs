@@ -43,6 +43,7 @@ pub mod fleet;
 pub mod herdr;
 pub mod i18n;
 pub mod layout;
+pub mod machines;
 pub mod mcp;
 pub mod platform;
 pub mod plugins;

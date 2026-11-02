@@ -2148,6 +2148,46 @@ shell:
     no_repo:
       en: "The focused workspace is not in a git repository"
       zh-CN: "当前工作区不在 git 仓库里"
+  # The machines cockpit: one read-only group per daemon the saved-host
+  # catalog names. The roster reads the catalog once per opening; the groups
+  # repaint on the connections' pushed snapshots, never polled.
+  machines:
+    title:
+      en: "Machines"
+      zh-CN: "机器"
+    reading:
+      en: "Reading the daemon's saved-host catalog…"
+      zh-CN: "正在读取 daemon 的已存主机目录…"
+    no_hosts:
+      en: "No other machines in the catalog"
+      zh-CN: "目录里没有其他机器"
+    no_agents:
+      en: "No agents on this machine"
+      zh-CN: "这台机器上没有智能体"
+    this_window:
+      en: "this window"
+      zh-CN: "本窗"
+    connected:
+      en: "Connected"
+      zh-CN: "已连接"
+    connecting:
+      en: "Connecting…"
+      zh-CN: "连接中…"
+    offline:
+      en: "Offline"
+      zh-CN: "离线"
+    focused:
+      en: "focused"
+      zh-CN: "焦点"
+    group_counts:
+      en: "%{agents} agents · %{workspaces} workspaces"
+      zh-CN: "%{agents} 个智能体 · %{workspaces} 个工作区"
+    foot:
+      en: "%{machines} machine(s) · %{agents} agent(s)"
+      zh-CN: "%{machines} 台机器 · %{agents} 个智能体"
+    source:
+      en: "read-only · endpoint snapshots"
+      zh-CN: "只读 · 端点快照"
 
 # The project's layout template. The block names the project it found by walking up
 # from the focused pane, and the two lines below are what a save or a restore did.
@@ -2349,6 +2389,9 @@ command:
     review:
       en: "Review Changes"
       zh-CN: "变更审阅"
+    machines:
+      en: "Machines"
+      zh-CN: "机器"
     new-window:
       en: "New Window"
       zh-CN: "新建窗口"

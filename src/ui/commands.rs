@@ -61,6 +61,7 @@ pub(crate) enum Command {
     LinkPlugin,
     InspectLayout,
     OpenReview,
+    OpenMachines,
 }
 
 /// One command's entry: what it is called, and the keystrokes that reach it.
@@ -256,6 +257,14 @@ pub(crate) const COMMANDS: &[CommandInfo] = &[
         direct: &["secondary-shift-g"],
         prefixed: &[],
     },
+    // The machines cockpit: every daemon the catalog names, one read-only
+    // group per machine. Reading the fleet is a glance like the review's.
+    CommandInfo {
+        command: Command::OpenMachines,
+        id: "view.machines",
+        direct: &["secondary-shift-m"],
+        prefixed: &[],
+    },
 ];
 
 impl Command {
@@ -360,7 +369,8 @@ pub(crate) fn request(command: Command, snapshot: &ClientShellSnapshot) -> Optio
         | Command::OpenSettings
         | Command::LinkPlugin
         | Command::InspectLayout
-        | Command::OpenReview => {
+        | Command::OpenReview
+        | Command::OpenMachines => {
             return None;
         }
     })
@@ -433,6 +443,7 @@ mod tests {
                 | Command::LinkPlugin
                 | Command::InspectLayout
                 | Command::OpenReview
+                | Command::OpenMachines
         )
     }
 
@@ -511,7 +522,7 @@ mod tests {
         }
         // A variant with no entry would panic in `info`; this walks the table
         // once so the enum and the directory stay the same size.
-        assert_eq!(COMMANDS.len(), 24);
+        assert_eq!(COMMANDS.len(), 25);
     }
 
     /// A label is a key the locale file answers, not a string kept in the
