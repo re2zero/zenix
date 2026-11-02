@@ -2278,21 +2278,31 @@ impl ChatView {
                     }
                 });
                 root = root.child(float("chat-composer-menu", bounds, rows, panel, window, cx));
-                // The provider flyout: the model menu's second level. Its top
-                // right sits at the provider row's left edge, so it opens away
-                // from the window's edge and stays beside what it belongs to.
+                // The provider flyout: the model menu's second level. It
+                // prefers the panel's right side, but it never leaves the
+                // composer's own column — a flyout hanging over the grid
+                // would be a popup about another surface. Where the column
+                // cannot hold panel and flyout side by side, the flyout
+                // clamps inside the card's right edge and overlaps the
+                // panel, the way a submenu does when its parent sits near
+                // the screen edge.
                 if open == ComposerMenu::Model
                     && self.provider_menu
                     && let Some(row) = provider_row
                 {
-                    let at = point(row.origin.x - px(6.), row.origin.y);
+                    const FLYOUT_WIDTH: f32 = 240.;
+                    let panel_right = bounds.origin.x + width;
+                    let card_right = bounds.origin.x + bounds.size.width - px(8.);
+                    let x = (panel_right + px(6.))
+                        .max(bounds.origin.x + px(2.))
+                        .min(card_right - px(FLYOUT_WIDTH));
                     let flyout =
                         measured(&provider_panel_anchor, self.provider_panel(&weak, room, cx))
                             .occlude();
                     root = root.child(
                         anchored()
-                            .position(at)
-                            .anchor(gpui::Anchor::TopRight)
+                            .position(point(x, row.origin.y))
+                            .anchor(gpui::Anchor::TopLeft)
                             .child(flyout),
                     );
                 }
