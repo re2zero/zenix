@@ -680,6 +680,9 @@ fn tab_strip(live: &LiveState, connection: &Connection, cx: &App) -> AnyElement 
         new_tab = new_tab.disabled(true);
     }
 
+    // The new-tab press sits right after the last tab — that is where a
+    // reader reaches for it — and the bar yields width when the tabs run
+    // out of room, so the press never falls off the strip's edge.
     div()
         .h(px(TAB_STRIP_HEIGHT))
         .w_full()
@@ -690,8 +693,7 @@ fn tab_strip(live: &LiveState, connection: &Connection, cx: &App) -> AnyElement 
         .px_1p5()
         .border_b_1()
         .border_color(colors.border)
-        .child(div().flex_none().min_w_0().overflow_hidden().child(bar))
-        .child(div().flex_1())
+        .child(div().flex_shrink_1().min_w_0().overflow_hidden().child(bar))
         .child(new_tab)
         .into_any_element()
 }
