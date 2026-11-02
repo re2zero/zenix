@@ -526,6 +526,9 @@ settings:
     none:
       en: "No provider is configured"
       zh-CN: "尚未配置提供商"
+    none_selected:
+      en: "No provider selected"
+      zh-CN: "未选择提供商"
     none_hint:
       en: "Add one above; the chat panel reads the same file (%{path})."
       zh-CN: "在上方添加一个；对话面板读同一个文件（%{path}）。"
@@ -785,6 +788,12 @@ settings:
     herdr:
       en: "herdr (pinned)"
       zh-CN: "herdr（固定版本）"
+    zenix_license:
+      en: "zenix (license)"
+      zh-CN: "zenix（许可证）"
+    herdr_license:
+      en: "herdr (license)"
+      zh-CN: "herdr（许可证）"
     herdr_note:
       en: "The release vendor/herdr-pins.tsv pins, checked by SHA-256 when packaged."
       zh-CN: "vendor/herdr-pins.tsv 固定的版本；打包时以 SHA-256 校验。"

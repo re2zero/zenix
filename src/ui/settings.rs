@@ -1610,7 +1610,10 @@ fn ai_cards(state: &State, root: &Entity<Root>, cx: &App) -> Vec<AnyElement> {
         None => card(
             t("settings.ai.models_card"),
             Some(rust_i18n::t!("settings.ai.none_hint", path = file).to_string()),
-            vec![row(t("settings.ai.none"), None, None)],
+            // Not the provider card's "none" row title: with no provider at
+            // all both cards would carry it, and a SettingsRow's element id
+            // is its title.
+            vec![row(t("settings.ai.none_selected"), None, None)],
             cx,
         ),
     });
@@ -2612,11 +2615,18 @@ fn about_cards(live: &LiveState, cx: &App) -> Vec<AnyElement> {
 
     let license_rows = vec![
         row(
-            "zenix",
+            // Not "zenix" plain: the version card's row carries that title, and
+            // a SettingsRow's element id is its title — two same-titled rows on
+            // one page are one a11y node twice.
+            t("settings.about.zenix_license"),
             None,
             Some(value("GPL-3.0-or-later".to_owned(), cx)),
         ),
-        row("herdr", None, Some(value("Apache-2.0".to_owned(), cx))),
+        row(
+            t("settings.about.herdr_license"),
+            None,
+            Some(value("Apache-2.0".to_owned(), cx)),
+        ),
         row(
             t("settings.about.component_library"),
             None,
@@ -2650,9 +2660,11 @@ fn about_cards(live: &LiveState, cx: &App) -> Vec<AnyElement> {
         ));
     } else {
         for diagnostic in diagnostics {
+            // The path rides the title: a SettingsRow's element id is its
+            // title, and two problems must stay two rows.
             file_rows.push(row(
-                t("settings.config.problems"),
-                Some(format!("{} · {}", diagnostic.path, diagnostic.message)),
+                format!("{} · {}", t("settings.config.problems"), diagnostic.path),
+                Some(diagnostic.message.clone()),
                 Some(badge(
                     if diagnostic.is_blocking() {
                         "blocking".to_owned()
