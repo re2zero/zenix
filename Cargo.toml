@@ -36,6 +36,8 @@ toml = "0.8"
 # Mirrors the daemon's plugin path component hashing (src/plugins/paths.rs);
 # already in the graph through vendored crates.
 sha2 = "0.10"
+# The chat's image attachments ride data URLs: bytes in, base64 out.
+base64 = "0.22"
 image = "0.25"
 unicode-width = "0.2"
 rusqlite = { version = "0.32", features = ["bundled"] }

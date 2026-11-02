@@ -171,6 +171,11 @@ pub struct ModelConfig {
     /// Whether it accepts image input.
     #[serde(default)]
     pub vision: bool,
+    /// The model's context window in tokens, when it is known. The chat
+    /// panel's context ring divides its last bill by this; a model without
+    /// one shows only the bill. Absent from the file until someone sets it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
 }
 
 impl ModelConfig {
@@ -180,6 +185,7 @@ impl ModelConfig {
             id: id.into(),
             label: String::new(),
             vision: false,
+            context_window: None,
         }
     }
 
@@ -628,6 +634,7 @@ mod tests {
                     id: "glm-5".into(),
                     label: "GLM 5".into(),
                     vision: true,
+                    context_window: Some(200_000),
                 },
                 ModelConfig::new("glm-5-air"),
             ],

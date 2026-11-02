@@ -410,10 +410,19 @@ fn workspace_pill(
 /// The activity rail: one destination per sidebar view, the agents' away-from-
 /// idle count as its badge, and the settings gear at its foot (the design's
 /// rail ends in it). The rail's own item look (selected fill, accent edge,
-/// hover) is the component's.
-pub(crate) fn rail(view: View, live: &LiveState, root: &Entity<Root>) -> AnyElement {
+/// hover) is the component's. The events view is debug surface (`debug.events`)
+/// and is offered only while its flag is on.
+pub(crate) fn rail(
+    view: View,
+    live: &LiveState,
+    debug_events: bool,
+    root: &Entity<Root>,
+) -> AnyElement {
     let mut bar = ActivityBar::new("shell-rail").selected(view.id());
     for item in View::ALL {
+        if item == View::Events && !debug_events {
+            continue;
+        }
         let mut entry = ActivityItem::new(item.id(), item.icon(), item.label());
         if item == View::Agents
             && let Some(count) = active_agents(live)

@@ -32,8 +32,8 @@ use gpui::{
 use herdr_client::{ConnectTarget, SavedHost};
 
 use super::{
-    aside, chat, chrome, commands, confirm, empty, fleet, inspector, keymap, layout_sheet,
-    machines, manager, palette, review, settings, sidebar, theme, toast, trust, worktree,
+    aside, chat, chrome, commands, confirm, empty, inspector, keymap, layout_sheet, machines,
+    manager, palette, review, settings, sidebar, theme, toast, trust, worktree,
 };
 use crate::api_provider::ApiFormat;
 use crate::config;
@@ -82,15 +82,10 @@ pub struct Root {
     /// The aside's conversation: its own turn, composer and history. The shell
     /// decides only whether it is on screen.
     chat: Entity<chat::ChatView>,
-    /// Which aside tab is in front, and the fleet tab's own state — the mode,
-    /// the panes picked for TAIL and the tails read for them. Both belong to
-    /// the client, not to the snapshot.
-    aside_tab: aside::Tab,
     /// The panel's width, dragged by its edge. The config stores what a
     /// gesture leaves; this is the live value the column is drawn at, capped
     /// by the window's share.
     aside_width: aside::Width,
-    fleet_panel: fleet::State,
     /// The event stream's ring and filter, the fleet's watched status, the
     /// plugin registry and the focused repo's worktrees: the sidebar's four
     /// sources beside the snapshot. Each is a copy taken on a pulse, so a
@@ -220,10 +215,6 @@ pub struct Root {
     _config: Subscription,
     /// A system appearance change has to move a `mode: system` chrome.
     _appearance: Subscription,
-    /// The fleet tab's tail read, while one is in flight. Replacing it on the
-    /// next ask cancels the read it replaced; dropping it with the window does
-    /// the same.
-    _fleet_read: Option<Task<()>>,
 }
 
 impl Root {
@@ -339,6 +330,10 @@ impl Root {
         // panel is asked for. On a window without a JSON lane the model
         // conversation runs but the daemon tools are not offered.
         let chat = cx.new(|cx| chat::ChatView::new(window, lane.is_some(), cx));
+        // The conversation can open the settings dialog at the models page
+        // (its provider flyout's manage row); the dialog is the shell's.
+        let host = cx.entity().downgrade();
+        chat.update(cx, |panel, _| panel.host = Some(host));
         let aside_wanted = config::get(cx).layout.aside_visible;
         chat.update(cx, |chat, cx| chat.set_on_screen(aside_wanted, cx));
         // The panel opens at the width the config remembers; a drag moves the
@@ -414,6 +409,12 @@ impl Root {
             let wanted = config::get(cx).layout.aside_visible;
             root.chat
                 .update(cx, |chat, cx| chat.set_on_screen(wanted, cx));
+            // A hidden view cannot stay in front: with debug off the rail has
+            // no events destination, and the workspaces view is where a closed
+            // dialog lands back.
+            if root.rail == chrome::View::Events && !config::get(cx).debug.events {
+                root.rail = chrome::View::Workspaces;
+            }
             cx.notify();
         });
         // A `mode: system` chrome has to follow the system while the window is
@@ -441,9 +442,7 @@ impl Root {
             live: LiveState::default(),
             panes,
             chat,
-            aside_tab: aside::Tab::Chat,
             aside_width,
-            fleet_panel: fleet::State::default(),
             events: EventState::default(),
             fleet: FleetState::default(),
             plugins: PluginState::default(),
@@ -501,7 +500,6 @@ impl Root {
             _machines_read: None,
             _config: config,
             _appearance: appearance,
-            _fleet_read: None,
         }
     }
 
@@ -903,7 +901,13 @@ impl Root {
         cx.notify();
     }
 
+    /// Put a sidebar view in front. The events view is debug surface
+    /// (`debug.events`): with the flag off it is not offered, so a stale rail
+    /// value or a stray press cannot land on it.
     pub(crate) fn show_view(&mut self, view: chrome::View, cx: &mut Context<Self>) {
+        if view == chrome::View::Events && !config::get(cx).debug.events {
+            return;
+        }
         if self.rail != view {
             self.rail = view;
             cx.notify();
@@ -1077,55 +1081,27 @@ impl Root {
 
     /// Show the aside, or hide it. The panel's visibility is a config value
     /// (`layout.aside_visible`), so the toggle's choice survives the window —
-    /// the title strip's button, the rail's tabs and the `view.toggle-chat`
-    /// chord all land here, and the config observer tells the conversation.
+    /// the title strip's button, the rail's chat button and the
+    /// `view.toggle-chat` chord all land here, and the config observer tells
+    /// the conversation.
     pub(crate) fn toggle_aside(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let visible = !config::get(cx).layout.aside_visible;
         config::update(cx, |config| config.layout.aside_visible = visible);
         // Only a panel the window can actually draw takes the keyboard: a
-        // composer that is not on screen must not hold the keys. A panel
-        // opened on the fleet has no field to focus, so the terminal keeps
-        // them.
-        if visible
-            && self.aside_tab == aside::Tab::Chat
-            && aside_state(true, window.viewport_size().width.as_f32()) == AsideState::Open
-        {
+        // composer that is not on screen must not hold the keys.
+        if visible && aside_state(true, window.viewport_size().width.as_f32()) == AsideState::Open {
             self.focus_chat(window, cx);
         }
         cx.notify();
     }
 
-    /// Put one aside tab in front. The strip's press; the chat tab also gives
-    /// the composer the keys, which is what a press on it is for.
-    pub(crate) fn select_aside_tab(
-        &mut self,
-        tab: aside::Tab,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        if self.aside_tab != tab {
-            self.aside_tab = tab;
-            cx.notify();
-        }
-        if tab == aside::Tab::Chat {
-            self.focus_chat(window, cx);
-        }
-    }
-
-    /// The rail's press: open the panel if the reader has it closed, then put
-    /// `tab` in front. Pressing the tab that is already in front is a no-op
-    /// rather than a toggle — the rail names tabs, and the strip's close
-    /// button is the way to fold the panel.
-    pub(crate) fn open_aside_tab(
-        &mut self,
-        tab: aside::Tab,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    /// Putting the panel in front also gives the composer the keys, which is
+    /// what reaching for the conversation means.
+    pub(crate) fn open_aside(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !config::get(cx).layout.aside_visible {
             config::update(cx, |config| config.layout.aside_visible = true);
         }
-        self.select_aside_tab(tab, window, cx);
+        self.focus_chat(window, cx);
         cx.notify();
     }
 
@@ -1170,88 +1146,8 @@ impl Root {
         cx.notify();
     }
 
-    /// A card or a selection row was pressed: pick it for the TAIL comparison,
-    /// or unpick it. A comparison that just reached two panes is the moment
-    /// its tails are asked for; one pick is still a selection being made.
-    pub(crate) fn fleet_toggle_pick(&mut self, pane: &str, cx: &mut Context<Self>) {
-        self.fleet_panel.toggle_pick(pane);
-        if self.fleet_panel.mode() == fleet::Mode::Compare && self.fleet_panel.picked().len() == 2 {
-            self.fleet_read(cx);
-        }
-        cx.notify();
-    }
-
-    /// A card's terminal button: open the comparison on that pane — plus the
-    /// one it was paired with, if the picks already hold two — and read them.
-    pub(crate) fn fleet_open_tail(&mut self, pane: &str, cx: &mut Context<Self>) {
-        if self.lane.is_none() {
-            return;
-        }
-        self.fleet_panel.open_tail(pane);
-        self.fleet_read(cx);
-        cx.notify();
-    }
-
-    /// The roster / TAIL chips. Switching to the comparison reads a pair that
-    /// is already picked; switching back keeps the picks and their tails, so
-    /// the two modes are one state seen twice.
-    pub(crate) fn fleet_set_mode(&mut self, mode: fleet::Mode, cx: &mut Context<Self>) {
-        if self.fleet_panel.set_mode(mode) {
-            if mode == fleet::Mode::Compare {
-                self.fleet_read(cx);
-            }
-            cx.notify();
-        }
-    }
-
-    /// The comparison's "pick again": drop the picks and the tails read for
-    /// them, leaving the comparison's selection list in their place.
-    pub(crate) fn fleet_clear_picks(&mut self, cx: &mut Context<Self>) {
-        self.fleet_panel.clear_picks();
-        cx.notify();
-    }
-
-    /// Read the picked panes' tails, on demand.
-    ///
-    /// `pane.read` is a socket call, so the read runs on the background
-    /// executor and its answer comes back to this entity; a paint never waits
-    /// on the daemon. The panel's `begin_read` refuses a second ask while one
-    /// is in flight, and a generation number drops an answer that a newer ask
-    /// superseded.
-    pub(crate) fn fleet_read(&mut self, cx: &mut Context<Self>) {
-        let Some((generation, panes)) = self.fleet_panel.begin_read() else {
-            return;
-        };
-        cx.notify();
-        let task = cx.spawn(async move |root, cx| {
-            let tails = cx
-                .background_executor()
-                .spawn(async move {
-                    let endpoint = crate::ai::endpoint::ApiEndpoint::local();
-                    let mut tails = crate::fleet::Tails::new();
-                    for pane in panes {
-                        let tail = crate::fleet::read_tail(
-                            &endpoint,
-                            &pane,
-                            fleet::READ_ROWS,
-                            fleet::READ_LINES,
-                        );
-                        tails.insert(pane, tail);
-                    }
-                    tails
-                })
-                .await;
-            let _ = root.update(cx, |root, cx| {
-                if root.fleet_panel.finish_read(generation, tails) {
-                    cx.notify();
-                }
-            });
-        });
-        self._fleet_read = Some(task);
-    }
-
-    /// The composer takes the keyboard: what the toggle, the strip's tab and
-    /// the rail's chat button all mean when the panel is asked for.
+    /// The composer takes the keyboard: what the toggle, the header's presses
+    /// and the rail's chat button all mean when the panel is asked for.
     pub(crate) fn focus_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let focus = self.chat.read(cx).composer_focus(cx);
         window.focus(&focus, cx);
@@ -1421,15 +1317,29 @@ impl Root {
         let Some(provider) = self.settings.selected().cloned() else {
             return;
         };
-        let (id, label, vision) = index
+        let (id, label, vision, context) = index
             .and_then(|index| provider.models.get(index))
-            .map(|model| (model.id.clone(), model.label.clone(), model.vision))
-            .unwrap_or_else(|| (String::new(), String::new(), false));
+            .map(|model| {
+                (
+                    model.id.clone(),
+                    model.label.clone(),
+                    model.vision,
+                    model.context_window.map(|window| window.to_string()),
+                )
+            })
+            .unwrap_or_else(|| (String::new(), String::new(), false, None));
         let form = settings::ModelForm::new(
             provider.name.clone(),
             index,
             settings::text_field(window, cx, &id, t("settings.ai.model_id_hint"), false),
             settings::text_field(window, cx, &label, t("settings.ai.model_label_hint"), false),
+            settings::text_field(
+                window,
+                cx,
+                &context.unwrap_or_default(),
+                t("settings.ai.model_context_hint"),
+                false,
+            ),
             vision,
         );
         let focus = form.first();
@@ -2243,20 +2153,7 @@ impl Render for Root {
                         .on_mouse_up(MouseButton::Left, cx.listener(Self::settle_aside))
                         .on_mouse_up_out(MouseButton::Left, cx.listener(Self::settle_aside))
                         .child(aside::grip(root, cx))
-                        .child(aside::column(
-                            &self.chat,
-                            self.aside_tab,
-                            unread,
-                            width,
-                            fleet::Sources {
-                                state: &self.fleet_panel,
-                                live: &self.live,
-                                stream: &self.fleet,
-                                connection: &self.connection,
-                            },
-                            root,
-                            cx,
-                        )),
+                        .child(aside::column(&self.chat, unread, width, root, cx)),
                 );
             }
             AsideState::Rail => {
@@ -2295,7 +2192,12 @@ impl Render for Root {
                             div()
                                 .flex()
                                 .h_full()
-                                .child(chrome::rail(self.rail, &self.live, root))
+                                .child(chrome::rail(
+                                    self.rail,
+                                    &self.live,
+                                    config::get(cx).debug.events,
+                                    root,
+                                ))
                                 .when(roomy, |row| {
                                     row.child(chrome::sidebar(
                                         self.rail,

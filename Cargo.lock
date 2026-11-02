@@ -8749,6 +8749,7 @@ name = "zenix"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "crossbeam-channel",
  "dirs 6.0.0",
  "ely-agent",

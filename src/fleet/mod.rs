@@ -1,5 +1,7 @@
-//! The orchestration cockpit's data: which agents are in flight, what each one
-//! is doing, and the transitions each went through while this client watched.
+//! The fleet's data: which agents are in flight, what each one is doing, and
+//! the transitions each went through while this client watched. The sidebar's
+//! fleet view draws it; the aside carries the conversation instead (the
+//! cockpit's roster and TAIL comparison were retired with it, 2026-11-02).
 //!
 //! The daemon's snapshot already carries the fleet — one `ClientShellAgent` per
 //! running agent, with its status and a `state_change_seq` that moves when the
@@ -28,7 +30,7 @@
 //! an agent is followed by dropping the connection and subscribing again — which
 //! is what [`Stream::watch`] asks for by moving the version the worker polls.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread;
@@ -37,12 +39,7 @@ use std::time::Duration;
 use crossbeam_channel::{Receiver, Sender};
 use serde_json::{Value, json};
 
-use crate::ai::endpoint::{ApiEndpoint, ReadSource};
 use crate::herdr::api::{ApiClient, ApiError, Line};
-
-/// How many transitions are kept. The cockpit is a window on what is happening,
-/// not a log of the session.
-pub(crate) const RING: usize = 48;
 
 /// How long a poll waits before the worker looks at its own state again. The
 /// daemon answers a status change within about a second of the screen moving.
@@ -50,20 +47,6 @@ const POLL: Duration = Duration::from_millis(500);
 
 /// How long to wait before subscribing again after a stream ended.
 const RECONNECT: Duration = Duration::from_secs(2);
-
-/// One agent's status change, as this client read it.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct Transition {
-    /// Epoch milliseconds when this client read the line.
-    pub(crate) at_unix_ms: u64,
-    pub(crate) pane_id: String,
-    /// The CLI the daemon named in the event. A pane that has left the fleet
-    /// keeps this in its transitions, so a panel can still say who moved.
-    pub(crate) agent: Option<String>,
-    /// The status this client last saw the pane in, when it has seen one.
-    pub(crate) from: Option<String>,
-    pub(crate) to: String,
-}
 
 /// One pane this client is subscribed to, and the status it is in now.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -79,8 +62,6 @@ pub(crate) struct Watched {
 /// What the fleet stream has read, as one value the shell clones per paint.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct FleetState {
-    /// Newest first, which is the order a panel reads them in.
-    pub(crate) transitions: VecDeque<Transition>,
     /// The current status of every pane being watched.
     pub(crate) current: Vec<Watched>,
     /// Why the stream is not connected, until it is again.
@@ -91,66 +72,6 @@ impl FleetState {
     /// The status this stream saw for a pane, and when it was entered.
     pub(crate) fn watched(&self, pane_id: &str) -> Option<&Watched> {
         self.current.iter().find(|w| w.pane_id == pane_id)
-    }
-
-    /// The transitions of one pane, newest first, up to `limit` of them.
-    pub(crate) fn history<'a>(&'a self, pane_id: &str, limit: usize) -> Vec<&'a Transition> {
-        self.transitions
-            .iter()
-            .filter(|transition| transition.pane_id == pane_id)
-            .take(limit)
-            .collect()
-    }
-}
-
-/// One agent's recent output, read on demand for the side-by-side view.
-#[derive(Clone, Debug, Default)]
-pub(crate) struct Tail {
-    /// Epoch milliseconds when the read came back.
-    pub(crate) at_unix_ms: u64,
-    /// The last rows of the pane, oldest first.
-    pub(crate) lines: Vec<String>,
-    /// Why the read failed, when it did.
-    pub(crate) error: Option<String>,
-}
-
-/// The tails of every agent, by pane id.
-pub(crate) type Tails = HashMap<String, Tail>;
-
-/// The last `shown` non-blank rows of a read, oldest first. A pane's text ends
-/// in the blank rows under its prompt; a comparison wants the lines above them.
-pub(crate) fn tail_lines(text: &str, shown: usize) -> Vec<String> {
-    let mut rows: Vec<String> = text
-        .lines()
-        .rev()
-        .map(str::trim_end)
-        .filter(|line| !line.is_empty())
-        .take(shown)
-        .map(str::to_owned)
-        .collect();
-    rows.reverse();
-    rows
-}
-
-/// Read one pane's tail, on demand, for a surface that shows it now.
-///
-/// The read is synchronous and blocking: callers run it off the UI thread and
-/// hand the answer back as a value, so a slow daemon costs a thread rather
-/// than a frame. `rows` is what the daemon is asked for, `shown` what the
-/// caller keeps.
-pub(crate) fn read_tail(endpoint: &ApiEndpoint, pane_id: &str, rows: u32, shown: usize) -> Tail {
-    let at_unix_ms = crate::events::now_unix_ms();
-    match endpoint.read_pane(pane_id, ReadSource::Recent, rows) {
-        Ok(read) => Tail {
-            at_unix_ms,
-            lines: tail_lines(&read.text, shown),
-            error: None,
-        },
-        Err(error) => Tail {
-            at_unix_ms,
-            lines: Vec::new(),
-            error: Some(error.to_string()),
-        },
     }
 }
 
@@ -318,16 +239,8 @@ fn read(
                 let at_unix_ms = crate::events::now_unix_ms();
                 match transition_from(&line) {
                     Ok(None) => {}
-                    Ok(Some((pane_id, status, agent))) => {
-                        apply(
-                            &stream.cache,
-                            last,
-                            &pane_id,
-                            status,
-                            agent,
-                            at_unix_ms,
-                            pulses,
-                        );
+                    Ok(Some((pane_id, status))) => {
+                        apply(&stream.cache, last, &pane_id, status, at_unix_ms, pulses);
                     }
                     Err(reason) => {
                         set_error(&stream.cache, Some(reason), pulses);
@@ -341,7 +254,7 @@ fn read(
 
 /// One line as a status change. `Ok(None)` is a line that is not one — the
 /// subscription's acknowledgement, or an event this stream did not ask for.
-fn transition_from(line: &str) -> Result<Option<(String, String, Option<String>)>, String> {
+fn transition_from(line: &str) -> Result<Option<(String, String)>, String> {
     let value: Value = serde_json::from_str(line.trim_end())
         .map_err(|error| format!("the fleet stream wrote something that is not JSON: {error}"))?;
     if let Some(error) = value.get("error").filter(|error| !error.is_null()) {
@@ -362,8 +275,7 @@ fn transition_from(line: &str) -> Result<Option<(String, String, Option<String>)
     let Some(status) = data.get("agent_status").and_then(Value::as_str) else {
         return Ok(None);
     };
-    let agent = data.get("agent").and_then(Value::as_str).map(str::to_owned);
-    Ok(Some((pane_id.to_owned(), status.to_owned(), agent)))
+    Ok(Some((pane_id.to_owned(), status.to_owned())))
 }
 
 /// Fold one status change into the cache: a transition to read and the pane's
@@ -373,7 +285,6 @@ fn apply(
     last: &mut HashMap<String, String>,
     pane_id: &str,
     status: String,
-    agent: Option<String>,
     at_unix_ms: u64,
     pulses: &Sender<()>,
 ) {
@@ -391,22 +302,12 @@ fn apply(
             }),
         }
     }
-    let from = last.insert(pane_id.to_owned(), status.clone());
-    // A repeated status is not a transition: the daemon only writes when one
-    // moved, so a repeat here is this client reading the same change twice.
-    if from.as_deref() == Some(status.as_str()) {
+    let current_status = status.clone();
+    let from = last.insert(pane_id.to_owned(), status);
+    // A repeated status is not news: the daemon only writes when one moved,
+    // so a repeat here is this client reading the same change twice.
+    if from.as_deref() == Some(current_status.as_str()) {
         return;
-    }
-    {
-        let mut state = lock(cache);
-        state.transitions.push_front(Transition {
-            at_unix_ms,
-            pane_id: pane_id.to_owned(),
-            agent,
-            from,
-            to: status,
-        });
-        state.transitions.truncate(RING);
     }
     let _ = pulses.try_send(());
 }
@@ -420,14 +321,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_status_change_becomes_a_transition() {
+    fn a_status_change_becomes_a_status() {
         let line = r#"{"data":{"agent":"pi","agent_status":"working","pane_id":"w1:p2","workspace_id":"w1"},"event":"pane.agent_status_changed"}"#;
         let change = transition_from(line).expect("a line").expect("a change");
         assert_eq!(change.0, "w1:p2");
         assert_eq!(change.1, "working");
-        // The CLI the daemon named travels with the transition, so a pane
-        // that leaves the snapshot can still be named in the panel's list.
-        assert_eq!(change.2.as_deref(), Some("pi"));
     }
 
     /// The acknowledgement is the first line of a subscription, and the daemon
@@ -455,106 +353,24 @@ mod tests {
         assert!(error.contains("not JSON"), "{error}");
     }
 
-    /// The first status a pane is seen in has no predecessor, and a repeated
-    /// status is not a transition.
+    /// The first status a pane is seen in is held, a repeated status wakes
+    /// nobody, and a move is one pulse.
     #[test]
-    fn the_first_status_has_no_predecessor_and_a_repeat_is_not_a_transition() {
+    fn a_repeat_wakes_nobody_and_a_move_is_one_pulse() {
         let cache = Mutex::new(FleetState::default());
         let mut last = HashMap::new();
         let (pulses, pulses_in) = crossbeam_channel::unbounded();
-        apply(&cache, &mut last, "w1:p2", "idle".into(), None, 10, &pulses);
-        apply(&cache, &mut last, "w1:p2", "idle".into(), None, 20, &pulses);
-        apply(
-            &cache,
-            &mut last,
-            "w1:p2",
-            "working".into(),
-            None,
-            30,
-            &pulses,
-        );
+        apply(&cache, &mut last, "w1:p2", "idle".into(), 10, &pulses);
+        apply(&cache, &mut last, "w1:p2", "idle".into(), 20, &pulses);
+        apply(&cache, &mut last, "w1:p2", "working".into(), 30, &pulses);
         let state = lock(&cache).clone();
-        assert_eq!(state.transitions.len(), 2);
-        assert_eq!(state.transitions[1].from, None);
-        assert_eq!(state.transitions[1].to, "idle");
-        assert_eq!(state.transitions[0].from.as_deref(), Some("idle"));
-        assert_eq!(state.transitions[0].to, "working");
         assert_eq!(
             state.watched("w1:p2").map(|w| w.status.as_str()),
             Some("working")
         );
         assert_eq!(state.watched("w1:p2").map(|w| w.since_unix_ms), Some(30));
-        // One pulse per transition: the repeated status woke nobody.
+        // One pulse per move: the repeated status woke nobody.
         assert_eq!(pulses_in.try_iter().count(), 2);
-    }
-
-    #[test]
-    fn a_pane_s_history_is_its_own_newest_first() {
-        let cache = Mutex::new(FleetState::default());
-        let mut last = HashMap::new();
-        let (pulses, _) = crossbeam_channel::bounded(1);
-        apply(&cache, &mut last, "w1:p1", "idle".into(), None, 1, &pulses);
-        apply(
-            &cache,
-            &mut last,
-            "w1:p2",
-            "blocked".into(),
-            None,
-            2,
-            &pulses,
-        );
-        apply(
-            &cache,
-            &mut last,
-            "w1:p1",
-            "working".into(),
-            None,
-            3,
-            &pulses,
-        );
-        let state = lock(&cache).clone();
-        let history: Vec<&str> = state
-            .history("w1:p1", 5)
-            .iter()
-            .map(|transition| transition.to.as_str())
-            .collect();
-        assert_eq!(history, ["working", "idle"]);
-        assert_eq!(state.history("w1:p2", 5).len(), 1);
-        assert_eq!(state.history("w9:p9", 5).len(), 0);
-    }
-
-    /// The ring is a window, not a log: the oldest transitions fall off.
-    #[test]
-    fn the_ring_keeps_the_newest_transitions() {
-        let cache = Mutex::new(FleetState::default());
-        let mut last = HashMap::new();
-        let (pulses, _) = crossbeam_channel::bounded(1);
-        for index in 0..RING + 8 {
-            let status = if index % 2 == 0 { "idle" } else { "working" };
-            apply(
-                &cache,
-                &mut last,
-                "w1:p2",
-                status.into(),
-                None,
-                index as u64,
-                &pulses,
-            );
-        }
-        let state = lock(&cache).clone();
-        assert_eq!(state.transitions.len(), RING);
-        assert_eq!(
-            state.transitions.front().map(|t| t.at_unix_ms),
-            Some((RING + 7) as u64)
-        );
-    }
-
-    #[test]
-    fn a_tail_keeps_the_last_non_blank_rows_oldest_first() {
-        let text = "one\n\ntwo\nthree\n\n";
-        assert_eq!(tail_lines(text, 2), ["two", "three"]);
-        assert_eq!(tail_lines("only\n", 6), ["only"]);
-        assert!(tail_lines("\n\n", 3).is_empty());
     }
 
     #[test]
@@ -587,15 +403,7 @@ mod tests {
         };
         let mut last = HashMap::new();
         let (pulses, _) = crossbeam_channel::bounded(1);
-        apply(
-            &cache,
-            &mut last,
-            "w1:p2",
-            "working".into(),
-            None,
-            1,
-            &pulses,
-        );
+        apply(&cache, &mut last, "w1:p2", "working".into(), 1, &pulses);
         stream.watch(vec!["w1:p2".into()]);
         assert_eq!(
             lock(&cache).current.first().map(|w| w.status.as_str()),
@@ -604,6 +412,5 @@ mod tests {
         stream.watch(Vec::new());
         let state = lock(&cache).clone();
         assert_eq!(state.current.len(), 0);
-        assert_eq!(state.transitions.len(), 1);
     }
 }

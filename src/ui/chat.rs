@@ -45,17 +45,34 @@
 //!
 //! The composer is the one place where the library's own composite was set
 //! aside: `PromptInput` draws its frame and its send button, and the design
-//! asks for a row of `+ / permission / model · level / send` around the field.
-//! So the card is composed here while the field, its `/` suggestions and its
-//! IME stay the library's (`TextInput` + `Suggestions`); the card's two popups
-//! float over the conversation through the library's `float`, anchored to the
-//! card's own measured bounds. `Ctrl-T` walks the reasoning levels, and both
-//! the model and the level land in `api-providers.json`, so the models page and
-//! the panel read one file.
+//! asks for a row of `context / + / permission / model · level / send` around
+//! the field. So the card is composed here while the field, its `/`
+//! suggestions and its IME stay the library's (`TextInput` + `Suggestions`);
+//! the card's popups float over the conversation through the library's
+//! `float`, anchored to the card's own measured bounds. `Ctrl-T` walks the
+//! reasoning levels, and both the model and the level land in
+//! `api-providers.json`, so the models page and the panel read one file.
 //!
-//! Deliberately not here yet: `@` workspace mentions, attachments and session
-//! pinning. The store has no pinned flag, and a pin the file forgets would be
-//! a control that lies.
+//! The row's own meanings (2026-11-02): the `+` is attachments and the few
+//! other composer acts — a new chat and the history live in the panel's
+//! header ([`super::aside`]), and the model is named by the chip at the row's
+//! end, so nothing says the model twice. The permission chip is a menu with a
+//! row per mode (the chosen one checked; full access wears the warning tone
+//! on the chip itself), and the model chip's menu is two levels: the provider
+//! is chosen in a flyout beside the panel, its models and the effort in the
+//! panel itself. At the row's left end the context ring shows how much of the
+//! model's window the next turn will re-send, from the last turn's bill, and
+//! opens the numbers beside it.
+//!
+//! Attachments ride the composer: text files are inlined into the turn's own
+//! words (so the store keeps what was sent), images ride as data-URL parts on
+//! the last user message when the chosen model takes vision input, and
+//! anything else is refused in place. They are cleared by the send that
+//! carries them.
+//!
+//! Deliberately not here yet: `@` workspace mentions and session pinning. The
+//! store has no pinned flag, and a pin the file forgets would be a control
+//! that lies.
 
 use std::collections::HashSet;
 use std::rc::Rc;
@@ -72,13 +89,15 @@ use ely_core::forms::{
     Choice, Editing, Enter, Input, InputEvent, OnValue, Pick, Suggestions, TextInput,
     active_trigger, float, replace_trigger,
 };
+use ely_core::motion::ProgressRing;
 use ely_core::primitives::{Disclosure, Icon, IconName, Tooltip};
 use ely_core::theme::{ActiveTheme, ControlSize, IconSize, Radius, TextSize};
 use ely_core::typography::{Ellipsis, KbdCombo, relative_text};
 use gpui::{
-    AnyElement, App, Bounds, ClipboardItem, Context, ElementId, Entity, FocusHandle, IntoElement,
-    ParentElement, Pixels, Render, SharedString, Styled, Subscription, Task, WeakEntity, Window,
-    canvas, div, prelude::*, px, relative,
+    AnyElement, App, Bounds, ClipboardItem, Context, ElementId, Entity, FocusHandle, FontWeight,
+    IntoElement, ParentElement, PathPromptOptions, Pixels, Render, SharedString, Styled,
+    Subscription, Task, WeakEntity, Window, anchored, canvas, div, point, prelude::*, px, relative,
+    rems,
 };
 
 use crate::ai::compactor::Compactor;
@@ -99,6 +118,144 @@ use crate::i18n::t;
 /// How many tool rounds one turn may take. The engine has its own ceiling; this
 /// is the tighter one the panel asks for.
 const MAX_TOOL_ROUNDS: u32 = 8;
+
+/// How many characters of a text attachment ride the turn. A code file past
+/// this is cut, and the marker says so — a silent whole-file paste would be
+/// the model's whole window for one file.
+const ATTACH_TEXT_MAX: usize = 32_000;
+
+/// How many bytes of an image are accepted. The vision providers reject
+/// anything like a screenshot at full resolution twice over; past this the
+/// attach is refused rather than sent to fail.
+const ATTACH_IMAGE_MAX: usize = 8 * 1024 * 1024;
+
+/// One file waiting to ride the next turn. The composer's `+` puts them here;
+/// the send that carries them takes them off.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Attachment {
+    path: std::path::PathBuf,
+    kind: AttachmentKind,
+}
+
+/// What a picked file became once it was read.
+#[derive(Clone, Debug, PartialEq)]
+enum AttachmentKind {
+    /// An image the API takes as a data-URL part: the bytes, base64, and the
+    /// media type the extension named.
+    Image { media_type: String, data: String },
+    /// A text file inlined into the turn's own words; `complete` is whether
+    /// the whole file made it under the cut.
+    Text { excerpt: String, complete: bool },
+    /// The read said no: not readable text, not an image this client knows,
+    /// or too large. The chip says the reason instead of a send that fails
+    /// two steps later.
+    Failed { reason: String },
+}
+
+impl Attachment {
+    fn name(&self) -> String {
+        self.path
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| self.path.display().to_string())
+    }
+
+    fn is_image(&self) -> bool {
+        matches!(self.kind, AttachmentKind::Image { .. })
+    }
+
+    /// The image as the engine carries it, ready for the request's parts.
+    fn as_part(&self) -> Option<crate::ai::engine::ImagePart> {
+        match &self.kind {
+            AttachmentKind::Image { media_type, data } => Some(crate::ai::engine::ImagePart {
+                media_type: media_type.clone(),
+                data: data.clone(),
+            }),
+            _ => None,
+        }
+    }
+
+    /// The words the turn carries for this attachment when the image itself
+    /// goes as a part: a marker the transcript and the store can show.
+    fn marker(&self) -> Option<String> {
+        match &self.kind {
+            AttachmentKind::Image { .. } => {
+                Some(rust_i18n::t!("ai.chat.attach_image", name = self.name()).to_string())
+            }
+            _ => None,
+        }
+    }
+
+    /// The words a text attachment adds to the turn: a fenced block that
+    /// names its file. This *is* what the model and the store keep.
+    fn inlined(&self) -> Option<String> {
+        match &self.kind {
+            AttachmentKind::Text { excerpt, complete } => Some(format!(
+                "[{}{}]\n```\n{}\n```",
+                rust_i18n::t!("ai.chat.attach_text", name = self.name()),
+                if *complete {
+                    String::new()
+                } else {
+                    t("ai.chat.attach_cut")
+                },
+                excerpt
+            )),
+            _ => None,
+        }
+    }
+}
+
+/// The media types the composer accepts as images, by extension. Anything
+/// else readable is inlined as text; anything unreadable is refused in place.
+fn image_media_type(path: &std::path::Path) -> Option<&'static str> {
+    match path
+        .extension()
+        .map(|ext| ext.to_string_lossy().to_lowercase())
+        .as_deref()
+    {
+        Some("png") => Some("image/png"),
+        Some("jpg") | Some("jpeg") => Some("image/jpeg"),
+        Some("webp") => Some("image/webp"),
+        Some("gif") => Some("image/gif"),
+        _ => None,
+    }
+}
+
+/// Read the picked files off the UI thread. One answer per file, always: a
+/// failure is a [`AttachmentKind::Failed`] the chip can name, not a missing
+/// chip.
+fn read_attachments(paths: Vec<std::path::PathBuf>) -> Vec<Attachment> {
+    use base64::Engine as _;
+    paths
+        .into_iter()
+        .map(|path| {
+            let kind = (|| {
+                if let Some(media_type) = image_media_type(&path) {
+                    let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+                    if bytes.len() > ATTACH_IMAGE_MAX {
+                        return Err(rust_i18n::t!("ai.chat.attach_too_large").to_string());
+                    }
+                    return Ok(AttachmentKind::Image {
+                        media_type: media_type.to_owned(),
+                        data: base64::engine::general_purpose::STANDARD.encode(bytes),
+                    });
+                }
+                let bytes = std::fs::read(&path).map_err(|error| error.to_string())?;
+                let text = String::from_utf8(bytes)
+                    .map_err(|_| rust_i18n::t!("ai.chat.attach_binary").to_string())?;
+                let complete = text.len() <= ATTACH_TEXT_MAX;
+                let excerpt = if complete {
+                    text
+                } else {
+                    text.chars().take(ATTACH_TEXT_MAX).collect()
+                };
+                Ok(AttachmentKind::Text { excerpt, complete })
+            })();
+            let kind = kind.unwrap_or_else(|reason| AttachmentKind::Failed { reason });
+            Attachment { path, kind }
+        })
+        .collect()
+}
 
 /// The conversation, as the aside mounts it.
 pub(crate) struct ChatView {
@@ -148,6 +305,8 @@ pub(crate) struct ChatView {
     daemon_tools: bool,
     /// The composer menu standing open, if one is.
     menu: Option<ComposerMenu>,
+    /// The model menu's second level: the provider flyout, while it is open.
+    provider_menu: bool,
     /// Why the last model or level choice could not be written to the provider
     /// file, until the menu is opened again.
     menu_error: Option<String>,
@@ -156,6 +315,13 @@ pub(crate) struct ChatView {
     /// because a permission granted in one conversation should not answer for
     /// the next: starting or loading a session puts it back to asking.
     full_access: Arc<AtomicBool>,
+    /// Files waiting to ride the next send, in pick order. The send that
+    /// carries them takes them; a new chat drops them unread.
+    attachments: Vec<Attachment>,
+    /// The window's shell, so a menu row can open the models settings page on
+    /// it. Set once by the shell right after this entity is built; a menu row
+    /// pressed before that (impossible in practice) does nothing.
+    pub(crate) host: Option<WeakEntity<super::shell::Root>>,
     /// Answers that arrived while the aside was closed. The rail's badge says
     /// how many; opening the panel clears it.
     unread: usize,
@@ -201,6 +367,9 @@ impl ChatView {
             always_allow: Arc::new(Mutex::new(HashSet::new())),
             menu: None,
             menu_error: None,
+            provider_menu: false,
+            attachments: Vec::new(),
+            host: None,
             daemon_tools,
             full_access: Arc::new(AtomicBool::new(false)),
             unread: 0,
@@ -260,28 +429,61 @@ impl ChatView {
 
     /// Start a turn: the user's text goes into the list, an empty assistant
     /// message below it waits for the tokens, and the engine is spawned on
-    /// tokio. Nothing here waits for the model.
+    /// tokio. Nothing here waits for the model. The composer's attachments
+    /// ride along: text files are inlined into the turn's words, images go as
+    /// request parts — and refuse the send on a model that takes no images.
     fn send(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if self.is_streaming() {
             return;
         }
         let text = self.input.read(cx).text().trim().to_owned();
-        if text.is_empty() {
+        if text.is_empty() && self.attachments.is_empty() {
             return;
         }
         let Some((provider, engine)) = self.prepare_turn(&text, cx) else {
             // The text stays in the box: nothing was sent.
             return;
         };
+        let has_images = self.attachments.iter().any(Attachment::is_image);
+        let vision = selected_model(&provider).is_some_and(|model| model.vision);
+        if has_images && !vision {
+            self.error = Some(t("ai.chat.attach_needs_vision"));
+            cx.notify();
+            return;
+        }
+        // The turn's words are the field's text with the text attachments
+        // folded in below it, so the store keeps what the model was actually
+        // given; images leave a marker and ride as parts instead.
+        let mut words = text;
+        for attachment in &self.attachments {
+            match attachment.inlined() {
+                Some(block) => {
+                    if !words.is_empty() {
+                        words.push_str("\n\n");
+                    }
+                    words.push_str(&block);
+                }
+                None => {
+                    if let Some(marker) = attachment.marker() {
+                        if !words.is_empty() {
+                            words.push_str("\n\n");
+                        }
+                        words.push_str(&marker);
+                    }
+                }
+            }
+        }
         self.input.update(cx, |input, cx| input.set_text("", cx));
+        let attachments = std::mem::take(&mut self.attachments);
         self.stand_down();
         // A sent message is the conversation again: the history stands down,
         // and so does any menu the composer had open.
         self.history = None;
         self.menu = None;
+        self.provider_menu = false;
         self.menu_error = None;
 
-        let session_id = self.ensure_session(&text, &provider);
+        let session_id = self.ensure_session(&words, &provider);
         // An edit replaces the message it started from and every answer after
         // it, in the store as well as on screen: a reload that brought the old
         // turn back would be a lie.
@@ -292,10 +494,16 @@ impl ChatView {
             cut_before(&mut self.messages, index);
         }
         let sequence = self.messages.last().map_or(1, |last| last.sequence + 1);
-        let user = message(&session_id, "user", text.clone(), sequence);
+        let user = message(&session_id, "user", words.clone(), sequence);
         persist(&user);
         self.messages.push(user);
-        self.run_turn(&session_id, &provider, engine, cx);
+        // The parts ride the request, not the store: the pixels belong to this
+        // one call, the marker above to the transcript.
+        let images = attachments
+            .iter()
+            .filter_map(Attachment::as_part)
+            .collect::<Vec<_>>();
+        self.run_turn(&session_id, &provider, engine, images, cx);
     }
 
     /// Load one of the user's own messages back into the composer and enter
@@ -342,7 +550,7 @@ impl ChatView {
         self.messages.truncate(user_index + 1);
         self.stand_down();
         let session_id = self.session_id.clone().unwrap_or_default();
-        self.run_turn(&session_id, &provider, engine, cx);
+        self.run_turn(&session_id, &provider, engine, Vec::new(), cx);
     }
 
     /// The provider and engine the next turn runs on, or the reason there is
@@ -391,12 +599,14 @@ impl ChatView {
     }
 
     /// Spawn the engine for a turn whose user message is already in the list:
-    /// an empty assistant message waits below it for the tokens.
+    /// an empty assistant message waits below it for the tokens. `images` are
+    /// the attachments' parts, carried on the request's last user message.
     fn run_turn(
         &mut self,
         session_id: &str,
         provider: &ApiProviderConfig,
         engine: OrchestratorEngine,
+        images: Vec<crate::ai::engine::ImagePart>,
         cx: &mut Context<Self>,
     ) {
         let Some(runtime) = crate::TOKIO_HANDLE.get().cloned() else {
@@ -408,7 +618,7 @@ impl ChatView {
             .push(message(session_id, "orchestrator", String::new(), sequence));
         self.streaming = Some(index);
 
-        let history: Vec<ChatMessageRef> = self.messages[..index]
+        let mut history: Vec<ChatMessageRef> = self.messages[..index]
             .iter()
             .filter(|message| !message.content.is_empty())
             .map(|message| ChatMessageRef {
@@ -417,6 +627,13 @@ impl ChatView {
                 ..Default::default()
             })
             .collect();
+        // The images belong to the turn just sent: they ride its own user
+        // message, the last one in the history just built.
+        if !images.is_empty()
+            && let Some(last_user) = history.iter_mut().rev().find(|entry| entry.role == "user")
+        {
+            last_user.images = Some(images);
+        }
 
         let (events, incoming) = crossbeam_channel::unbounded::<DispatchStreamEvent>();
         let (approval_tx, approval_rx) = crossbeam_channel::unbounded::<ApprovalRequest>();
@@ -648,13 +865,15 @@ impl ChatView {
 
     /// Forget the conversation on screen, so the next send starts a new session
     /// on disk as well.
-    fn new_session(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn new_session(&mut self, cx: &mut Context<Self>) {
         if self.is_streaming() {
             self.stop(cx);
         }
         self.pending_approval = None;
         self.editing = None;
         self.menu = None;
+        self.provider_menu = false;
+        self.attachments.clear();
         self.full_access.store(false, Ordering::Relaxed);
         self.messages.clear();
         self.error = None;
@@ -696,7 +915,7 @@ impl ChatView {
 
     /// Open the history over the conversation, or close it. Opening reads the
     /// store once; the rows stay until the list is opened again.
-    fn toggle_history(&mut self, cx: &mut Context<Self>) {
+    pub(crate) fn toggle_history(&mut self, cx: &mut Context<Self>) {
         if self.history.take().is_some() {
             cx.notify();
             return;
@@ -750,6 +969,8 @@ impl ChatView {
         self.error = None;
         self.compacted = None;
         self.reasoning_started = None;
+        self.attachments.clear();
+        self.provider_menu = false;
         if let Some(session) = session {
             self.restore_composer(&session);
         }
@@ -907,18 +1128,6 @@ impl ChatView {
     }
 
     /// The composer's model picker: the provider the next turn runs on.
-    fn choose_provider(&mut self, name: &str, cx: &mut Context<Self>) {
-        if let Some(provider) = self
-            .providers
-            .iter()
-            .find(|candidate| candidate.name == name)
-            .cloned()
-        {
-            self.provider = Some(provider);
-            cx.notify();
-        }
-    }
-
     /// The model the next turn runs on. Written back to the provider file, so
     /// the models page and the panel read the same selection.
     fn pick_model(&mut self, id: &str, cx: &mut Context<Self>) {
@@ -1001,28 +1210,112 @@ impl ChatView {
         PermissionMode::of(self.full_access.load(Ordering::Relaxed))
     }
 
-    /// The permission chip: ask every time, or let this sitting's tools run.
-    fn toggle_permission(&mut self, cx: &mut Context<Self>) {
-        let next = self.permission_mode().toggled();
+    /// A row of the permission menu was pressed: this sitting's gate takes the
+    /// mode from the next tool call on.
+    fn set_permission_mode(&mut self, mode: PermissionMode, cx: &mut Context<Self>) {
         self.full_access
-            .store(next == PermissionMode::Full, Ordering::Relaxed);
+            .store(mode == PermissionMode::Full, Ordering::Relaxed);
+        self.menu = None;
         cx.notify();
     }
 
-    /// The model chip and the `+` button open a menu; the same button pressed
-    /// again puts it away.
+    /// The composer's menus. The provider flyout is the model menu's second
+    /// level: opening another menu puts it away with the panel it hangs from.
     fn toggle_menu(&mut self, menu: ComposerMenu, cx: &mut Context<Self>) {
         self.menu = if self.menu == Some(menu) {
             None
         } else {
             Some(menu)
         };
+        if self.menu != Some(ComposerMenu::Model) {
+            self.provider_menu = false;
+        }
         self.menu_error = None;
         cx.notify();
     }
 
     fn close_menu(&mut self, cx: &mut Context<Self>) {
-        if self.menu.take().is_some() {
+        if self.menu.take().is_some() || self.provider_menu {
+            self.provider_menu = false;
+            cx.notify();
+        }
+    }
+
+    /// The model panel's provider row was pressed: open or close the flyout
+    /// that lists the providers.
+    fn toggle_provider_menu(&mut self, cx: &mut Context<Self>) {
+        self.provider_menu = !self.provider_menu;
+        cx.notify();
+    }
+
+    /// The flyout's provider row: the next turn runs on that provider, its
+    /// models fill the panel, and the flyout goes away.
+    fn choose_provider(&mut self, name: &str, cx: &mut Context<Self>) {
+        if let Some(provider) = self
+            .providers
+            .iter()
+            .find(|candidate| candidate.name == name)
+            .cloned()
+        {
+            self.provider = Some(provider);
+            self.provider_menu = false;
+            cx.notify();
+        }
+    }
+
+    /// The flyout's manage row: the models page, where a provider's catalog is
+    /// kept. The shell owns that dialog; the panel only asks for it.
+    fn open_models_settings(&mut self, cx: &mut Context<Self>) {
+        self.menu = None;
+        self.provider_menu = false;
+        let host = self.host.clone();
+        cx.notify();
+        if let Some(host) = host.and_then(|host| host.upgrade()) {
+            host.update(cx, |root, cx| {
+                root.open_settings(cx);
+                root.set_settings_page(super::settings::Page::Ai, cx);
+            });
+        }
+    }
+
+    /// Ask for files and read them off the UI thread; each answer becomes a
+    /// chip above the field, whatever it turned out to be.
+    pub(crate) fn attach_files(&mut self, cx: &mut Context<Self>) {
+        let picked = cx.prompt_for_paths(PathPromptOptions {
+            files: true,
+            directories: false,
+            multiple: true,
+            prompt: None,
+        });
+        cx.spawn(async move |panel, cx| {
+            // The dialog answers through a oneshot: a cancelled dialog is a
+            // `None`, not an error, and both mean "nothing picked".
+            let picked = picked.await.ok().and_then(|answer| answer.ok()).flatten();
+            let Some(paths) = picked else {
+                return;
+            };
+            if paths.is_empty() {
+                return;
+            }
+            let read = cx
+                .background_executor()
+                .spawn(async move { read_attachments(paths) })
+                .await;
+            panel
+                .update(cx, |panel, cx| {
+                    panel.attachments.extend(read);
+                    panel.menu = None;
+                    cx.notify();
+                })
+                .ok();
+        })
+        .detach();
+    }
+
+    /// A chip's ×: the file will not ride the next send.
+    fn remove_attachment(&mut self, index: usize, cx: &mut Context<Self>) {
+        if index < self.attachments.len() {
+            self.attachments.remove(index);
             cx.notify();
         }
     }
@@ -1611,8 +1904,9 @@ impl ChatView {
                 theme.control_height(ControlSize::Sm),
             )
         };
+        let warning = cx.theme().colors.warning;
         let weak = cx.entity().downgrade();
-        let ready = !self.input.read(cx).text().trim().is_empty();
+        let ready = !self.input.read(cx).text().trim().is_empty() || !self.attachments.is_empty();
         let streaming = self.is_streaming();
         let focused = self.input.read(cx).focus().contains_focused(window, cx);
 
@@ -1659,9 +1953,9 @@ impl ChatView {
         // The card's own bounds live in keyed state, written by the paint that
         // lays it out (the same shape the library's popovers use), so the menu
         // can float over the conversation instead of pushing it up. The width
-        // also decides the compact row: below 260px the permission chip drops
-        // to its icon and the model chip drops its name, so nothing overlaps
-        // when the aside is dragged narrow.
+        // also decides the compact row: below 260px the permission chip and the
+        // model chip drop to their icon, so nothing overlaps when the aside is
+        // dragged narrow.
         let anchor =
             window.use_keyed_state("chat-composer-anchor", cx, |_, _| None::<Bounds<Pixels>>);
         let compact = anchor
@@ -1674,11 +1968,26 @@ impl ChatView {
             window.use_keyed_state("chat-plus-anchor", cx, |_, _| None::<Bounds<Pixels>>);
         let model_anchor =
             window.use_keyed_state("chat-model-anchor", cx, |_, _| None::<Bounds<Pixels>>);
-        let mode = self.permission_mode();
-        let plus = IconButton::new("chat-plus", IconName::Plus)
+        let permission_anchor =
+            window.use_keyed_state("chat-permission-anchor", cx, |_, _| None::<Bounds<Pixels>>);
+        let context_anchor =
+            window.use_keyed_state("chat-context-anchor", cx, |_, _| None::<Bounds<Pixels>>);
+        // The model panel's provider row, and the flyout it opens: the row's
+        // bounds place the flyout beside the panel, both bounds together tell
+        // an outside press on either from one that puts the menu away.
+        let provider_anchor =
+            window.use_keyed_state("chat-provider-anchor", cx, |_, _| None::<Bounds<Pixels>>);
+        let provider_panel_anchor =
+            window.use_keyed_state("chat-provider-panel-anchor", cx, |_, _| {
+                None::<Bounds<Pixels>>
+            });
+
+        // The `+`: attachments and the composer's other small acts. A new chat
+        // and the history live in the panel's header.
+        let plus = IconButton::new("chat-plus", IconName::Paperclip)
             .variant(ButtonVariant::Ghost)
             .size(ControlSize::Sm)
-            .tooltip(t("ai.chat.commands"))
+            .tooltip(t("ai.chat.attach"))
             .on_click({
                 let weak = weak.clone();
                 move |_, _, cx| {
@@ -1689,49 +1998,95 @@ impl ChatView {
                     }
                 }
             });
-        let switch_permission = {
+
+        // The permission chip opens the mode menu; a mode row chooses. While
+        // full access is on the chip itself wears the warning tone — that is
+        // the state a reader must not miss.
+        let mode = self.permission_mode();
+        let permission = {
+            let open = self.menu == Some(ComposerMenu::Permission);
+            let (ink, ground) = if mode == PermissionMode::Full {
+                (warning, warning.opacity(0.14))
+            } else {
+                (fg_muted, hover)
+            };
             let weak = weak.clone();
-            move |_: &gpui::ClickEvent, _window: &mut Window, cx: &mut App| {
-                if let Some(panel) = weak.upgrade() {
-                    panel.update(cx, |panel, cx| panel.toggle_permission(cx));
-                }
-            }
-        };
-        let permission = if compact {
-            // Narrow: the icon stands for the mode and the tooltip says both
-            // what it is and what it does.
-            div()
-                .flex_none()
-                .child(
-                    IconButton::new("chat-permission", IconName::Shield)
-                        .variant(if mode == PermissionMode::Full {
-                            ButtonVariant::Secondary
-                        } else {
-                            ButtonVariant::Ghost
-                        })
-                        .size(ControlSize::Sm)
-                        .tooltip(format!("{} · {}", mode.label(), mode.hint()))
-                        .on_click(switch_permission.clone()),
-                )
-                .into_any_element()
-        } else {
-            div()
-                .id("chat-permission-hint")
-                .flex_none()
+            let mut chip = div()
+                .id("chat-permission")
+                .role(gpui::Role::Button)
+                .aria_label(mode.label())
                 .tooltip(Tooltip::text(mode.hint()))
-                .child(
-                    Button::new("chat-permission", mode.label())
-                        .variant(if mode == PermissionMode::Full {
-                            ButtonVariant::Secondary
-                        } else {
-                            ButtonVariant::Ghost
-                        })
-                        .size(ControlSize::Sm)
-                        .icon(IconName::Shield)
-                        .on_click(switch_permission),
-                )
-                .into_any_element()
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap_1()
+                .px_2()
+                .h(chip_height)
+                .rounded(chip_radius)
+                .text_size(chip_text)
+                .text_color(ink)
+                .when(mode == PermissionMode::Full || open, |chip| chip.bg(ground))
+                .child(Icon::new(mode.icon()).size(IconSize::Xs).color(ink));
+            if !compact {
+                chip = chip.child(div().flex_none().child(mode.label()));
+            }
+            chip = chip.child(
+                Icon::new(IconName::ChevronDown)
+                    .size(IconSize::Xs)
+                    .color(ink),
+            );
+            chip.cursor_pointer()
+                .hover(move |style| style.bg(ground))
+                .on_click(move |_, _, cx| {
+                    if let Some(panel) = weak.upgrade() {
+                        panel.update(cx, |panel, cx| {
+                            panel.toggle_menu(ComposerMenu::Permission, cx)
+                        });
+                    }
+                })
         };
+
+        // The context ring: how much of the model's window the next turn will
+        // re-send, from the last turn's bill. It stands only when a bill is
+        // known; without a window to be full of it is a quiet outline.
+        let context = self.context_usage().map(|usage| {
+            let open = self.menu == Some(ComposerMenu::Context);
+            let weak = weak.clone();
+            let title = context_title(&usage, cx);
+            let mut button = div()
+                .id("chat-context")
+                .role(gpui::Role::Button)
+                .aria_label(t("ai.chat.context"))
+                .tooltip(Tooltip::text(title))
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_center()
+                .size(px(24.))
+                .rounded_full()
+                .when(open, |button| button.bg(hover))
+                .cursor_pointer()
+                .hover(move |style| style.bg(hover))
+                .on_click(move |_, _, cx| {
+                    if let Some(panel) = weak.upgrade() {
+                        panel.update(cx, |panel, cx| panel.toggle_menu(ComposerMenu::Context, cx));
+                    }
+                });
+            button = match usage.fraction() {
+                Some(fraction) => {
+                    button.child(ProgressRing::new("chat-context-ring", fraction).size(rems(0.9)))
+                }
+                None => button.child(
+                    div()
+                        .size(px(11.))
+                        .rounded_full()
+                        .border_1()
+                        .border_color(fg_subtle),
+                ),
+            };
+            button
+        });
+
         // The model chip is drawn here rather than as a `Button`: its label is
         // two pieces, and only the model's name may shorten — the effort at its
         // end is what `Ctrl-T` moves, so it stays whole however narrow the
@@ -1764,7 +2119,7 @@ impl ChatView {
                 // chip itself, so a tooltip would just repeat it.
                 .when(compact, |chip| chip.tooltip(Tooltip::text(name.clone())))
                 .child(
-                    Icon::new(IconName::CircleDot)
+                    Icon::new(IconName::Sparkles)
                         .size(IconSize::Xs)
                         .color(fg_subtle),
                 );
@@ -1785,6 +2140,11 @@ impl ChatView {
                 };
                 chip = chip.child(div().flex_none().text_color(ink).child(text));
             }
+            chip = chip.child(
+                Icon::new(IconName::ChevronDown)
+                    .size(IconSize::Xs)
+                    .color(fg_subtle),
+            );
             if enabled {
                 chip.cursor_pointer()
                     .hover(|style| style.bg(hover))
@@ -1829,7 +2189,8 @@ impl ChatView {
                     }
                 }
             })
-            .child(self.context_line(cx))
+            .children(self.edit_line(cx))
+            .children(attachment_chips(&self.attachments, &weak, cx))
             .child(field)
             .child(
                 div()
@@ -1837,8 +2198,9 @@ impl ChatView {
                     .items_center()
                     .gap_1()
                     .child(measured(&plus_anchor, plus).flex_none())
-                    .child(permission)
+                    .child(measured(&permission_anchor, permission).flex_none())
                     .child(div().flex_1())
+                    .children(context)
                     .child(measured(&model_anchor, model))
                     .child(self.send_circle(&weak, ready, streaming, cx)),
             )
@@ -1875,13 +2237,26 @@ impl ChatView {
                 // theirs, so what is left on screen still says what it is.
                 let room = panel_room(bounds, window.viewport_size().height);
                 let (panel, rows) = match open {
-                    ComposerMenu::Model => self.model_panel(&weak, width, room, cx),
-                    ComposerMenu::Commands => self.command_panel(&weak, width, cx),
+                    ComposerMenu::Model => {
+                        self.model_panel(&weak, width, room, &provider_anchor, cx)
+                    }
+                    ComposerMenu::Permission => self.permission_panel(&weak, width, cx),
+                    ComposerMenu::Context => self.context_panel(width, room, cx),
+                    ComposerMenu::Commands => self.plus_panel(&weak, width, cx),
                 };
                 let trigger = match open {
                     ComposerMenu::Model => model_anchor.read(cx).as_ref().copied(),
+                    ComposerMenu::Permission => permission_anchor.read(cx).as_ref().copied(),
+                    ComposerMenu::Context => context_anchor.read(cx).as_ref().copied(),
                     ComposerMenu::Commands => plus_anchor.read(cx).as_ref().copied(),
                 };
+                // The provider flyout's bounds, while it is open: a press
+                // inside it, or on the row that opened it, is not an outside
+                // press as far as this menu is concerned.
+                let flyout = (open == ComposerMenu::Model && self.provider_menu)
+                    .then(|| provider_panel_anchor.read(cx).as_ref().copied())
+                    .flatten();
+                let provider_row = provider_anchor.read(cx).as_ref().copied();
                 let panel = panel.occlude().on_mouse_down_out({
                     let weak = weak.clone();
                     move |event: &gpui::MouseDownEvent, _window: &mut Window, cx: &mut App| {
@@ -1891,12 +2266,36 @@ impl ChatView {
                         if trigger.is_some_and(|bounds| bounds.contains(&event.position)) {
                             return;
                         }
+                        if flyout.is_some_and(|bounds| bounds.contains(&event.position)) {
+                            return;
+                        }
+                        if provider_row.is_some_and(|bounds| bounds.contains(&event.position)) {
+                            return;
+                        }
                         if let Some(panel) = weak.upgrade() {
                             panel.update(cx, |panel, cx| panel.close_menu(cx));
                         }
                     }
                 });
                 root = root.child(float("chat-composer-menu", bounds, rows, panel, window, cx));
+                // The provider flyout: the model menu's second level. Its top
+                // right sits at the provider row's left edge, so it opens away
+                // from the window's edge and stays beside what it belongs to.
+                if open == ComposerMenu::Model
+                    && self.provider_menu
+                    && let Some(row) = provider_row
+                {
+                    let at = point(row.origin.x - px(6.), row.origin.y);
+                    let flyout =
+                        measured(&provider_panel_anchor, self.provider_panel(&weak, room, cx))
+                            .occlude();
+                    root = root.child(
+                        anchored()
+                            .position(at)
+                            .anchor(gpui::Anchor::TopRight)
+                            .child(flyout),
+                    );
+                }
             }
         }
         root.into_any_element()
@@ -1959,76 +2358,381 @@ impl ChatView {
         circle.into_any_element()
     }
 
-    /// The model chip's menu: the providers this client has, the selected
-    /// provider's models, and the reasoning effort. A choice that could not be
-    /// written is said here rather than swallowed. `width` is the composer's
-    /// own, so the panel cannot hang off a narrow aside's edge; `room` is the
-    /// height the side it opens on offers, which the two lists share and the
-    /// fixed rows do not give up.
+    /// The line above the field while a message is being revised: what the
+    /// next send will do to the turn it came from, and the way out. The
+    /// model's name lives on the chip below — it is not said twice.
+    fn edit_line(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        self.editing?;
+        let theme = cx.theme();
+        let colors = &theme.colors;
+        let weak = cx.entity().downgrade();
+        Some(
+            div()
+                .flex()
+                .flex_none()
+                .w_full()
+                .px(px(2.))
+                .pb(px(2.))
+                .gap_1p5()
+                .items_center()
+                .text_size(px(10.))
+                .text_color(colors.fg_muted)
+                .child(
+                    div()
+                        .size(px(6.))
+                        .flex_none()
+                        .rounded_full()
+                        .bg(colors.accent),
+                )
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex_1()
+                        .child(Ellipsis::new(SharedString::from(t("ai.chat.editing")))),
+                )
+                .child(
+                    IconButton::new("chat-edit-cancel", IconName::X)
+                        .variant(ButtonVariant::Ghost)
+                        .size(ControlSize::Sm)
+                        .tooltip(t("ai.chat.edit_cancel"))
+                        .on_click(move |_, _, cx| {
+                            if let Some(panel) = weak.upgrade() {
+                                panel.update(cx, |panel, cx| panel.cancel_edit(cx));
+                            }
+                        }),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// How full the model's window is, as the next turn will find it: the
+    /// last bill's input plus its output is what the next request re-sends.
+    /// `cached` is the part of the input the provider answered from its
+    /// cache, when it says. No bill, no ring — nothing is invented.
+    fn context_usage(&self) -> Option<ContextUsage> {
+        let usage = self
+            .messages
+            .iter()
+            .rev()
+            .find_map(|message| message.usage)?;
+        let capacity = self
+            .provider
+            .as_ref()
+            .and_then(selected_model)
+            .and_then(|model| model.context_window)
+            .filter(|window| *window > 0);
+        Some(ContextUsage {
+            used: usage.input_tokens + usage.output_tokens,
+            capacity,
+            cached: usage.cached_tokens,
+            input: usage.input_tokens,
+            output: usage.output_tokens,
+        })
+    }
+
+    /// The context ring's panel: the numbers behind the ring, in the units
+    /// they come in. A window nobody set is said, not guessed.
+    fn context_panel(
+        &self,
+        width: Pixels,
+        room: Pixels,
+        cx: &Context<Self>,
+    ) -> (gpui::Stateful<gpui::Div>, usize) {
+        let theme = cx.theme();
+        let colors = &theme.colors;
+        let zh = crate::config::get(cx).appearance.locale.starts_with("zh");
+        let Some(usage) = self.context_usage() else {
+            let panel = ely_core::forms::surface("chat-menu-context-surface", cx)
+                .w(width)
+                .max_h(room)
+                .p_2()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(panel_note(t("ai.chat.context_none"), cx));
+            return (panel, 1);
+        };
+        let turns = self.messages.iter().filter(|m| m.role == "user").count();
+        let mut rows = 2usize;
+        let panel = ely_core::forms::surface("chat-menu-context-surface", cx)
+            .w(width)
+            .max_h(room)
+            .p_2()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .child(
+                        div()
+                            .text_size(theme.text_size(TextSize::Sm))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(colors.fg)
+                            .child(t("ai.chat.context")),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .text_size(theme.text_size(TextSize::Xs))
+                            .text_color(colors.fg_subtle)
+                            .child(context_size(&usage, zh)),
+                    ),
+            )
+            .children(usage.fraction().map(|fraction| {
+                div()
+                    .flex_shrink_0()
+                    .px_2()
+                    .child(ely_core::motion::ProgressBar::new(
+                        "chat-context-bar",
+                        fraction,
+                    ))
+            }))
+            .child(
+                div()
+                    .flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .child(
+                        div()
+                            .text_size(theme.text_size(TextSize::Xs))
+                            .text_color(colors.fg_muted)
+                            .child(t("ai.chat.context_last_input")),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .text_size(theme.text_size(TextSize::Xs))
+                            .text_color(colors.fg)
+                            .child(token_text(usage.input, zh)),
+                    ),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .child(
+                        div()
+                            .text_size(theme.text_size(TextSize::Xs))
+                            .text_color(colors.fg_muted)
+                            .child(t("ai.chat.context_last_output")),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .text_size(theme.text_size(TextSize::Xs))
+                            .text_color(colors.fg)
+                            .child(token_text(usage.output, zh)),
+                    ),
+            );
+        let panel = if usage.cached > 0 && usage.input > 0 {
+            rows += 1;
+            let rate = (usage.cached as f64 / usage.input as f64 * 100.0).round();
+            panel.child(
+                div()
+                    .flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .child(
+                        div()
+                            .text_size(theme.text_size(TextSize::Xs))
+                            .text_color(colors.fg_muted)
+                            .child(t("ai.chat.context_cache")),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .text_size(theme.text_size(TextSize::Xs))
+                            .text_color(colors.fg)
+                            .child(
+                                rust_i18n::t!("ai.chat.context_cache_rate", rate = rate)
+                                    .to_string(),
+                            ),
+                    ),
+            )
+        } else {
+            panel
+        };
+        let panel = panel
+            .child(
+                div()
+                    .flex()
+                    .flex_shrink_0()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .child(
+                        div()
+                            .text_size(theme.text_size(TextSize::Xs))
+                            .text_color(colors.fg_muted)
+                            .child(t("ai.chat.turns_row")),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        div()
+                            .text_size(theme.text_size(TextSize::Xs))
+                            .text_color(colors.fg)
+                            .child(turns.to_string()),
+                    ),
+            )
+            .children(
+                (usage.capacity.is_none()).then(|| panel_note(t("ai.chat.context_no_window"), cx)),
+            );
+        (panel, rows)
+    }
+
+    /// The permission chip's menu: one row per mode, its own word for what it
+    /// does, the chosen one checked. Full access keeps the warning tone here
+    /// too, so the two agree.
+    fn permission_panel(
+        &self,
+        weak: &WeakEntity<Self>,
+        width: Pixels,
+        cx: &mut Context<Self>,
+    ) -> (gpui::Stateful<gpui::Div>, usize) {
+        let theme = cx.theme();
+        let colors = &theme.colors;
+        let chosen = self.permission_mode();
+        let mut panel = ely_core::forms::surface("chat-menu-permission-surface", cx)
+            .w(width)
+            .p_2()
+            .flex()
+            .flex_col()
+            .gap_1();
+        for mode in [PermissionMode::Ask, PermissionMode::Full] {
+            let ink = if mode == PermissionMode::Full {
+                colors.warning
+            } else {
+                colors.fg_muted
+            };
+            let chosen_here = chosen == mode;
+            let weak = weak.clone();
+            panel = panel.child(
+                div()
+                    .id(format!("chat-permission-{}", mode.id()))
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_1p5()
+                    .rounded(theme.radius(Radius::Sm))
+                    .cursor_pointer()
+                    .hover(|style| style.bg(colors.hover))
+                    .on_click(move |_, _, cx| {
+                        if let Some(panel) = weak.upgrade() {
+                            panel.update(cx, |panel, cx| panel.set_permission_mode(mode, cx));
+                        }
+                    })
+                    .child(Icon::new(mode.icon()).size(IconSize::Sm).color(ink))
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .text_size(theme.text_size(TextSize::Sm))
+                                    .text_color(colors.fg)
+                                    .child(mode.label()),
+                            )
+                            .child(
+                                div()
+                                    .text_size(theme.text_size(TextSize::Xs))
+                                    .text_color(colors.fg_subtle)
+                                    .child(mode.hint()),
+                            ),
+                    )
+                    .children(chosen_here.then(|| {
+                        Icon::new(IconName::Check)
+                            .size(IconSize::Sm)
+                            .color(colors.fg)
+                    })),
+            );
+        }
+        (panel, 2)
+    }
+
+    /// The model chip's menu: the provider it runs on (a row that opens the
+    /// provider flyout), that provider's models, and the reasoning effort. A
+    /// choice that could not be written is said here rather than swallowed.
+    /// `width` is the composer's own, so the panel cannot hang off a narrow
+    /// aside's edge; `room` is the height the side it opens on offers, which
+    /// the model list shares and the fixed rows do not give up.
     fn model_panel(
         &self,
         weak: &WeakEntity<Self>,
         width: Pixels,
         room: Pixels,
+        provider_anchor: &Entity<Option<Bounds<Pixels>>>,
         cx: &mut Context<Self>,
     ) -> (gpui::Stateful<gpui::Div>, usize) {
         let theme = cx.theme();
         let colors = &theme.colors;
         let mut rows = 3;
-        let mut provider_rows = div()
-            .id("chat-menu-providers")
+        let open = self.provider_menu;
+        let name = self.provider.as_ref().map(|p| p.name.clone());
+        let format = self
+            .provider
+            .as_ref()
+            .map(|provider| provider.format.label());
+        let header = div()
+            .id("chat-menu-provider")
             .flex()
-            .flex_col()
-            .gap_1()
-            .max_h(px(160.))
-            .min_h(px(48.))
-            .flex_shrink_1()
-            .overflow_y_scroll();
-        for provider in &self.providers {
-            rows += 1;
-            let chosen = self
-                .provider
-                .as_ref()
-                .is_some_and(|current| current.name == provider.name);
-            let weak = weak.clone();
-            let name = provider.name.clone();
-            let format = provider.format.label();
-            provider_rows = provider_rows.child(
+            .flex_shrink_0()
+            .items_center()
+            .gap_2()
+            .px_2()
+            .py_1p5()
+            .rounded(theme.radius(Radius::Sm))
+            .when(open, |row| row.bg(colors.hover))
+            .cursor_pointer()
+            .hover(|style| style.bg(colors.hover))
+            .on_click({
+                let weak = weak.clone();
+                move |_, _, cx| {
+                    if let Some(panel) = weak.upgrade() {
+                        panel.update(cx, |panel, cx| panel.toggle_provider_menu(cx));
+                    }
+                }
+            })
+            .child(
+                Icon::new(IconName::Sparkles)
+                    .size(IconSize::Sm)
+                    .color(colors.fg_muted),
+            )
+            .child(
                 div()
-                    .id(format!("chat-provider-{}", provider.name))
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .px_2()
-                    .py_1()
-                    .rounded(theme.radius(Radius::Sm))
-                    .when(chosen, |row| row.bg(colors.hover))
-                    .cursor_pointer()
-                    .hover(|style| style.bg(colors.hover))
-                    .on_click(move |_, _, cx| {
-                        if let Some(panel) = weak.upgrade() {
-                            let name = name.clone();
-                            panel.update(cx, |panel, cx| panel.choose_provider(&name, cx));
-                        }
-                    })
-                    .child(
-                        div()
-                            .min_w_0()
-                            .text_size(theme.text_size(TextSize::Sm))
-                            .text_color(colors.fg)
-                            .child(Ellipsis::new(SharedString::from(provider.name.clone()))),
-                    )
-                    .child(badge(format.to_owned(), false, cx))
-                    .child(div().flex_1())
-                    .when(chosen, |row| {
-                        row.child(
-                            Icon::new(IconName::Check)
-                                .size(IconSize::Xs)
-                                .color(colors.accent),
-                        )
-                    }),
+                    .min_w_0()
+                    .flex_1()
+                    .text_size(theme.text_size(TextSize::Sm))
+                    .text_color(colors.fg)
+                    .child(Ellipsis::new(SharedString::from(
+                        name.clone().unwrap_or_else(|| t("ai.config_empty")),
+                    ))),
+            )
+            .children(format.map(|format| badge(format.to_owned(), false, cx)))
+            .child(
+                Icon::new(if open {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                })
+                .size(IconSize::Xs)
+                .color(colors.fg_subtle),
             );
-        }
+
         let mut panel = ely_core::forms::surface("chat-menu-model-surface", cx)
             .w(width)
             .max_h(room)
@@ -2036,8 +2740,7 @@ impl ChatView {
             .flex()
             .flex_col()
             .gap_1()
-            .child(panel_label(t("ai.chat.menu_providers"), cx))
-            .child(provider_rows)
+            .child(measured(provider_anchor, header))
             .child(div().h(px(1.)).w_full().flex_shrink_0().bg(colors.border))
             .child(panel_label(t("ai.chat.menu_models"), cx));
 
@@ -2153,8 +2856,111 @@ impl ChatView {
         (panel, rows)
     }
 
-    /// The `+` button's menu: the panel's own commands, one row each.
-    fn command_panel(
+    /// The provider flyout, the model menu's second level: every provider
+    /// this client has, the chosen one checked, and the way into the models
+    /// page. A provider picked here refills the panel behind it; many
+    /// providers never grow one giant list.
+    fn provider_panel(
+        &self,
+        weak: &WeakEntity<Self>,
+        room: Pixels,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let theme = cx.theme();
+        let colors = &theme.colors;
+        let mut panel = ely_core::forms::surface("chat-menu-provider-surface", cx)
+            .w(px(240.))
+            .max_h(room)
+            .p_2()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(panel_label(t("ai.chat.menu_providers"), cx));
+        if self.providers.is_empty() {
+            panel = panel.child(panel_note(t("ai.config_empty"), cx));
+        }
+        for provider in &self.providers {
+            let chosen = self
+                .provider
+                .as_ref()
+                .is_some_and(|current| current.name == provider.name);
+            let weak = weak.clone();
+            let name = provider.name.clone();
+            let format = provider.format.label();
+            panel = panel.child(
+                div()
+                    .id(format!("chat-provider-{}", provider.name))
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_1p5()
+                    .rounded(theme.radius(Radius::Sm))
+                    .when(chosen, |row| row.bg(colors.hover))
+                    .cursor_pointer()
+                    .hover(|style| style.bg(colors.hover))
+                    .on_click(move |_, _, cx| {
+                        if let Some(panel) = weak.upgrade() {
+                            let name = name.clone();
+                            panel.update(cx, |panel, cx| panel.choose_provider(&name, cx));
+                        }
+                    })
+                    .child(
+                        div()
+                            .min_w_0()
+                            .flex_1()
+                            .text_size(theme.text_size(TextSize::Sm))
+                            .text_color(colors.fg)
+                            .child(Ellipsis::new(SharedString::from(provider.name.clone()))),
+                    )
+                    .child(badge(format.to_owned(), false, cx))
+                    .when(chosen, |row| {
+                        row.child(
+                            Icon::new(IconName::Check)
+                                .size(IconSize::Sm)
+                                .color(colors.accent),
+                        )
+                    }),
+            );
+        }
+        let manage = weak.clone();
+        panel
+            .child(div().h(px(1.)).w_full().flex_shrink_0().bg(colors.border))
+            .child(
+                div()
+                    .id("chat-provider-manage")
+                    .flex()
+                    .flex_none()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_1p5()
+                    .rounded(theme.radius(Radius::Sm))
+                    .cursor_pointer()
+                    .hover(|style| style.bg(colors.hover))
+                    .on_click(move |_, _, cx| {
+                        if let Some(panel) = manage.upgrade() {
+                            panel.update(cx, |panel, cx| panel.open_models_settings(cx));
+                        }
+                    })
+                    .child(
+                        Icon::new(IconName::Settings)
+                            .size(IconSize::Sm)
+                            .color(colors.fg_muted),
+                    )
+                    .child(
+                        div()
+                            .text_size(theme.text_size(TextSize::Sm))
+                            .text_color(colors.fg)
+                            .child(t("ai.chat.manage_models")),
+                    ),
+            )
+    }
+
+    /// The `+` button's menu: what the composer itself can take in. A new chat
+    /// and the history are the header's presses; this is the field's.
+    fn plus_panel(
         &self,
         weak: &WeakEntity<Self>,
         width: Pixels,
@@ -2162,7 +2968,6 @@ impl ChatView {
     ) -> (gpui::Stateful<gpui::Div>, usize) {
         let theme = cx.theme();
         let colors = &theme.colors;
-        let commands = starter_commands();
         let mut rows = 0;
         let mut panel = ely_core::forms::surface("chat-menu-command-surface", cx)
             .w(width)
@@ -2170,18 +2975,17 @@ impl ChatView {
             .flex()
             .flex_col()
             .gap_1();
-        for choice in commands {
+        let mut row_of = |panel: gpui::Stateful<gpui::Div>,
+                          id: &'static str,
+                          icon: IconName,
+                          label: String,
+                          press: WeakEntity<Self>,
+                          act: fn(&mut ChatView, &mut Context<ChatView>)|
+         -> gpui::Stateful<gpui::Div> {
             rows += 1;
-            let value = choice.value.to_string();
-            let icon = match value.as_str() {
-                "new" => IconName::Plus,
-                "history" => IconName::History,
-                _ => IconName::Eraser,
-            };
-            let weak = weak.clone();
-            panel = panel.child(
+            panel.child(
                 div()
-                    .id(format!("chat-command-{value}"))
+                    .id(id)
                     .flex()
                     .items_center()
                     .gap_2()
@@ -2191,11 +2995,10 @@ impl ChatView {
                     .cursor_pointer()
                     .hover(|style| style.bg(colors.hover))
                     .on_click(move |_, _, cx| {
-                        if let Some(panel) = weak.upgrade() {
-                            let value = value.clone();
+                        if let Some(panel) = press.upgrade() {
                             panel.update(cx, |panel, cx| {
                                 panel.menu = None;
-                                panel.run_chat_command(&value, cx);
+                                act(panel, cx);
                             });
                         }
                     })
@@ -2204,99 +3007,50 @@ impl ChatView {
                         div()
                             .text_size(theme.text_size(TextSize::Sm))
                             .text_color(colors.fg)
-                            .child(choice.label.clone()),
+                            .child(label),
                     ),
-            );
-        }
+            )
+        };
+        panel = row_of(
+            panel,
+            "chat-command-attach",
+            IconName::Paperclip,
+            t("ai.chat.attach"),
+            weak.clone(),
+            |panel, cx| panel.attach_files(cx),
+        );
+        panel = row_of(
+            panel,
+            "chat-command-clear",
+            IconName::Eraser,
+            t("ai.chat.clear_input"),
+            weak.clone(),
+            |panel, cx| {
+                panel.input.update(cx, |input, cx| input.set_text("", cx));
+                cx.notify();
+            },
+        );
         (panel, rows)
-    }
-
-    /// The line above the message box: what the next turn runs on, how much has
-    /// been said, and how much it cost.
-    fn context_line(&self, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme();
-        let colors = &theme.colors;
-        let detail = if self.editing.is_some() {
-            // The mode matters more than the model while a message is being
-            // revised: sending will replace the turn it came from.
-            t("ai.chat.editing")
-        } else {
-            match self.provider.as_ref() {
-                Some(provider) if self.is_streaming() => {
-                    format!("{} · {}", provider.name, t("ai.chat.streaming"))
-                }
-                Some(provider) => [provider.name.clone(), provider.model.clone()]
-                    .into_iter()
-                    .filter(|part| !part.is_empty())
-                    .collect::<Vec<String>>()
-                    .join(" · "),
-                None => t("ai.config_empty"),
-            }
-        };
-        let turns = rust_i18n::t!("ai.chat.turns", count = self.messages.len()).to_string();
-        let tokens: u64 = self
-            .messages
-            .iter()
-            .filter_map(|message| message.usage)
-            .map(|usage| usage.total_tokens())
-            .sum();
-        let tone = if self.error.is_some() {
-            colors.danger
-        } else if self.editing.is_some() || self.is_streaming() {
-            colors.accent
-        } else {
-            colors.success
-        };
-        let mut line = div()
-            .flex()
-            .flex_none()
-            .w_full()
-            .px(px(2.))
-            .pb(px(2.))
-            .gap_1p5()
-            .items_center()
-            .text_size(px(10.))
-            .text_color(colors.fg_muted)
-            .child(div().size(px(6.)).flex_none().rounded_full().bg(tone))
-            .child(
-                div()
-                    .min_w_0()
-                    .flex_1()
-                    .child(Ellipsis::new(SharedString::from(detail))),
-            );
-        if self.editing.is_some() {
-            let weak = cx.entity().downgrade();
-            line = line.child(
-                IconButton::new("chat-edit-cancel", IconName::X)
-                    .variant(ButtonVariant::Ghost)
-                    .size(ControlSize::Sm)
-                    .tooltip(t("ai.chat.edit_cancel"))
-                    .on_click(move |_, _, cx| {
-                        if let Some(panel) = weak.upgrade() {
-                            panel.update(cx, |panel, cx| panel.cancel_edit(cx));
-                        }
-                    }),
-            );
-        }
-        line = line.child(div().flex_none().child(turns));
-        if tokens > 0 {
-            line = line.child(div().flex_none().child(format!("{tokens} tok")));
-        }
-        line.into_any_element()
     }
 }
 
-/// Which of the composer's two menus is up.
+/// Which of the composer's menus is up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ComposerMenu {
-    /// The model chip's: providers, their models, the reasoning effort.
+    /// The model chip's: the provider row, its models, the reasoning effort —
+    /// and the provider flyout as its second level.
     Model,
-    /// The `+` button's: the panel's own commands.
+    /// The permission chip's: one row per gate mode.
+    Permission,
+    /// The context ring's: the numbers behind it.
+    Context,
+    /// The `+`'s: attachments and the field's own small acts.
     Commands,
 }
 
-/// What the gate does with a tool call: ask, or let it run because the reader
-/// turned on full access for this conversation.
+/// What the gate does with a tool call: work autonomously and ask when a call
+/// is risky, or run everything because the reader allowed this sitting full
+/// access.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum PermissionMode {
     #[default]
@@ -2309,11 +3063,18 @@ impl PermissionMode {
         if full_access { Self::Full } else { Self::Ask }
     }
 
-    fn toggled(self) -> Self {
+    /// The row's and the chip's element id.
+    fn id(self) -> &'static str {
         match self {
-            Self::Ask => Self::Full,
-            Self::Full => Self::Ask,
+            Self::Ask => "ask",
+            Self::Full => "full",
         }
+    }
+
+    /// Both modes carry the shield; the tone — the palette's ink, or the
+    /// warning tone while full access is on — is what tells them apart.
+    fn icon(self) -> IconName {
+        IconName::Shield
     }
 
     fn label(self) -> String {
@@ -2328,6 +3089,91 @@ impl PermissionMode {
             Self::Ask => "ai.chat.permission_ask_hint",
             Self::Full => "ai.chat.permission_full_hint",
         })
+    }
+}
+
+/// How full the model's window is, as the context ring and its panel read it.
+#[derive(Clone, Copy, Debug)]
+struct ContextUsage {
+    /// What the next request re-sends: the last bill's input plus its output.
+    used: u64,
+    /// The chosen model's window, when the models page set one.
+    capacity: Option<u64>,
+    /// The input the provider answered from cache, when it says.
+    cached: u64,
+    input: u64,
+    output: u64,
+}
+
+impl ContextUsage {
+    /// The ring's fill, 0..=1, when a window is known to be full.
+    fn fraction(&self) -> Option<f32> {
+        let capacity = self.capacity?;
+        if self.used == 0 {
+            return Some(0.);
+        }
+        Some(((self.used as f64 / capacity as f64).min(1.0) as f32).clamp(0., 1.))
+    }
+}
+
+/// The ring's tooltip: what is used, against what, in the reader's units.
+fn context_title(usage: &ContextUsage, cx: &App) -> String {
+    let zh = crate::config::get(cx).appearance.locale.starts_with("zh");
+    match usage.capacity {
+        Some(capacity) => rust_i18n::t!(
+            "ai.chat.context_full",
+            used = token_text(usage.used, zh),
+            capacity = token_text(capacity, zh)
+        ),
+        None => rust_i18n::t!("ai.chat.context_used", used = token_text(usage.used, zh)),
+    }
+    .to_string()
+}
+
+/// The head of the context panel: the same numbers as the tooltip, spelled
+/// out.
+fn context_size(usage: &ContextUsage, zh: bool) -> String {
+    match usage.capacity {
+        Some(capacity) => {
+            let rate = if usage.used > 0 {
+                format!(
+                    " ({:.0}%)",
+                    usage.used.min(capacity) as f64 / capacity as f64 * 100.
+                )
+            } else {
+                String::new()
+            };
+            format!(
+                "{} / {}{}",
+                token_text(usage.used, zh),
+                token_text(capacity, zh),
+                rate
+            )
+        }
+        None => format!("{} tok", usage.used),
+    }
+}
+
+/// A token count as the reader says it: 万 above ten thousand in Chinese,
+/// k/M steps otherwise.
+fn token_text(tokens: u64, zh: bool) -> String {
+    fn step(tokens: f64, unit: f64, suffix: &str) -> String {
+        let value = tokens / unit;
+        let text = if value >= 10. || (value * 10.).round() == value * 10. {
+            format!("{value:.0}")
+        } else {
+            format!("{value:.1}")
+        };
+        format!("{text}{suffix}")
+    }
+    if zh && tokens >= 10_000 {
+        step(tokens as f64, 10_000., "万")
+    } else if tokens >= 1_000_000 {
+        step(tokens as f64, 1_000_000., "M")
+    } else if tokens >= 10_000 {
+        step(tokens as f64, 1_000., "k")
+    } else {
+        tokens.to_string()
     }
 }
 
@@ -2402,11 +3248,12 @@ fn model_rows(provider: &ApiProviderConfig) -> Vec<ModelRow> {
         .collect()
 }
 
-/// The next reasoning level, wrapping: `Ctrl-T` walks all four with one key.
-fn next_level(level: ThinkingLevel) -> ThinkingLevel {
-    let all = ThinkingLevel::all();
-    let at = all.iter().position(|each| *each == level).unwrap_or(0);
-    all[(at + 1) % all.len()]
+/// The provider's chosen model, when its list still names the id.
+fn selected_model(provider: &ApiProviderConfig) -> Option<&crate::api_provider::ModelConfig> {
+    provider
+        .models
+        .iter()
+        .find(|model| model.id == provider.model)
 }
 
 /// The model a turn runs on, as the chip's first half: the display label the
@@ -2419,6 +3266,13 @@ fn model_name(provider: &ApiProviderConfig) -> String {
         .find(|model| model.id == provider.model)
         .map(|model| model.display_label().to_owned())
         .unwrap_or_else(|| provider.model.trim().to_owned())
+}
+
+/// The next reasoning level, wrapping: `Ctrl-T` walks all four with one key.
+fn next_level(level: ThinkingLevel) -> ThinkingLevel {
+    let all = ThinkingLevel::all();
+    let at = all.iter().position(|each| *each == level).unwrap_or(0);
+    all[(at + 1) % all.len()]
 }
 
 /// The chip's second half: the effort the next turn asks for.
@@ -2511,6 +3365,86 @@ fn badge(text: String, ok: bool, cx: &App) -> AnyElement {
         .text_color(ink)
         .child(text)
         .into_any_element()
+}
+
+/// The composer's attachment chips, above the field: one per picked file,
+/// its icon by kind, its × taking it back off. `None` while nothing waits.
+fn attachment_chips(
+    attachments: &[Attachment],
+    weak: &WeakEntity<ChatView>,
+    cx: &App,
+) -> Option<AnyElement> {
+    if attachments.is_empty() {
+        return None;
+    }
+    let theme = cx.theme();
+    let colors = &theme.colors;
+    let mut row = div().flex().flex_wrap().flex_none().w_full().gap_1();
+    for (index, attachment) in attachments.iter().enumerate() {
+        let (icon, ink) = match &attachment.kind {
+            AttachmentKind::Image { .. } => (IconName::FileImage, colors.fg_muted),
+            AttachmentKind::Text { .. } => (IconName::FileText, colors.fg_muted),
+            AttachmentKind::Failed { .. } => (IconName::CircleAlert, colors.danger),
+        };
+        let remove = weak.clone();
+        let failed = attachment.kind.failed();
+        let label = match &attachment.kind {
+            AttachmentKind::Failed { reason } => {
+                format!("{} · {reason}", attachment.name())
+            }
+            _ => attachment.name(),
+        };
+        row = row.child(
+            div()
+                .id(SharedString::from(format!("chat-attach-{index}")))
+                .flex()
+                .flex_none()
+                .max_w(px(220.))
+                .items_center()
+                .gap_1p5()
+                .pl_2()
+                .pr_1()
+                .h(px(24.))
+                .rounded(theme.radius(Radius::Md))
+                .border_1()
+                .border_color(colors.border)
+                .bg(colors.sunken)
+                .child(Icon::new(icon).size(IconSize::Xs).color(ink))
+                .child(
+                    div()
+                        .min_w_0()
+                        .text_size(theme.text_size(TextSize::Xs))
+                        .text_color(if failed {
+                            colors.danger
+                        } else {
+                            colors.fg_muted
+                        })
+                        .child(Ellipsis::new(SharedString::from(label))),
+                )
+                .child(
+                    IconButton::new(
+                        SharedString::from(format!("chat-attach-remove-{index}")),
+                        IconName::X,
+                    )
+                    .variant(ButtonVariant::Ghost)
+                    .size(ControlSize::Sm)
+                    .tooltip(t("ai.chat.attach_remove"))
+                    .on_click(move |_, _, cx| {
+                        if let Some(panel) = remove.upgrade() {
+                            panel.update(cx, |panel, cx| panel.remove_attachment(index, cx));
+                        }
+                    }),
+                ),
+        );
+    }
+    Some(row.into_any_element())
+}
+
+impl AttachmentKind {
+    /// A read that said no. The chip's ink and its name-for-the-reader follow.
+    fn failed(&self) -> bool {
+        matches!(self, AttachmentKind::Failed { .. })
+    }
 }
 
 /// One row of the message list: a message, or one of the turn's leftovers.
@@ -4419,6 +5353,7 @@ mod tests {
             &DispatchStreamEvent::Usage(UsageInfo {
                 input_tokens: 1200,
                 output_tokens: 300,
+                cached_tokens: 900,
             }),
             1,
         );
@@ -4756,17 +5691,18 @@ mod tests {
         }
     }
 
-    /// The gate starts by asking every time; full access is one press away and
-    /// the press that turns it on turns it off again.
+    /// The gate starts by asking; the permission menu's modes carry distinct
+    /// words, and the flag's reading follows it.
     #[test]
-    fn the_permission_chip_starts_asking_and_toggles() {
+    fn the_permission_chip_starts_asking_and_the_menu_names_both_modes() {
         let mode = PermissionMode::default();
         assert_eq!(mode, PermissionMode::Ask);
-        assert_eq!(mode.toggled(), PermissionMode::Full);
-        assert_eq!(mode.toggled().toggled(), PermissionMode::Ask);
+        assert_eq!(mode.id(), "ask");
+        assert_eq!(PermissionMode::Full.id(), "full");
         assert_eq!(PermissionMode::of(true), PermissionMode::Full);
         assert_eq!(PermissionMode::of(false), PermissionMode::Ask);
         assert_ne!(mode.label(), PermissionMode::Full.label());
+        assert_ne!(mode.hint(), PermissionMode::Full.hint());
         assert_eq!(mode.hint(), t("ai.chat.permission_ask_hint"));
     }
 
@@ -4798,11 +5734,13 @@ mod tests {
                 id: "gpt-4o".into(),
                 label: String::new(),
                 vision: true,
+                context_window: None,
             },
             ModelConfig {
                 id: "o3".into(),
                 label: "O3 mini".into(),
                 vision: false,
+                context_window: None,
             },
         ];
         provider.model = "o3".into();
@@ -4827,6 +5765,7 @@ mod tests {
             id: "gpt-4o".into(),
             label: "GPT-4o".into(),
             vision: false,
+            context_window: None,
         }];
         provider.thinking_level = ThinkingLevel::High;
         assert_eq!(model_name(&provider), "GPT-4o");

@@ -159,6 +159,21 @@ pub struct ConfigFile {
     pub terminal: TerminalConfig,
     pub layout: Layout,
     pub window: Window,
+    pub debug: Debug,
+}
+
+/// The developer surfaces a normal reader never needs: each one is a sidebar
+/// view (or the inspector it feeds) that earns its place only while someone is
+/// reading the daemon's wire. Off is the default, and the file is where it is
+/// turned on.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Debug {
+    /// The sidebar's events view: the daemon's streamed event ring, its filter
+    /// chips and the inspector. The stream itself always runs — the worktree
+    /// list is refreshed by its `worktree.*` lines — so this gates the view,
+    /// not the subscription.
+    pub events: bool,
 }
 
 /// The accents the appearance page offers beside the well, in its order: the
@@ -567,6 +582,11 @@ const SECTIONS: &[Section] = &[
             ),
             ("maximized", Field::Flag),
         ],
+        deprecated: &[],
+    },
+    Section {
+        name: "debug",
+        fields: &[("events", Field::Flag)],
         deprecated: &[],
     },
 ];
