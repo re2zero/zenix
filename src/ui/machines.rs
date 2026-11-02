@@ -129,12 +129,21 @@ fn pull(machine: &Machine, live: Option<&LiveState>) -> MachineLive {
             (snapshot.workspaces.len(), agents)
         })
         .unwrap_or_default();
+    // A dial in flight still carries the last failure: the row must keep
+    // saying offline between two attempts rather than flipping back to
+    // connecting every few seconds. `error` clears only when a dial answers
+    // (`Connected`), so it is the honest signal, not the status flip-flop.
+    let error = live.error.clone();
     MachineLive {
         label: machine.label.clone(),
         own: machine.own,
-        status: live.status,
+        status: if error.is_some() {
+            ConnectionStatus::Disconnected
+        } else {
+            live.status
+        },
         version: live.server_version.clone(),
-        error: live.error.clone(),
+        error,
         workspaces,
         agents,
     }
@@ -398,16 +407,21 @@ fn machine_group(machine: &MachineLive, cx: &App) -> gpui::Div {
             },
         )
         .children(machine.agents.iter().map(|agent| agent_row(agent, cx)))
-        .when(machine.agents.is_empty(), |group| {
-            group.child(
-                div()
-                    .px_3()
-                    .py_2()
-                    .text_size(theme.text_size(TextSize::Xs))
-                    .text_color(colors.fg_subtle)
-                    .child(t("shell.machines.no_agents")),
-            )
-        })
+        // "No agents" is a fact a connected machine states; an offline one
+        // knows nothing, and its reason line already says so.
+        .when(
+            machine.agents.is_empty() && machine.status != ConnectionStatus::Disconnected,
+            |group| {
+                group.child(
+                    div()
+                        .px_3()
+                        .py_2()
+                        .text_size(theme.text_size(TextSize::Xs))
+                        .text_color(colors.fg_subtle)
+                        .child(t("shell.machines.no_agents")),
+                )
+            },
+        )
 }
 
 /// The colour and the word of a machine's connection line.
@@ -559,6 +573,16 @@ mod tests {
 
         let row = pull(&machine, Some(&live));
         assert_eq!(row.status, ConnectionStatus::Connected);
+        // Mid-redial the status flips back to connecting, but the failure is
+        // still being carried: the row stays offline and keeps the reason.
+        live.status = ConnectionStatus::Connecting;
+        live.error = Some("endpoint connect failed: no route".to_owned());
+        let row = pull(&machine, Some(&live));
+        assert_eq!(row.status, ConnectionStatus::Disconnected);
+        assert_eq!(
+            row.error.as_deref(),
+            Some("endpoint connect failed: no route")
+        );
         assert_eq!(row.version.as_deref(), Some("0.9.5"));
         let names: Vec<&str> = row.agents.iter().map(|a| a.name.as_str()).collect();
         // The view label is what makes the daemon's own order run the rows
