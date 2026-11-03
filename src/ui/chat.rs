@@ -114,6 +114,7 @@ use crate::ai::tools::{Tool, ToolCall, ToolExecutor, builtin_tools};
 use crate::api_provider::{self, ApiProviderConfig, ThinkingLevel};
 use crate::config;
 use crate::i18n::t;
+use crate::ui::ime;
 
 /// How many tool rounds one turn may take. The engine has its own ceiling; this
 /// is the tighter one the panel asks for.
@@ -1906,6 +1907,7 @@ impl ChatView {
         };
         let warning = cx.theme().colors.warning;
         let weak = cx.entity().downgrade();
+        let ime_input = self.input.clone();
         let ready = !self.input.read(cx).text().trim().is_empty() || !self.attachments.is_empty();
         let streaming = self.is_streaming();
         let focused = self.input.read(cx).focus().contains_focused(window, cx);
@@ -2207,6 +2209,12 @@ impl ChatView {
             .child(
                 canvas(
                     move |bounds, window, cx| {
+                        // The caret is the candidate window's anchor while the
+                        // composer holds the focus (see ui::ime).
+                        let state = ime_input.read(cx);
+                        if state.focus().is_focused(window) {
+                            ime::push_spot(state.caret_bounds(), window, cx);
+                        }
                         if measure.read(cx).as_ref() != Some(&bounds) {
                             measure.update(cx, |slot, cx| {
                                 *slot = Some(bounds);

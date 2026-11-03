@@ -46,6 +46,7 @@ use crate::terminal::{
     CursorShape, InputTarget, Scrollbar, WheelAccumulator, WheelTarget, cell_height, input_area,
     input_cursor_bounds, key_input, pane_at, popup_origin, viewport, wheel_target,
 };
+use crate::ui::ime;
 
 #[cfg(target_os = "linux")]
 use crate::terminal::input::WeakInputHandler as ViewInputHandler;
@@ -1632,6 +1633,7 @@ impl TerminalView {
         let failed = bar.search.error().is_some();
         let can_step = bar.search.has_matches();
         let input = bar.input.clone();
+        let ime_input = bar.input.clone();
         let focus_input = move |this: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
             if let Some(bar) = this.find.as_ref() {
                 let focus = bar.input.read(cx).focus().clone();
@@ -1721,6 +1723,21 @@ impl TerminalView {
                 .child(button("find-older", "↑", Some(Step::Older), can_step))
                 .child(button("find-newer", "↓", Some(Step::Newer), can_step))
                 .child(button("find-close", "×", None, true))
+                .child(
+                    canvas(
+                        move |_, window, cx| {
+                            let state = ime_input.read(cx);
+                            if state.focus().is_focused(window) {
+                                ime::push_spot(state.caret_bounds(), window, cx);
+                            }
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full(),
+                )
                 .into_any_element(),
         )
     }
@@ -1973,6 +1990,25 @@ impl Render for TerminalView {
                                                     ViewInputHandler::new(bounds, entity.clone()),
                                                     cx,
                                                 );
+                                                // The candidate window rides the input
+                                                // cursor: an anchor move is pushed to the
+                                                // platform IME here, because nothing else
+                                                // does it — the framework's own re-push only
+                                                // fires on preedit draws, which an IME that
+                                                // shows the preedit in its own panel never
+                                                // sends (see ui::ime).
+                                                if focus.is_focused(window) {
+                                                    let anchor =
+                                                        live.surface.as_deref().map(|surface| {
+                                                            input_cursor_bounds(
+                                                                Some(surface),
+                                                                bounds.origin,
+                                                                cell_width,
+                                                                cell_height,
+                                                            )
+                                                        });
+                                                    ime::push_spot(anchor, window, cx);
+                                                }
                                                 let Some(surface) = live.surface.clone() else {
                                                     return;
                                                 };

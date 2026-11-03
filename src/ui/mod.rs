@@ -96,6 +96,7 @@
 //! names (`App`, `Window`, `px`, `point`, …) are `gpui`'s own — import them
 //! from `gpui`, which is the `gpui-pre` package.
 
+pub mod ime;
 pub mod theme;
 
 mod aside;
