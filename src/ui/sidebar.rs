@@ -17,6 +17,11 @@
 //! artifact is reached from the palette's `layout.inspect` and the first-run
 //! card, not parked in navigation.
 //!
+//! The workspaces view is two halves of the column rather than one list (the
+//! same day): the project tree above, the repo's worktrees below, each with
+//! its own scroll behind a hairline, so neither section pushes the other off
+//! the foot. An empty daemon keeps the whole column for its first-run block.
+//!
 //! The rows are drawn here rather than taken from the library's `ListItem`
 //! because the design's column is denser than a control row: 28px tree rows,
 //! 26px sub-rows, a 30px worktree row, all at the `Xs`/`Sm` end of the type
@@ -161,7 +166,8 @@ fn head_count(view: View, data: &Data) -> Option<SharedString> {
 
 /// The body under the head: the selected view's rows, scrolled when they do
 /// not fit. The scroll area is the library's, so the overlay bar behaves like
-/// every other surface's.
+/// every other surface's. The workspaces view is the exception at the frame
+/// level, not the rows — its two sections split the column in half.
 pub(crate) fn body(
     view: View,
     data: &Data,
@@ -170,12 +176,18 @@ pub(crate) fn body(
     cx: &mut App,
 ) -> AnyElement {
     let rows = match view {
-        View::Workspaces => workspaces(data, connection, root, cx),
+        View::Workspaces => return workspaces_body(data, connection, root, cx),
         View::Agents => agents(data, connection, cx),
         View::Fleet => fleet(data, connection, cx),
         View::Plugins => plugins(data, root, cx),
     };
-    ScrollArea::new(row_id("sidebar-body", view.id()))
+    scrolled(row_id("sidebar-body", view.id()), rows)
+}
+
+/// One full-height scroll list with the column's padding — what four of the
+/// view bodies are.
+fn scrolled(id: SharedString, rows: AnyElement) -> AnyElement {
+    ScrollArea::new(id)
         .vertical()
         .shadows()
         .size_full()
@@ -196,20 +208,42 @@ pub(crate) fn body(
 // Workspaces
 // ---------------------------------------------------------------------------
 
-fn workspaces(data: &Data, connection: &Connection, root: &Entity<Root>, cx: &App) -> AnyElement {
+fn workspaces_body(
+    data: &Data,
+    connection: &Connection,
+    root: &Entity<Root>,
+    cx: &mut App,
+) -> AnyElement {
+    // The empty states keep the whole column: a first run has no worktrees
+    // half to show yet.
     let ready = matches!(
         data.live.status,
         crate::herdr::ConnectionStatus::Connected
             | crate::herdr::ConnectionStatus::AwaitingSnapshot
     );
-    let Some(snapshot) = data.live.snapshot.as_deref() else {
-        return workspaces_empty(ready, root, cx);
-    };
-    if snapshot.workspaces.is_empty() {
-        return workspaces_empty(ready, root, cx);
+    let empty = data
+        .live
+        .snapshot
+        .as_deref()
+        .is_none_or(|snapshot| snapshot.workspaces.is_empty());
+    if empty {
+        return scrolled(
+            row_id("sidebar-body", View::Workspaces.id()),
+            workspaces_empty(ready, root, cx),
+        );
     }
+    let Some(snapshot) = data.live.snapshot.as_deref() else {
+        return scrolled(
+            row_id("sidebar-body", View::Workspaces.id()),
+            workspaces_empty(ready, root, cx),
+        );
+    };
 
-    let mut column = div().flex().flex_col().gap(px(1.));
+    // The project tree above, the repo's worktrees below: two halves of the
+    // column, each with its own scroll, because the sections are peers — one
+    // list would make the worktrees wait for the tree to end and push them
+    // off the column's foot when the session grows.
+    let mut tree = div().flex().flex_col().gap(px(1.));
     for workspace in &snapshot.workspaces {
         let tabs: Vec<_> = snapshot
             .tabs
@@ -218,7 +252,7 @@ fn workspaces(data: &Data, connection: &Connection, root: &Entity<Root>, cx: &Ap
             .collect();
         let foldable = tabs.len() > 1;
         let open = subrows_open(tabs.len(), data.folded.contains(&workspace.workspace_id));
-        column = column.child(workspace_row(
+        tree = tree.child(workspace_row(
             workspace,
             tabs.len(),
             foldable,
@@ -234,7 +268,7 @@ fn workspaces(data: &Data, connection: &Connection, root: &Entity<Root>, cx: &Ap
                     .iter()
                     .filter(|pane| pane.tab_id == tab.tab_id)
                     .count();
-                column = column.child(tab_subrow(
+                tree = tree.child(tab_subrow(
                     &tab.tab_id,
                     &tab.label,
                     tab.agent_status,
@@ -246,8 +280,29 @@ fn workspaces(data: &Data, connection: &Connection, root: &Entity<Root>, cx: &Ap
             }
         }
     }
-    column
-        .child(worktrees(data, connection, root, cx))
+    let upper = scrolled(
+        row_id("sidebar-body", "workspaces-tree"),
+        tree.into_any_element(),
+    );
+    let lower = scrolled(
+        row_id("sidebar-body", "worktrees"),
+        worktrees(data, connection, root, cx),
+    );
+    let border = cx.theme().colors.border;
+    div()
+        .size_full()
+        .flex()
+        .flex_col()
+        .child(div().flex_1().min_h_0().overflow_hidden().child(upper))
+        .child(
+            div()
+                .flex_1()
+                .min_h_0()
+                .overflow_hidden()
+                .border_t_1()
+                .border_color(border)
+                .child(lower),
+        )
         .into_any_element()
 }
 
