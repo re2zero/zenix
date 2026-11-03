@@ -162,17 +162,18 @@ pub struct ConfigFile {
     pub debug: Debug,
 }
 
-/// The developer surfaces a normal reader never needs: each one is a sidebar
-/// view (or the inspector it feeds) that earns its place only while someone is
-/// reading the daemon's wire. Off is the default, and the file is where it is
-/// turned on.
+/// The developer surfaces a normal reader never needs: the status bar's bug
+/// icon and the event log it expands (beside the inspector the log feeds),
+/// which earn their place only while someone is reading the daemon's wire.
+/// Off is the default, and the file is where it is turned on.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Debug {
-    /// The sidebar's events view: the daemon's streamed event ring, its filter
-    /// chips and the inspector. The stream itself always runs — the worktree
-    /// list is refreshed by its `worktree.*` lines — so this gates the view,
-    /// not the subscription.
+    /// The status bar's bug icon and the event log it expands: the daemon's
+    /// streamed event ring, its filter chips and the inspector. The stream
+    /// itself always runs — the worktree list is refreshed by its
+    /// `worktree.*` lines — so this gates the panel's entry, not the
+    /// subscription.
     pub events: bool,
 }
 

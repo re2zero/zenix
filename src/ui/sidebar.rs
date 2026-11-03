@@ -1,4 +1,4 @@
-//! The sidebar's five views: what the rail puts in front, drawn as rows.
+//! The sidebar's views: what the rail puts in front, drawn as rows.
 //!
 //! U2-1 left the column's body empty; this module fills it. Each view reads the
 //! source it names in its foot and nothing else:
@@ -9,8 +9,13 @@
 //! | workspaces · worktrees | [`crate::worktrees`] (event-refreshed, no timer) | focus an open one, else `worktree.open`; the section's `+` creates one |
 //! | agents | the snapshot's `agents` in `agent_order` | focus the agent's pane |
 //! | fleet | the same agents, plus [`crate::fleet`]'s watched status | focus the agent's pane |
-//! | events | [`crate::events`]' ring, through its filter chips | switch the chip |
 //! | plugins | [`crate::plugins::host`]'s registry | open its manager drawer |
+//!
+//! The event ring is not one of them: it is debug surface, drawn by
+//! [`super::events_panel`] over the status bar's bug icon (`debug.events`).
+//! The project's layout file lost its row here the same day — a per-repo
+//! artifact is reached from the palette's `layout.inspect` and the first-run
+//! card, not parked in navigation.
 //!
 //! The rows are drawn here rather than taken from the library's `ListItem`
 //! because the design's column is denser than a control row: 28px tree rows,
@@ -29,8 +34,7 @@
 //! rather than pretending the count is zero.
 //!
 //! No state is written during a paint: every press either asks the daemon for a
-//! focus, hands [`Root`] a request, or writes the event filter through the
-//! stream's own cache.
+//! focus, hands [`Root`] a request, or folds a row the reader shut.
 
 use ely_core::{
     buttons::{Button, ButtonVariant, IconButton},
@@ -50,7 +54,7 @@ use herdr_client::protocol::{
 };
 
 use super::{chrome::View, shell::Root};
-use crate::events::{self, EventFilter, EventState};
+use crate::events;
 use crate::fleet::FleetState;
 use crate::herdr::{Connection, LiveState};
 use crate::i18n::t;
@@ -74,14 +78,9 @@ fn row_heights(cx: &App) -> (f32, f32, f32) {
 /// value; the paint only looks.
 pub(crate) struct Data<'a> {
     pub(crate) live: &'a LiveState,
-    pub(crate) events: &'a EventState,
     pub(crate) fleet: &'a FleetState,
     pub(crate) plugins: &'a PluginState,
     pub(crate) worktrees: &'a WorktreeState,
-    /// The project template the focused pane's directory resolves to.
-    pub(crate) layout: &'a crate::layout::LayoutState,
-    /// The event the inspector captured, so its row can wear the selected mark.
-    pub(crate) selected: Option<&'a events::Event>,
     /// The plugin whose manager page is in front, so its row can do the same.
     pub(crate) manager: Option<&'a str>,
     /// The workspace rows the reader folded shut. A row with more than one tab
@@ -157,11 +156,6 @@ fn head_count(view: View, data: &Data) -> Option<SharedString> {
             )
             .into(),
         ),
-        View::Events => Some(if data.events.error.is_some() {
-            SharedString::from(t("shell.head.events_down"))
-        } else {
-            rust_i18n::t!("shell.head.events", count = data.events.events.len()).into()
-        }),
     }
 }
 
@@ -179,7 +173,6 @@ pub(crate) fn body(
         View::Workspaces => workspaces(data, connection, root, cx),
         View::Agents => agents(data, connection, cx),
         View::Fleet => fleet(data, connection, cx),
-        View::Events => events_view(data, root, cx),
         View::Plugins => plugins(data, root, cx),
     };
     ScrollArea::new(row_id("sidebar-body", view.id()))
@@ -255,7 +248,6 @@ fn workspaces(data: &Data, connection: &Connection, root: &Entity<Root>, cx: &Ap
     }
     column
         .child(worktrees(data, connection, root, cx))
-        .child(layout_block(data, root, cx))
         .into_any_element()
 }
 
@@ -308,71 +300,6 @@ fn workspaces_empty(ready: bool, root: &Entity<Root>, cx: &App) -> AnyElement {
                 }),
         )
         .child(create)
-        .into_any_element()
-}
-
-/// The project's template, as one row: the file it lives in, how many panes it
-/// describes, and a press that opens the inspector. The file is read by the
-/// shell when the focused pane's directory moves; this row only shows what was
-/// read.
-fn layout_block(data: &Data, root: &Entity<Root>, cx: &App) -> AnyElement {
-    let theme = cx.theme();
-    let colors = &theme.colors;
-    let state = data.layout;
-    let (detail, tone) = match state.template.as_ref() {
-        Some(template) => (
-            rust_i18n::t!("layout.panes", panes = template.root.panes()).to_string(),
-            colors.fg_subtle,
-        ),
-        None if state.error.is_some() => (t("shell.layout_sheet.broken"), colors.danger),
-        None => (t("layout.no_template"), colors.fg_subtle),
-    };
-    let open = root.clone();
-    div()
-        .flex()
-        .flex_col()
-        .child(section_label(t("shell.layout_sheet.title"), None, cx))
-        .child(
-            div()
-                .id("layout-block")
-                .flex()
-                .flex_none()
-                .items_center()
-                .gap_1p5()
-                .h(px(row_heights(cx).2))
-                .px_2()
-                .rounded(theme.radius(Radius::Md))
-                .cursor_pointer()
-                .hover(move |style| style.bg(colors.hover))
-                .on_click(move |_, window, cx| {
-                    open.update(cx, |root, cx| root.open_layout(window, cx));
-                })
-                .child(
-                    Icon::new(IconName::FileCode)
-                        .size(IconSize::Xs)
-                        .color(colors.fg_subtle),
-                )
-                .child(
-                    div()
-                        .min_w_0()
-                        .flex_1()
-                        .text_size(theme.text_size(TextSize::Xs))
-                        .text_color(colors.fg_muted)
-                        .child(".zenix/layout.toml"),
-                )
-                .child(
-                    div()
-                        .flex_none()
-                        .text_size(theme.text_size(TextSize::Xs))
-                        .text_color(tone)
-                        .child(detail),
-                )
-                .child(
-                    Icon::new(IconName::ChevronRight)
-                        .size(IconSize::Xs)
-                        .color(colors.fg_disabled),
-                ),
-        )
         .into_any_element()
 }
 
@@ -867,200 +794,6 @@ fn avatar(name: &str, cx: &App) -> AnyElement {
 }
 
 // ---------------------------------------------------------------------------
-// Events
-// ---------------------------------------------------------------------------
-
-fn events_view(data: &Data, root: &Entity<Root>, cx: &App) -> AnyElement {
-    let theme = cx.theme();
-    let colors = &theme.colors;
-    let filter = data.events.filter;
-    let mut column = div()
-        .flex()
-        .flex_col()
-        .gap_1()
-        .child(chips(filter, root, cx));
-
-    let live = data.events.error.is_none();
-    let badge = div()
-        .flex_none()
-        .px_1()
-        .rounded(theme.radius(Radius::Sm))
-        .text_size(theme.text_size(TextSize::Xs))
-        .text_color(if live { colors.success } else { colors.danger })
-        .child(if live {
-            t("shell.head.events_live")
-        } else {
-            t("shell.head.events_down")
-        })
-        .into_any_element();
-    column = column.child(section_label(t("shell.section.events"), Some(badge), cx));
-
-    if let Some(error) = data.events.error.as_deref() {
-        column = column.child(error_line(error, cx));
-    }
-    let hooked = |kind: &str| {
-        data.plugins
-            .plugins
-            .iter()
-            .any(|plugin| plugin.hooks_on(kind))
-    };
-    let now = events::now_unix_ms();
-    let rows: Vec<&events::Event> = data
-        .events
-        .events
-        .iter()
-        .filter(|event| filter.matches(event, &hooked))
-        .collect();
-    if rows.is_empty() {
-        column = column.child(empty_line(t("shell.views.empty.events"), cx));
-    }
-    for (index, event) in rows.into_iter().enumerate() {
-        let selected = data.selected.is_some_and(|captured| captured == event);
-        column = column.child(event_row(
-            index,
-            event,
-            class_of(event, &hooked),
-            selected,
-            now,
-            root,
-            cx,
-        ));
-    }
-    column.into_any_element()
-}
-
-/// The one class an event sits behind, with the same `hooked` question the
-/// filter asks, so a row's tone and its chip cannot disagree.
-fn class_of(event: &events::Event, hooked: &dyn Fn(&str) -> bool) -> EventFilter {
-    events::class(event, hooked)
-}
-
-/// The chips are the filter's own id and label; pressing one writes the
-/// stream's cache and repaints, because the ring is the one copy of events.
-fn chips(filter: EventFilter, root: &Entity<Root>, cx: &App) -> AnyElement {
-    let theme = cx.theme();
-    let colors = &theme.colors;
-    let mut row = div().flex().flex_wrap().gap_1().px_1().pt_1();
-    for choice in EventFilter::ALL {
-        let chosen = choice == filter;
-        let root = root.clone();
-        row = row.child(
-            div()
-                .id(row_id("event-chip", choice.id()))
-                .flex_none()
-                .h(px(20.))
-                .px_1p5()
-                .flex()
-                .items_center()
-                .rounded(theme.radius(Radius::Sm))
-                .border_1()
-                .border_color(if chosen {
-                    colors.border_strong
-                } else {
-                    colors.border
-                })
-                .bg(if chosen { colors.active } else { colors.bg })
-                .text_size(theme.text_size(TextSize::Xs))
-                .text_color(if chosen { colors.fg } else { colors.fg_muted })
-                .cursor_pointer()
-                .hover(move |style| style.bg(colors.hover))
-                .on_click(move |_, _, cx| {
-                    root.update(cx, |root, cx| root.set_event_filter(choice, cx));
-                })
-                .child(choice.label()),
-        );
-    }
-    row.into_any_element()
-}
-
-fn event_row(
-    index: usize,
-    event: &events::Event,
-    class: EventFilter,
-    selected: bool,
-    now: u64,
-    root: &Entity<Root>,
-    cx: &App,
-) -> AnyElement {
-    let theme = cx.theme();
-    let colors = &theme.colors;
-    let tone = match class {
-        EventFilter::Agents => colors.info,
-        EventFilter::Plugins => colors.accent,
-        EventFilter::Tabs => colors.success,
-        EventFilter::Layout => colors.warning,
-        EventFilter::All => colors.fg_subtle,
-    };
-    let capture = root.clone();
-    let captured = event.clone();
-    div()
-        .id(("event", index))
-        .relative()
-        .flex()
-        .gap_1p5()
-        .px_2()
-        .py(px(5.))
-        .rounded(theme.radius(Radius::Md))
-        .cursor_pointer()
-        .when(selected, |row| row.bg(colors.surface))
-        .hover(move |style| style.bg(colors.hover))
-        .on_click(move |_, window, cx| {
-            let captured = captured.clone();
-            capture.update(cx, |root, cx| root.open_event(captured.clone(), window, cx));
-        })
-        .when(selected, |row| {
-            row.child(
-                div()
-                    .absolute()
-                    .left(px(-6.))
-                    .top(px(6.))
-                    .bottom(px(6.))
-                    .w(px(2.))
-                    .rounded_full()
-                    .bg(colors.accent),
-            )
-        })
-        .child(
-            div()
-                .flex_none()
-                .pt(px(3.))
-                .size(px(5.))
-                .rounded_full()
-                .bg(tone),
-        )
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .flex()
-                .flex_col()
-                .gap_0p5()
-                .child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_1p5()
-                        .text_size(theme.text_size(TextSize::Xs))
-                        .text_color(colors.fg_muted)
-                        .child(div().flex_none().child(events::age(now, event.at_unix_ms)))
-                        .child(
-                            div()
-                                .min_w_0()
-                                .child(Ellipsis::new(SharedString::from(event.kind.clone()))),
-                        ),
-                )
-                .child(
-                    div()
-                        .min_w_0()
-                        .text_size(theme.text_size(TextSize::Xs))
-                        .text_color(colors.fg_subtle)
-                        .child(Ellipsis::new(SharedString::from(event.detail.clone()))),
-                ),
-        )
-        .into_any_element()
-}
-
-// ---------------------------------------------------------------------------
 // Plugins
 // ---------------------------------------------------------------------------
 
@@ -1227,7 +960,8 @@ fn has_local_ui(declared: &[crate::plugins::ui_manifest::DeclaredUi], plugin_id:
 
 /// A row's element id: gpui's `ElementId` names a row by one owned string, so
 /// the kind and the key are joined once here rather than at every call site.
-fn row_id(kind: &str, key: &str) -> SharedString {
+/// The debug log's rows share it.
+pub(crate) fn row_id(kind: &str, key: &str) -> SharedString {
     SharedString::from(format!("{kind}-{key}"))
 }
 
@@ -1350,7 +1084,7 @@ fn dot(color: Hsla) -> gpui::Div {
     div().flex_none().size(px(6.)).rounded_full().bg(color)
 }
 
-fn empty_line(text: String, cx: &App) -> AnyElement {
+pub(crate) fn empty_line(text: String, cx: &App) -> AnyElement {
     let theme = cx.theme();
     div()
         .px_2()
@@ -1361,7 +1095,7 @@ fn empty_line(text: String, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-fn error_line(text: &str, cx: &App) -> AnyElement {
+pub(crate) fn error_line(text: &str, cx: &App) -> AnyElement {
     let theme = cx.theme();
     div()
         .px_2()

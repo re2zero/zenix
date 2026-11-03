@@ -110,6 +110,10 @@ pub struct Root {
     /// Which sidebar view is in front. The daemon has no opinion about what
     /// the client is looking at, so the rail's choice is the shell's own.
     rail: chrome::View,
+    /// Whether the status bar's bug icon has the event log expanded. Whether
+    /// the icon exists at all is the config's `debug.events`; whether it is
+    /// open right now is this window's, and starts closed.
+    debug_log_open: bool,
     /// The sidebar's workspace rows the reader folded shut. A row with more
     /// than one tab folds and starts open; this remembers the folded ones, and
     /// a single-tab row never folds at all. Not the daemon's state — focus is
@@ -416,12 +420,6 @@ impl Root {
             let wanted = config::get(cx).layout.aside_visible;
             root.chat
                 .update(cx, |chat, cx| chat.set_on_screen(wanted, cx));
-            // A hidden view cannot stay in front: with debug off the rail has
-            // no events destination, and the workspaces view is where a closed
-            // dialog lands back.
-            if root.rail == chrome::View::Events && !config::get(cx).debug.events {
-                root.rail = chrome::View::Workspaces;
-            }
             cx.notify();
         });
         // A `mode: system` chrome has to follow the system while the window is
@@ -462,6 +460,7 @@ impl Root {
             plugin_host,
             worktree_host,
             rail: chrome::View::Workspaces,
+            debug_log_open: false,
             collapsed_workspaces: HashSet::new(),
             keymap,
             prefix_armed: false,
@@ -746,7 +745,7 @@ impl Root {
         cx.notify();
     }
 
-    /// The events view's chips: the ring keeps reading every kind; this only
+    /// The debug log's chips: the ring keeps reading every kind; this only
     /// decides which slice the rows show.
     pub(crate) fn set_event_filter(&mut self, filter: EventFilter, cx: &mut Context<Self>) {
         if let Some(stream) = self.event_stream.as_ref() {
@@ -754,6 +753,22 @@ impl Root {
         }
         self.events.filter = filter;
         cx.notify();
+    }
+
+    /// The status bar's bug icon: the debug log expands above the bar while
+    /// it is on. The stream reads on either way — the worktree list and the
+    /// inspector live off it whether the panel is drawn or not.
+    pub(crate) fn toggle_debug_log(&mut self, cx: &mut Context<Self>) {
+        self.debug_log_open = !self.debug_log_open;
+        cx.notify();
+    }
+
+    /// The panel header's ×: fold the log, leave the icon in place.
+    pub(crate) fn close_debug_log(&mut self, cx: &mut Context<Self>) {
+        if self.debug_log_open {
+            self.debug_log_open = false;
+            cx.notify();
+        }
     }
 
     /// A worktree row was pressed and it is not open: ask the daemon to open
@@ -909,13 +924,8 @@ impl Root {
         cx.notify();
     }
 
-    /// Put a sidebar view in front. The events view is debug surface
-    /// (`debug.events`): with the flag off it is not offered, so a stale rail
-    /// value or a stray press cannot land on it.
+    /// Put a sidebar view in front.
     pub(crate) fn show_view(&mut self, view: chrome::View, cx: &mut Context<Self>) {
-        if view == chrome::View::Events && !config::get(cx).debug.events {
-            return;
-        }
         if self.rail != view {
             self.rail = view;
             cx.notify();
@@ -2114,12 +2124,9 @@ impl Render for Root {
         // into the config.
         let data = sidebar::Data {
             live: &self.live,
-            events: &self.events,
             fleet: &self.fleet,
             plugins: &self.plugins,
             worktrees: &self.worktrees,
-            layout: &self.layout_state,
-            selected: self.inspector.selected(),
             manager: self.manager.plugin_id(),
             folded: &self.collapsed_workspaces,
             lane: self.lane.is_some(),
@@ -2148,6 +2155,10 @@ impl Render for Root {
                     prefix_armed: self.prefix_armed,
                     empty: &self.empty,
                     local_daemon: matches!(self.target, ConnectTarget::Local),
+                    events: &self.events,
+                    plugins: &self.plugins,
+                    selected: self.inspector.selected(),
+                    debug_log_open: self.debug_log_open,
                     root,
                 },
                 cx,
@@ -2210,12 +2221,7 @@ impl Render for Root {
                             div()
                                 .flex()
                                 .h_full()
-                                .child(chrome::rail(
-                                    self.rail,
-                                    &self.live,
-                                    config::get(cx).debug.events,
-                                    root,
-                                ))
+                                .child(chrome::rail(self.rail, &self.live, root))
                                 .when(roomy, |row| {
                                     row.child(chrome::sidebar(
                                         self.rail,

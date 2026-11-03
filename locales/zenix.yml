@@ -835,23 +835,23 @@ settings:
       zh-CN: "文件"
 
 
-  # The debug surfaces (2026-11-02): the events view and the inspector it
-  # feeds are developer tools, so the sidebar offers them only while the
-  # flag is on. The switch writes `debug.events` — the same key a
-  # hand-edited config sets.
+  # The debug surface (2026-11-03): the event log over the status bar's bug
+  # icon, and the inspector it feeds, are developer tools, so the bar offers
+  # the icon only while the flag is on. The switch writes `debug.events` —
+  # the same key a hand-edited config sets.
   debug:
     card:
       en: "Debug"
       zh-CN: "调试"
     card_note:
-      en: "Developer surfaces the sidebar hides otherwise."
-      zh-CN: "侧栏默认隐藏的开发者视图。"
+      en: "Developer surfaces the status bar hides otherwise."
+      zh-CN: "状态栏默认隐藏的开发者面板。"
     events:
-      en: "Events view"
-      zh-CN: "事件视图"
+      en: "Event log"
+      zh-CN: "事件日志"
     events_note:
-      en: "Shows the daemon's event ring in the sidebar, with its filters and inspector."
-      zh-CN: "在侧栏显示 daemon 的事件环，并提供过滤与检查器。"
+      en: "Shows the bug icon at the status bar's right corner; pressing it expands the daemon's event log above the bar."
+      zh-CN: "在状态栏右下角显示 debug 图标，点击在状态栏上方展开 daemon 的事件日志。"
 
 general:
   refresh:
@@ -1396,12 +1396,6 @@ shell:
     plugins:
       en: "Plugins"
       zh-CN: "插件"
-    events:
-      en: "Events"
-      zh-CN: "事件"
-    layout:
-      en: "Layout"
-      zh-CN: "布局"
   # What each view holds right now, as the head's dim count.
   head:
     workspaces:
@@ -1416,15 +1410,6 @@ shell:
     fleet:
       en: "%{agents} · %{active} active"
       zh-CN: "%{agents} 个 · %{active} 运行中"
-    events:
-      en: "%{count} events"
-      zh-CN: "%{count} 条"
-    events_live:
-      en: "subscribed"
-      zh-CN: "订阅中"
-    events_down:
-      en: "stream down"
-      zh-CN: "已断开"
   # The sidebar's section labels, above the rows they group. Short because
   # they sit in a 260px column and never wrap.
   section:
@@ -1434,9 +1419,33 @@ shell:
     rest:
       en: "Waiting / done"
       zh-CN: "等待 / 完成"
-    events:
-      en: "Event stream"
-      zh-CN: "事件流"
+  # The status bar's debug log (2026-11-03): the event ring's only face. The
+  # bug icon at the bar's right corner exists while `debug.events` is on, and
+  # its press expands the log above the bar. The stream itself runs whether
+  # the panel is drawn or not — the worktree list eats its `worktree.*`
+  # lines and the inspector reads the ring.
+  debug_log:
+    title:
+      en: "Event log"
+      zh-CN: "事件日志"
+    toggle:
+      en: "Toggle the event log"
+      zh-CN: "展开 / 收起事件日志"
+    close:
+      en: "Fold the log"
+      zh-CN: "收起日志"
+    live:
+      en: "subscribed"
+      zh-CN: "订阅中"
+    down:
+      en: "stream down"
+      zh-CN: "已断开"
+    count:
+      en: "%{count} held"
+      zh-CN: "存 %{count} 条"
+    empty:
+      en: "Nothing has happened yet"
+      zh-CN: "尚无事件"
   # Relative times, shared by the event ring and the fleet's held ages. Only
   # the "just now" word needs a language; the numeric units read the same.
   age:
@@ -1467,12 +1476,6 @@ shell:
     plugins:
       en: "plugin.list · zenix-ui.toml"
       zh-CN: "plugin.list · zenix-ui.toml"
-    events:
-      en: "events.subscribe · one stream"
-      zh-CN: "events.subscribe · 单个订阅"
-    layout:
-      en: "layout.export / layout.apply"
-      zh-CN: "layout.export / layout.apply"
   remote:
     no_lane:
       en: "This window is attached to a remote daemon; this surface needs this machine's daemon."
@@ -1837,9 +1840,6 @@ shell:
       plugins:
         en: "No plugins linked"
         zh-CN: "尚未链接插件"
-      events:
-        en: "Nothing has happened yet"
-        zh-CN: "尚无事件"
   # The right-hand panel's tabs: the strip's labels, and what its tabs say when
   # they have nothing to show.
   aside:

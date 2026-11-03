@@ -59,6 +59,10 @@
 //! tree and the daemon's export/apply, and [`confirm`] is the one card a
 //! worktree removal or a plugin unlink passes through first.
 //!
+//! The debug log ([`events_panel`], 2026-11-03) is the event ring's only face:
+//! the sidebar's events view retired with it, and the status bar's bug icon
+//! (`debug.events`) now expands the log above the bar.
+//!
 //! U3-5 draws what a new install sees and what a dropped connection says:
 //! [`empty`] is the first-run block over the grid — one sentence, four entries
 //! that each run a command from the directory, and the daemon card that starts
@@ -105,6 +109,7 @@ mod chrome;
 mod commands;
 mod confirm;
 mod empty;
+mod events_panel;
 mod inspector;
 mod keymap;
 mod layout_sheet;

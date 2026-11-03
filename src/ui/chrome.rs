@@ -73,32 +73,26 @@ const SIDEBAR_FOOT_HEIGHT: f32 = 24.;
 pub(crate) const SETTINGS_ITEM: &str = "settings";
 
 /// The sidebar views, in the rail's order. The ids are the locale keys'
-/// stems (`shell.view.*`, `shell.foot.*`) and the rail's element ids.
+/// stems (`shell.view.*`, `shell.foot.*`) and the rail's element ids. The
+/// event ring is not one of them: it is debug surface, drawn by
+/// [`super::events_panel`] over the status bar's bug icon.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum View {
     Workspaces,
     Agents,
     Fleet,
-    Events,
     Plugins,
 }
 
 impl View {
     /// The rail's buttons, top to bottom.
-    pub(crate) const ALL: [Self; 5] = [
-        Self::Workspaces,
-        Self::Agents,
-        Self::Fleet,
-        Self::Events,
-        Self::Plugins,
-    ];
+    pub(crate) const ALL: [Self; 4] = [Self::Workspaces, Self::Agents, Self::Fleet, Self::Plugins];
 
     pub(crate) fn id(self) -> &'static str {
         match self {
             Self::Workspaces => "workspaces",
             Self::Agents => "agents",
             Self::Fleet => "fleet",
-            Self::Events => "events",
             Self::Plugins => "plugins",
         }
     }
@@ -109,7 +103,6 @@ impl View {
             Self::Workspaces => IconName::LayoutGrid,
             Self::Agents => IconName::Users,
             Self::Fleet => IconName::Gauge,
-            Self::Events => IconName::Activity,
             Self::Plugins => IconName::Puzzle,
         }
     }
@@ -120,7 +113,6 @@ impl View {
             Self::Workspaces => "shell.view.workspaces",
             Self::Agents => "shell.view.agents",
             Self::Fleet => "shell.view.fleet",
-            Self::Events => "shell.view.events",
             Self::Plugins => "shell.view.plugins",
         }
     }
@@ -131,7 +123,6 @@ impl View {
             Self::Workspaces => "shell.foot.workspaces",
             Self::Agents => "shell.foot.agents",
             Self::Fleet => "shell.foot.fleet",
-            Self::Events => "shell.foot.events",
             Self::Plugins => "shell.foot.plugins",
         }
     }
@@ -144,7 +135,7 @@ impl View {
         // The lane views of a remote window have no source to name: their
         // socket is on the other machine, and the foot says that rather than
         // implying a quiet one.
-        if !data.lane && matches!(self, Self::Fleet | Self::Events | Self::Plugins) {
+        if !data.lane && matches!(self, Self::Fleet | Self::Plugins) {
             return t("shell.foot.remote").to_string();
         }
         t(self.source_key()).to_string()
@@ -168,7 +159,6 @@ impl View {
         match self {
             Self::Workspaces | Self::Agents => snapshot && connected,
             Self::Fleet => snapshot && data.fleet.error.is_none(),
-            Self::Events => data.events.error.is_none(),
             Self::Plugins => data.plugins.error.is_none(),
         }
     }
@@ -410,19 +400,12 @@ fn workspace_pill(
 /// The activity rail: one destination per sidebar view, the agents' away-from-
 /// idle count as its badge, and the settings gear at its foot (the design's
 /// rail ends in it). The rail's own item look (selected fill, accent edge,
-/// hover) is the component's. The events view is debug surface (`debug.events`)
-/// and is offered only while its flag is on.
-pub(crate) fn rail(
-    view: View,
-    live: &LiveState,
-    debug_events: bool,
-    root: &Entity<Root>,
-) -> AnyElement {
+/// hover) is the component's. The event ring is not offered here — it is the
+/// status bar's bug icon (`debug.events`), so debug never wears a navigation
+/// slot.
+pub(crate) fn rail(view: View, live: &LiveState, root: &Entity<Root>) -> AnyElement {
     let mut bar = ActivityBar::new("shell-rail").selected(view.id());
     for item in View::ALL {
-        if item == View::Events && !debug_events {
-            continue;
-        }
         let mut entry = ActivityItem::new(item.id(), item.icon(), item.label());
         if item == View::Agents
             && let Some(count) = active_agents(live)
@@ -529,41 +512,14 @@ pub(crate) fn sidebar(
                         .text_size(theme.text_size(TextSize::Xs))
                         .text_color(colors.fg_subtle)
                         .child(Ellipsis::new(SharedString::from(source))),
-                )
-                // The events view's foot names where the rows come from and
-                // opens the contract they are written against — the design
-                // puts it exactly here, beside the stream's own count.
-                .when(view == View::Events, |foot| {
-                    let open = root.clone();
-                    foot.child(div().flex_1()).child(
-                        div()
-                            .id("events-contract-link")
-                            .flex_none()
-                            .flex()
-                            .items_center()
-                            .gap_1()
-                            .cursor_pointer()
-                            .text_size(theme.text_size(TextSize::Xs))
-                            .text_color(colors.fg_muted)
-                            .hover(move |style| style.text_color(colors.fg))
-                            .on_click(move |_, _, cx| {
-                                open.update(cx, |root, cx| root.open_contract(cx));
-                            })
-                            .child(
-                                Icon::new(IconName::FileText)
-                                    .size(IconSize::Xs)
-                                    .color(colors.fg_subtle),
-                            )
-                            .child(t("shell.inspector.contract_foot")),
-                    )
-                }),
+                ),
         )
         .into_any_element()
 }
 
 /// What the main column reads for one paint, bundled because it is one
-/// composition: the shell's state, the two surfaces it mounts and the two bits
-/// of chrome state beside them.
+/// composition: the shell's state, the two surfaces it mounts and the bits of
+/// chrome state beside them.
 pub(crate) struct Main<'a> {
     pub(crate) live: &'a LiveState,
     pub(crate) connection: &'a Connection,
@@ -576,6 +532,13 @@ pub(crate) struct Main<'a> {
     /// window and a remote window draw the retry note instead: none of them
     /// owns the default daemon this card would touch.
     pub(crate) local_daemon: bool,
+    /// The event log's inputs: the shell's copy of the ring, the plugin
+    /// registry the chips' hooked question asks, and the event the inspector
+    /// has captured. Drawn only while the reader expanded the panel.
+    pub(crate) events: &'a crate::events::EventState,
+    pub(crate) plugins: &'a crate::plugins::host::PluginState,
+    pub(crate) selected: Option<&'a crate::events::Event>,
+    pub(crate) debug_log_open: bool,
     pub(crate) root: &'a Entity<Root>,
 }
 
@@ -598,6 +561,10 @@ pub(crate) fn main_area(main: Main<'_>, cx: &App) -> AnyElement {
         prefix_armed,
         empty,
         local_daemon,
+        events,
+        plugins,
+        selected,
+        debug_log_open,
         root,
     } = main;
     let first_run = live
@@ -617,9 +584,23 @@ pub(crate) fn main_area(main: Main<'_>, cx: &App) -> AnyElement {
     if !first_run {
         column = column.child(tab_strip(live, connection, cx));
     }
+    column = column.child(grid);
+    // The debug log is the column's own foot when the reader expanded it: the
+    // bar stays the window's last line, the log sits directly above it.
+    if debug_log_open {
+        column = column.child(super::events_panel::panel(
+            events, plugins, selected, root, cx,
+        ));
+    }
     column
-        .child(grid)
-        .child(status_bar(live, keymap, prefix_armed, root, cx))
+        .child(status_bar(
+            live,
+            keymap,
+            prefix_armed,
+            debug_log_open,
+            root,
+            cx,
+        ))
         .into_any_element()
 }
 
@@ -702,11 +683,14 @@ fn tab_strip(live: &LiveState, connection: &Connection, cx: &App) -> AnyElement 
 /// branch, the config's problems when it has any, the prefix key, and the
 /// stream the picture came from. The prefix is always named; while it is armed
 /// the same segment lights, so a chord's first key is visible as it waits for
-/// the second.
+/// the second. The bar's last segment is the debug surface's only entry: with
+/// `debug.events` on, a bug icon whose press expands the event log above the
+/// bar (lit while it is open).
 pub(crate) fn status_bar(
     live: &LiveState,
     keymap: &Keymap,
     prefix_armed: bool,
+    debug_open: bool,
     root: &Entity<Root>,
     cx: &App,
 ) -> AnyElement {
@@ -808,27 +792,49 @@ pub(crate) fn status_bar(
     } else {
         t("status.source.snapshot")
     };
-    bar.right(StatusBarItem::new("status-source").label(source))
-        .right(
-            StatusBarItem::new("status-prefix")
-                .leading(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_1()
-                        .px_1()
-                        .rounded(theme.radius(Radius::Sm))
-                        .text_size(theme.text_size(TextSize::Xs))
-                        .when(prefix_armed, |segment| {
-                            segment.bg(colors.accent).text_color(colors.on_accent)
-                        })
-                        .when(!prefix_armed, |segment| segment.text_color(colors.fg_muted))
-                        .child(t("status.prefix"))
-                        .child(keymap.prefix_label()),
-                )
-                .tooltip(t("settings.keys.prefix")),
+    bar = bar.right(StatusBarItem::new("status-source").label(source));
+    let prefix = StatusBarItem::new("status-prefix")
+        .leading(
+            div()
+                .flex()
+                .items_center()
+                .gap_1()
+                .px_1()
+                .rounded(theme.radius(Radius::Sm))
+                .text_size(theme.text_size(TextSize::Xs))
+                .when(prefix_armed, |segment| {
+                    segment.bg(colors.accent).text_color(colors.on_accent)
+                })
+                .when(!prefix_armed, |segment| segment.text_color(colors.fg_muted))
+                .child(t("status.prefix"))
+                .child(keymap.prefix_label()),
         )
-        .into_any_element()
+        .tooltip(t("settings.keys.prefix"));
+    bar = bar.right(prefix);
+    // The debug entry sits at the bar's very end — the bottom-right corner —
+    // and only exists while its flag says the reader wants debug surfaces at
+    // all. The stream it opens runs either way; this only decides whether the
+    // log is offered.
+    if config::get(cx).debug.events {
+        let toggle = root.clone();
+        bar = bar.right(
+            StatusBarItem::new("status-debug")
+                .leading(
+                    Icon::new(IconName::Bug)
+                        .size(IconSize::Xs)
+                        .color(if debug_open {
+                            colors.accent
+                        } else {
+                            colors.fg_muted
+                        }),
+                )
+                .tooltip(t("shell.debug_log.toggle"))
+                .on_click(move |_, _, cx| {
+                    toggle.update(cx, |root, cx| root.toggle_debug_log(cx));
+                }),
+        );
+    }
+    bar.into_any_element()
 }
 
 /// The focused workspace, as the daemon names it.
