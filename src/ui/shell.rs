@@ -24,6 +24,8 @@ use ely_core::forms::{InputEvent, TextInput};
 use ely_core::layout::AppShell;
 use ely_core::shell::ResizeBorder;
 use ely_core::theme::ActiveTheme as _;
+use std::collections::HashSet;
+
 use gpui::{
     App, ClipboardItem, Context, DragMoveEvent, Entity, FocusHandle, IntoElement, MouseButton,
     MouseUpEvent, ParentElement, Render, Subscription, SystemNotification, Task, Window, div,
@@ -108,6 +110,11 @@ pub struct Root {
     /// Which sidebar view is in front. The daemon has no opinion about what
     /// the client is looking at, so the rail's choice is the shell's own.
     rail: chrome::View,
+    /// The sidebar's workspace rows the reader folded shut. A row with more
+    /// than one tab folds and starts open; this remembers the folded ones, and
+    /// a single-tab row never folds at all. Not the daemon's state — focus is
+    /// the daemon's, the fold is the reader's.
+    collapsed_workspaces: HashSet<String>,
     /// The command directory's chords, resolved for this host.
     keymap: keymap::Keymap,
     /// Whether the prefix has been typed and the next key is its chord.
@@ -455,6 +462,7 @@ impl Root {
             plugin_host,
             worktree_host,
             rail: chrome::View::Workspaces,
+            collapsed_workspaces: HashSet::new(),
             keymap,
             prefix_armed: false,
             palette: palette::State::default(),
@@ -1053,6 +1061,15 @@ impl Root {
                 .map(|info| info.label())
                 .unwrap_or_default();
             toast::not_sent(&self.toasts, &what, cx);
+        }
+        cx.notify();
+    }
+
+    /// Fold or unfold one workspace row in the sidebar's tree. The chevron is
+    /// the only press that reaches here, and it stops the row's own focus.
+    pub(crate) fn toggle_workspace_fold(&mut self, workspace_id: &str, cx: &mut Context<Self>) {
+        if !self.collapsed_workspaces.remove(workspace_id) {
+            self.collapsed_workspaces.insert(workspace_id.to_owned());
         }
         cx.notify();
     }
@@ -2104,6 +2121,7 @@ impl Render for Root {
             layout: &self.layout_state,
             selected: self.inspector.selected(),
             manager: self.manager.plugin_id(),
+            folded: &self.collapsed_workspaces,
             lane: self.lane.is_some(),
         };
         let roomy = sidebar_visible(window.viewport_size().width.as_f32());
