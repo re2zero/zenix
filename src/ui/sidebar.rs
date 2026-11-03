@@ -18,11 +18,12 @@
 //! scale. The library's tokens, `Disclosure`, icons and `ScrollArea` are still
 //! what the column is made of; no colour is written down here.
 //!
-//! The focused workspace is the one row that opens: its tabs hang under it as
+//! A workspace with more than one tab folds: its tabs hang under it as
 //! sub-rows, which is the design's tree (`docs/ui/redesign/ui.js`'s
-//! `sidebarWorkspaces`). Opening follows focus because the daemon owns focus —
-//! a local open/closed set would disagree with the tabs the main column shows.
-//! Every workspace row carries the branch the snapshot reports; a worktree row
+//! `sidebarWorkspaces`), and a foldable row starts open — the set of rows the
+//! reader folded shut lives in [`Root`]. A workspace with one tab has nothing
+//! to fold: its row is the project, named directly. Every workspace row
+//! carries the branch the snapshot reports; a worktree row
 //! that is open as a workspace carries that workspace's `git_ahead_behind` as
 //! `+n` / `-n`, and a closed one has no counts to show — the row says nothing
 //! rather than pretending the count is zero.
@@ -38,6 +39,8 @@ use ely_core::{
     theme::{ActiveTheme, ControlSize, IconSize, Radius, TextSize},
     typography::Ellipsis,
 };
+use std::collections::HashSet;
+
 use gpui::{
     AnyElement, App, ElementId, Entity, FontWeight, Hsla, InteractiveElement, IntoElement,
     ParentElement, SharedString, Stateful, StatefulInteractiveElement, Styled, div, prelude::*, px,
@@ -81,6 +84,9 @@ pub(crate) struct Data<'a> {
     pub(crate) selected: Option<&'a events::Event>,
     /// The plugin whose manager page is in front, so its row can do the same.
     pub(crate) manager: Option<&'a str>,
+    /// The workspace rows the reader folded shut. A row with more than one tab
+    /// folds and starts open; this holds the folded ones, and [`Root`] owns it.
+    pub(crate) folded: &'a HashSet<String>,
     /// Whether the window's daemon lane is this machine's socket. A remote
     /// window's lane views are empty by design, and their heads and feet say
     /// so instead of implying a quiet source.
@@ -217,9 +223,18 @@ fn workspaces(data: &Data, connection: &Connection, root: &Entity<Root>, cx: &Ap
             .iter()
             .filter(|tab| tab.workspace_id == workspace.workspace_id)
             .collect();
-        let focused = workspace.focused;
-        column = column.child(workspace_row(workspace, tabs.len(), connection, cx));
-        if focused {
+        let foldable = tabs.len() > 1;
+        let open = subrows_open(tabs.len(), data.folded.contains(&workspace.workspace_id));
+        column = column.child(workspace_row(
+            workspace,
+            tabs.len(),
+            foldable,
+            open,
+            root,
+            connection,
+            cx,
+        ));
+        if open {
             for tab in tabs {
                 let panes = snapshot
                     .panes
@@ -364,6 +379,9 @@ fn layout_block(data: &Data, root: &Entity<Root>, cx: &App) -> AnyElement {
 fn workspace_row(
     workspace: &ClientShellWorkspace,
     tabs: usize,
+    foldable: bool,
+    open: bool,
+    root: &Entity<Root>,
     connection: &Connection,
     cx: &App,
 ) -> AnyElement {
@@ -372,15 +390,32 @@ fn workspace_row(
     let focused = workspace.focused;
     let select = connection.clone();
     let id = workspace.workspace_id.clone();
+    let fold = root.clone();
+    let toggle_id = workspace.workspace_id.clone();
     tree_row(row_id("workspace", &workspace.workspace_id), focused, cx)
         .cursor_pointer()
-        .child(
-            Disclosure::new(
-                row_id("workspace-disclosure", &workspace.workspace_id),
-                focused,
-            )
-            .color(colors.fg_subtle),
-        )
+        .children(foldable.then(|| {
+            // The chevron folds; it does not focus — a press on it stops the
+            // row's own click the way the worktree row's × does.
+            let fold = fold.clone();
+            let toggle_id = toggle_id.clone();
+            div()
+                .id(row_id("workspace-fold", &workspace.workspace_id))
+                .cursor_pointer()
+                .child(
+                    Disclosure::new(
+                        row_id("workspace-disclosure", &workspace.workspace_id),
+                        open,
+                    )
+                    .color(colors.fg_subtle),
+                )
+                .on_click(move |_, _, cx| {
+                    cx.stop_propagation();
+                    let id = toggle_id.clone();
+                    fold.update(cx, |root, cx| root.toggle_workspace_fold(&id, cx));
+                })
+                .into_any_element()
+        }))
         .child(
             Icon::new(if focused {
                 IconName::FolderOpen
@@ -402,9 +437,18 @@ fn workspace_row(
                 .as_deref()
                 .map(|branch| branch_chip(branch, cx)),
         )
-        .child(meta_text(tabs.to_string(), cx))
+        // The count belongs to a fold: a single-tab workspace is the project's
+        // one line, and "1" next to its name says nothing the row doesn't.
+        .children(foldable.then(|| meta_text(tabs.to_string(), cx)))
         .on_click(move |_, _, _| select.focus_workspace(&id))
         .into_any_element()
+}
+
+/// Whether a workspace's tabs hang under it: more than one tab makes the row
+/// foldable, and a foldable row is open unless the reader folded it shut. A
+/// single-tab workspace has no fold and no sub-rows — its row is the project.
+fn subrows_open(tab_count: usize, folded: bool) -> bool {
+    tab_count > 1 && !folded
 }
 
 /// The branch a workspace is on, at the row's end. The design puts it on the
@@ -1574,5 +1618,17 @@ mod tests {
             (both.ahead.as_deref(), both.behind.as_deref()),
             (Some("+2"), Some("-3"))
         );
+    }
+
+    /// A single-tab workspace is one row with no fold; a multi-tab one folds
+    /// and starts open, and only the reader's own fold closes it.
+    #[test]
+    fn a_fold_needs_more_than_one_tab_and_starts_open() {
+        assert!(!subrows_open(0, false));
+        assert!(!subrows_open(1, false));
+        assert!(subrows_open(2, false));
+        assert!(subrows_open(5, false));
+        assert!(!subrows_open(2, true));
+        assert!(!subrows_open(1, true));
     }
 }
