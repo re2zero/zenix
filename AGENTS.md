@@ -114,6 +114,7 @@ zenix/
 | System monitoring | src/sys.rs | sysinfo crate, real-time stats |
 | Config schema | src/config/mod.rs | JSONC walked against the schema; problems become diagnostics |
 | I18n (CN/EN) | src/i18n.rs, locales/zenix.yml | rust-i18n macro |
+| Brand & app icon | docs/brand/ | The mark (a pane-frame Z, the whole letter in the signal colour), the wordmark, palette and usage rules; `zenix-icon.svg` renders `res/zenix.png` |
 | Build/packaging | Cargo.toml, build.rs | `cargo deb` asset list, license texts, herdr embedding and the `res/herdr` seed |
 | Plan & handoff | .relay/PLAN.md §8, .relay/journal/HANDOFF-*.md | Read the relay protocol first (local, gitignored) |
 
@@ -174,5 +175,5 @@ cargo clippy --all-targets -- -D warnings      # Lint gate (the CI gate; no dead
 - **GPUI test entry**: `gpui = { package = "gpui-pre", features = ["test-support"] }` and `ely-core` with `test-support` live in `[dev-dependencies]`; the old `#[gpui_kit::test]` spelling is `#[gpui::test]`. The lock still holds `unicode-properties 0.1.3` (the `gpui-fast-web` conflict documented below); if regenerated, re-pin with `cargo update -p unicode-properties --precise 0.1.3`
 - **Vendored crates are local source**: `vendor/herdr-protocol` + `vendor/herdr-client` (plus `vendor/test-support/sandbox.rs`) are copies of herdr-gpui `crates/*` (commit `87f4dc0`), with `NOTICE.md`/`LICENSE-APACHE` kept; `vendor/HERDR_UPSTREAM.md` records provenance and `scripts/sync-herdr-vendor.sh <herdr-gpui>` re-copies and diffs `wire.rs`
 - **I18n**: Chinese/English via `rust-i18n` macro; keys live in `locales/zenix.yml`
-- **Desktop entry** at `res/zenix.desktop`, icon at `res/zenix.png`
+- **Desktop entry** at `res/zenix.desktop`, icon at `res/zenix.png` — the icon is rendered from `docs/brand/zenix-icon.svg` (`rsvg-convert -w 512 -h 512`), and the brand's rules live in `docs/brand/README.md`
 - **License**: GPL-3.0-or-later (zenix), Apache-2.0 (herdr, vendored endpoint crates), MIT (the component library), SIL OFL-1.1 (its Inter / JetBrains Mono / IBM Plex Sans faces) — see `THIRD-PARTY.md`
